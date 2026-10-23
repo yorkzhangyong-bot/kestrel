@@ -5,7 +5,7 @@ A small FastAPI app in `targets/hs_code/` that wraps copied CargoLint classifier
 ## Start-up
 
 ```bash
-uv run --project targets/hs_code --directory targets/hs_code uvicorn app:app --host 127.0.0.1 --port 8001
+uv run --directory targets/hs_code uvicorn app:app --host 127.0.0.1 --port 8001
 ```
 
 | Variable | Required | Meaning |

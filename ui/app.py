@@ -19,6 +19,7 @@ METHODS = ["POST", "GET"]
 PERMISSION_LABEL = "I own this agent or have written permission to test it"
 STORED_PLACEHOLDER = "Stored · leave empty to keep"
 UNREADABLE_PLACEHOLDER = "Can't be read with the current key · enter it again"
+NEW_TARGET = 0  # the picker's "New target" entry; saved targets have ids from 1
 SIDEBAR_FIELDS = {"name", "settings.url", "settings.body_template", "settings.response_path", "permission_confirmed",
                   "terms_version", "save", "delete"}
 
@@ -99,15 +100,15 @@ def fill_form(target: dict | None) -> None:
 def select_target() -> None:
     """Picker callback: load the chosen target, or start a new one (FR-016)."""
     clear_messages()
-    target_id = st.session_state.get("target_select")
-    if target_id is None:
+    target_id = st.session_state.get("target_select", NEW_TARGET)
+    if target_id == NEW_TARGET:
         fill_form(None)
         return
     try:
         fill_form(api_client.get_target(target_id))
     except api_client.ApiError as error:
         fill_form(None)
-        st.session_state["target_select"] = None
+        st.session_state["target_select"] = NEW_TARGET
         st.session_state["notice"] = api_message(error)
         st.session_state["targets"] = None
 
@@ -186,6 +187,9 @@ def run_pending_test() -> None:
     payload = st.session_state.get("pending_test")
     if payload is None:
         return
+    # Claim the test before calling: Streamlit can start a new pass while this one waits on the API (for example
+    # when Save is clicked mid-test), and that pass must not send the same test again.
+    st.session_state["pending_test"] = None
     try:
         with st.spinner("Testing the connection…"):
             st.session_state["result"] = api_client.test_connection(payload)
@@ -195,8 +199,6 @@ def run_pending_test() -> None:
             st.session_state["errors"] = errors_from(error, "test")
         else:
             st.session_state["notice"] = api_message(error)
-    finally:
-        st.session_state["pending_test"] = None
     st.rerun()
 
 
@@ -247,7 +249,7 @@ def confirm_delete() -> None:
         return
     st.session_state["targets"] = None
     fill_form(None)
-    st.session_state["target_select"] = None
+    st.session_state["target_select"] = NEW_TARGET
     st.session_state["done"] = "Target deleted."
 
 
@@ -262,9 +264,9 @@ def show_error(field: str) -> None:
 def render_picker(targets: list[dict]) -> None:
     labels = {t["id"]: f"{t['name']} · {t['url']}" for t in targets}
     if st.session_state.get("target_select") not in labels:
-        st.session_state["target_select"] = None
-    st.selectbox("Target", [None, *labels], key="target_select", on_change=select_target,
-                 format_func=lambda target_id: "New target" if target_id is None else labels[target_id])
+        st.session_state["target_select"] = NEW_TARGET
+    st.selectbox("Target", [NEW_TARGET, *labels], key="target_select", on_change=select_target,
+                 format_func=lambda target_id: "New target" if target_id == NEW_TARGET else labels[target_id])
 
 
 def render_form(config: dict, targets: list[dict]) -> None:
@@ -272,7 +274,7 @@ def render_form(config: dict, targets: list[dict]) -> None:
     st.text_input("Display name", key="display_name", placeholder="My agent")
     show_error("name")
 
-    method_col, url_col = st.columns([2, 5])
+    method_col, url_col = st.columns([3, 5])
     method_col.selectbox("Method", METHODS, key="method")
     url_col.text_input("Endpoint URL", key="url", placeholder="https://my-agent.example.com/chat", on_change=url_changed)
     show_error("settings.url")
@@ -280,7 +282,7 @@ def render_form(config: dict, targets: list[dict]) -> None:
     st.markdown("**Auth headers**")
     st.caption("stored encrypted, never shown in report")
     for i, row in enumerate(header_rows()):
-        name_col, value_col, remove_col = st.columns([4, 5, 3], vertical_alignment="bottom")
+        name_col, value_col, remove_col = st.columns([4, 5, 2], vertical_alignment="bottom")
         name_col.text_input("Header name", value=row["name"], key=f"header_name_{i}", placeholder="Header name",
                             label_visibility="collapsed")
         placeholder = "Value"
@@ -288,7 +290,8 @@ def render_form(config: dict, targets: list[dict]) -> None:
             placeholder = STORED_PLACEHOLDER if row.get("readable", True) else UNREADABLE_PLACEHOLDER
         value_col.text_input("Header value", value=row["value"], key=f"header_value_{i}", type="password",
                              placeholder=placeholder, label_visibility="collapsed")
-        remove_col.button("Remove", key=f"header_remove_{i}", on_click=remove_header_row, args=(i,))
+        remove_col.button("✕", key=f"header_remove_{i}", help="Remove this header", on_click=remove_header_row,
+                          args=(i,))
         show_error(f"settings.headers.{i}.name")
         show_error(f"settings.headers.{i}.value")
     st.button("Add header", key="add_header", on_click=add_header_row)

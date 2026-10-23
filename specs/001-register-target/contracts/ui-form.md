@@ -16,7 +16,7 @@
 | 1 | Select **Target**: "New target", then saved targets as "name · URL" | Choosing a target loads its details. Choosing anything starts a new `form_id` |
 | 2 | Text input **Display name** | |
 | 3 | Select **Method** (POST, GET) and text input **Endpoint URL** | Defaults from `/api/config` |
-| 4 | **Auth headers** rows, captioned "stored encrypted, never shown in report" | Each row has a name input and a masked value input (`type="password"`) plus **Remove**. **Add header** appends a row. A stored value shows as an empty field with the placeholder "Stored · leave empty to keep" and is sent as `value: null` |
+| 4 | **Auth headers** rows, captioned "stored encrypted, never shown in report" | Each row has a name input and a masked value input (`type="password"`) plus a **✕** button with the tooltip "Remove this header". **Add header** appends a row. A stored value shows as an empty field with the placeholder "Stored · leave empty to keep" and is sent as `value: null` |
 | 5 | Text inputs **Request body template** and **Response path** | Defaults from `/api/config` |
 | 6 | Button **Test connection** | Disabled while a test runs. The API also refuses a second test (FR-009). With a saved target loaded, the request includes its `target_id`, so kept header values are used (FR-016) |
 | 7 | Checkbox **I own this agent or have written permission to test it** | Cleared when the URL of a saved target is changed (FR-018) |

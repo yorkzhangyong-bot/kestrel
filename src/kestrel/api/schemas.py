@@ -38,7 +38,7 @@ class ConfigOut(BaseModel):
 
 class HeaderIn(BaseModel):
     name: str
-    value: str | None = None  # None keeps the stored value (needs a target_id)
+    value: str | None = Field(default=None, repr=False)  # None keeps the stored value; never in a repr
 
 
 class ConnectionSettingsIn(BaseModel):

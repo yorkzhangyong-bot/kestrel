@@ -111,5 +111,5 @@ def test_confirming_delete_removes_the_target_and_starts_a_new_form(api):
     assert api.deletes == [1]
     assert not at.dataframe
     assert at.session_state["form_id"] != form_id
-    assert at.selectbox(key="target_select").value is None
+    assert at.selectbox(key="target_select").index == 0  # "New target"
     assert at.text_input(key="display_name").value == ""

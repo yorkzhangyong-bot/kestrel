@@ -35,7 +35,7 @@ Saved targets live in `data/kestrel.db` under the repo root, whichever folder yo
 ```bash
 # PowerShell: $env:HS_TARGET_API_KEY="test-key-123"; $env:OPENROUTER_API_KEY="sk-or-..."
 HS_TARGET_API_KEY=test-key-123 OPENROUTER_API_KEY=sk-or-... \
-  uv run --project targets/hs_code --directory targets/hs_code uvicorn app:app --host 127.0.0.1 --port 8001
+  uv run --directory targets/hs_code uvicorn app:app --host 127.0.0.1 --port 8001
 ```
 
 ## Manual checks
@@ -73,7 +73,7 @@ HS_TARGET_API_KEY=test-key-123 OPENROUTER_API_KEY=sk-or-... \
 ```bash
 uv run pytest                    # unit and integration tests: offline, no keys, no cost
 uv run pytest -m e2e             # end-to-end: needs OPENROUTER_API_KEY; starts the target and the API itself
-uv run --project targets/hs_code --directory targets/hs_code pytest   # target smoke tests, no model calls
+uv run --directory targets/hs_code pytest   # target smoke tests, no model calls
 ```
 
 The end-to-end run drives the real screen through Streamlit's AppTest with three tests:

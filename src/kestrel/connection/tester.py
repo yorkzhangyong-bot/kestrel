@@ -48,6 +48,11 @@ class ResolvedSettings:
     body_template: str
     response_path: str
 
+    def __repr__(self) -> str:  # header values never appear in a repr, log or traceback (research R9)
+        names = [name for name, _ in self.headers]
+        return (f"ResolvedSettings(url={_loggable_url(self.url)!r}, method={self.method!r}, header_names={names!r}, "
+                f"response_path={self.response_path!r})")
+
 
 @dataclass
 class TestOutcome:
