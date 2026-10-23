@@ -1,0 +1,17 @@
+{
+  "_comment": "Config for scripts/import_attacks.py (tasks.md T013b). Lists datasets and the item IDs to import. Contains NO prompt text: the script downloads each dataset and copies the named items. Fill 'sources' with 16-24 items total, at least 3 per family, from redistributable sources (garak, JailbreakBench, PyRIT, ...).",
+  "_entry_format": {
+    "name": "human-readable source name, recorded as each prompt's 'source'",
+    "url": "URL the script downloads the dataset from",
+    "source_url": "citation URL, recorded as each prompt's 'source_url'",
+    "licence": "SPDX-style id; must permit redistribution (MIT, Apache-2.0, CC-BY-4.0, CC-BY-SA-4.0, CC0-1.0, BSD, ISC); non-commercial (NC), no-derivatives (ND), proprietary or unknown are refused",
+    "format": "'jsonl' (one JSON object per line) or 'json' (a list of objects)",
+    "family": "one of: direct_injection, system_prompt_leak, tool_exfiltration, indirect_injection",
+    "id_field": "the field in the dataset that identifies an item",
+    "text_field": "the field holding the prompt text",
+    "title_field": "optional field for a title; null for a neutral generated title",
+    "items": ["the item IDs to take from this dataset"]
+  },
+  "version": "1.0.0",
+  "sources": []
+}

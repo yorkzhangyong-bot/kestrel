@@ -68,8 +68,16 @@ Tests and code written in different tasks rely on these:
 
 - [X] T011 [P] Write `tests/unit/test_attack_library.py` against a fixture library (FR-001 to FR-005, FR-007, FR-008): each of the 8 validation rules in [contracts/attack-library.md](./contracts/attack-library.md) fails loudly; a prompt over 4,000 characters is refused; `pick(family)` returns a prompt of that family; `pick(family, prompt_id)` returns that prompt; an unknown family or id raises.
 - [X] T012 Write `src/kestrel/attacks/library.py` (FR-001, FR-002, FR-005, FR-007, FR-008): load the JSON once, validate it, index by family, and expose `families()`, `prompts(family)` and `pick(family, prompt_id=None)`. A validation failure raises at start-up rather than shipping a broken library.
-- [ ] T013 **(DEFERRED, 2026-10-23)** Assemble `src/kestrel/attacks/data/library.json` and `src/kestrel/attacks/data/SOURCES.md` following [research.md](./research.md) R8 (FR-001 to FR-005): 16 to 24 prompts, at least 3 per family, each carrying `source`, `source_url` and `licence`, every one taken from a published citable source. Check each licence before copying; where redistribution is not permitted, leave that prompt out and fill the family from a permissive source. Write no prompt text freehand.
-  - Held back by the owner's decision to populate the attack corpus as a separate, focused step rather than inline during implementation. The loader (T012) and its rules (T011) are done and tested against a synthetic fixture; the rest of the feature is built against that fixture. Licensing is pre-checked: OWASP LLM Top 10 2025 (taxonomy), deepset/prompt-injections (Apache-2.0), InjecAgent (MIT), AgentDojo (MIT). `tests/unit/test_attack_library.py::test_load_library_reads_the_shipped_file` skips until the file exists, then runs for real.
+- [X] T013a Write `scripts/import_attacks.py` and `src/kestrel/attacks/data/sources.json` (FR-001 to FR-005, R8).
+  `sources.json` lists, per entry: dataset URL, licence, the item IDs to take, and the target family.
+  It contains no prompt text. The script downloads each dataset, selects items by ID only,
+  maps them to the library schema with `source`, `source_url` and `licence`, refuses any source
+  whose licence does not permit redistribution, and writes `library.json` and `SOURCES.md`.
+  Test it in `tests/unit/test_import_attacks.py` against a small local fixture dataset, with no
+  network access. Use httpx, already a dependency; no new dependency.
+- [ ] T013b (manual, done by the user) Fill `sources.json` with 16 to 24 items, at least 3 per family,
+  from published sources such as garak, JailbreakBench or PyRIT. Run the script, check the output
+  with the T012 loader, and commit `library.json` and `SOURCES.md`.
 
 ### Judge
 
@@ -114,7 +122,7 @@ Tests and code written in different tasks rely on these:
 - [X] T025 [P] [US1] Write `tests/integration/test_api_runs.py` (FR-006, FR-009 to FR-011, FR-023, SC-009, SC-011): `POST /api/runs` answers 201 with the RunDetail shape; 404 for an unknown target; 409 `run_in_progress`, `permission_missing` and `terms_outdated`; 422 for an unknown family or prompt id; and that `permission_missing` and `terms_outdated` leave no run row behind while a tester failure does. For SC-011, assert the stronger invariant that a target stored under terms version 1 cannot reach the judge at all: the 409 happens before any run row or judge call, and once the target is re-saved under version 2 the same request is judged.
 - [X] T026 [P] [US1] Write `tests/integration/test_api_canaries.py` (FR-024, FR-025): canaries save and read back in full; under 8 characters gives 422 on `canaries.{i}`; a duplicate gives 422; omitting the field on `PUT` keeps them and `[]` clears them; changing them needs no new connection test.
 - [X] T027 [P] [US1] Write `tests/integration/test_ui_attack.py` with `api_client` stubbed (FR-032, FR-033, SC-007): the family select, the Run button disabled while a run is in progress, the three blocked-run messages, and that a successful attack renders through `st.code` and never `st.markdown`.
-- [X] T028 [P] [US1] Write `tests/e2e/test_us1_attack.py` (FR-016, FR-036, SC-003, SC-008): against the running sacrificial target with its canary declared, a system-prompt-leak attack finishes `succeeded` with `hard_evidence` true and `judge_used` false — the first test of SC-008. Written and guarded to skip until T013 lands; green via `library_required`. Extend feature 001's `tests/e2e/conftest.py` so the harness passes `HS_TARGET_CANARY` to the target it starts and exposes that value to the tests, keeping FR-036's rule that the end-to-end tests start and stop the target themselves with no manual steps.
+- [X] T028 [P] [US1] Write `tests/e2e/test_us1_attack.py` (FR-016, FR-036, SC-003, SC-008): against the running sacrificial target with its canary declared, a system-prompt-leak attack finishes `succeeded` with `hard_evidence` true and `judge_used` false — the first test of SC-008. Written and guarded to skip until T013b lands; green via `library_required`. Extend feature 001's `tests/e2e/conftest.py` so the harness passes `HS_TARGET_CANARY` to the target it starts and exposes that value to the tests, keeping FR-036's rule that the end-to-end tests start and stop the target themselves with no manual steps.
 
 ### Implementation for User Story 1
 
@@ -183,8 +191,8 @@ Tests and code written in different tasks rely on these:
 
 - [X] T049 [P] Update the root `README.md`: declaring canaries, configuring the judge and what happens without a key, and the per-run judge cost.
 - [X] T050 [P] Update `targets/hs_code/README.md`: `HS_TARGET_CANARY`, the fake `send_email` tool and `GET /debug/tool-calls`, and that the target now has a tool-calling loop.
-- [ ] T051 **(DEFERRED with T013)** Go through the 19 manual checks in [quickstart.md](./quickstart.md) against a running API, screen and sacrificial target. Fix any difference, in the code or in quickstart.md.
-  - Most checks run an attack, which needs the library (T013). Deferred until it is assembled; the offline and e2e suites cover the rest.
+- [ ] T051 **(DEFERRED with T013b)** Go through the 19 manual checks in [quickstart.md](./quickstart.md) against a running API, screen and sacrificial target. Fix any difference, in the code or in quickstart.md.
+  - Most checks run an attack, which needs the library (T013b). Deferred until it is assembled; the offline and e2e suites cover the rest.
 - [X] T052 Review secret hygiene on the judge path across `src/kestrel/**/*.py` and `ui/app.py` (FR-014, FR-015, FR-020, SC-006): confirm no header value, target URL or target name can reach the judge request, the run record or a log line, and that the reply is masked before it is stored, judged or shown (R13).
 - [X] T053 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --directory targets/hs_code pytest`.
 
@@ -204,7 +212,7 @@ Test tasks come before the implementation they cover. Tasks marked [P] touch dif
 ### Task-level dependencies worth knowing
 
 - T006 (schema) blocks T008, T010 and every store test after it.
-- T012 (library loader) blocks T047 and the family routes; T013 (the data file) can be assembled in parallel with T012 but both must land before T028.
+- T012 (library loader) blocks T047 and the family routes. T013a (the import pipeline) can run in parallel with T012. T013b (filling and running it to produce the data file) must land before T028.
 - T015 and T017 (judge) block T029.
 - T018 (terms v2) blocks T025's `terms_outdated` case and T033.
 - T022 (target teeth) blocks T028 and T041, the end-to-end tests.
@@ -212,7 +220,7 @@ Test tasks come before the implementation they cover. Tasks marked [P] touch dif
 
 ### Parallel Opportunities
 
-- Phase 2: T003, T005, T007, T009, T011, T014, T016, T019 and T021 are all tests in separate files and can be written together. T013 (assembling the library) is independent of all the code tasks and can run alongside them.
+- Phase 2: T003, T005, T007, T009, T011, T014, T016, T019 and T021 are all tests in separate files and can be written together. T013a (the import pipeline) is independent of all the code tasks and can run alongside them.
 - Phase 3: T023 to T028 in parallel, then the implementation tasks, of which T030, T034 and T035 touch different files from T029.
 - Phase 6: T049 and T050 together.
 
