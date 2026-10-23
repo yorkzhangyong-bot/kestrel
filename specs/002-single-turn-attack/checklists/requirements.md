@@ -33,4 +33,5 @@
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
 - 16/16 items pass. The one open marker, in FR-009, was resolved with the owner on 2026-10-23: the permission confirmed at registration also covers running attacks, and a cleared permission (feature 001, FR-018) blocks attacks until it is given again.
+- Re-validated on 2026-10-23 after `/speckit-clarify`, which added four decisions (judge disclosure, token caps, a 90-second ceiling, interrupted runs) and grew the spec to 36 requirements and 12 success criteria. Still 16/16.
 - Recorded as a deliberate deferral rather than a checklist failure: this feature creates runs that do not write back to the attack-pattern store, which Principle V calls a bug. See Assumptions in spec.md.
