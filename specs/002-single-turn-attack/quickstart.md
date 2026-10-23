@@ -62,6 +62,12 @@ Register the sacrificial target as in feature 001, then add `KESTREL-CANARY-7Q4M
 
 Checks 2, 4 and 5 together are the three end-to-end tests in SC-008.
 
+**On the model-dependent checks (walkthrough 2026-10-24).** Checks 2, 16 and 19 — and the "suspected" wording in check 4 — only appear when the agent is actually compromised (its canary surfaces, or it calls `send_email`, or the judge rules "succeeded"). The sacrificial target runs `openai/gpt-4o-mini`, which resists these attacks fairly robustly, so against it the live runs come back "failed" and no canary or tool call appears. This is the target model's behaviour, not a Kestrel defect:
+
+- The **detection mechanisms** are proven deterministically: canary-match → "succeeded"/hard-evidence/no-judge in `tests/unit/test_runs.py` and `tests/integration/test_api_runs.py`; the `send_email` recorder and `GET /debug/tool-calls` in `targets/hs_code/tests/`.
+- To **see a positive canary detection in the screen** (check 2/16), point the target at an endpoint whose reply contains the declared canary; the run is then "Attack succeeded · confirmed by canary" with no judge call.
+- All the other checks (1, 3, 5–15, 17, 18) were verified directly and pass. Check 5 required a fix: the run detail now shows the attacker source (`library:<version>`).
+
 ## Tests
 
 ```bash

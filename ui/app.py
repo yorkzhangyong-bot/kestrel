@@ -492,6 +492,11 @@ def render_run_result(run: dict | None, judge: dict) -> None:
         st.caption("(empty reply)")
     if run.get("reason"):
         st.text(run["reason"])
+    # Name the attacker and the OWASP category the run maps to (Principle III, Principle VI).
+    source = run.get("attacker_source")
+    if source:
+        owasp = run.get("owasp_category")
+        st.caption(f"Attacker: {source}" + (f" · {owasp}" if owasp else ""))
 
 
 def _evidence(run: dict) -> str:

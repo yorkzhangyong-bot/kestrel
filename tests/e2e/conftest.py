@@ -108,9 +108,14 @@ def library_required():
         pytest.skip("Attack library data file not assembled yet (T013 deferred).")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def kestrel_api(tmp_path_factory):
-    """Kestrel's API in local mode, with its database and key file in a temp folder."""
+    """Kestrel's API in local mode, with its database and key file in a temp folder.
+
+    Function-scoped: each test gets a fresh database, so a target or run saved by one test does not leak into
+    another (the attack tests save targets; test_us2_save asserts a clean list). The target stays session-scoped,
+    since loading CargoLint is the slow part; restarting the lightweight API per test is cheap.
+    """
     data = tmp_path_factory.mktemp("kestrel")
     port = _free_port()
     log_path = data / "kestrel_api.log"
