@@ -76,9 +76,10 @@ def outcome(step: str, *, detail: str | None = None, status: int | None = None) 
 async def run_test(settings: ResolvedSettings, *, mode: str, display_name: str = "",
                    transport: httpx.AsyncBaseTransport | None = None, resolver: Resolver = default_resolver,
                    deadline_s: float = 60.0, connect_timeout_s: float = 10.0, max_bytes: int = 1_048_576,
-                   max_reply_chars: int = 2000) -> TestOutcome:
+                   max_reply_chars: int = 2000, prompt: str = GREETING) -> TestOutcome:
+    """Send one message (the greeting by default; an attack prompt supplies its own text) and read the reply."""
     started = time.perf_counter()
-    result = await _run(settings, mode, transport, resolver, deadline_s, connect_timeout_s, max_bytes)
+    result = await _run(settings, mode, transport, resolver, deadline_s, connect_timeout_s, max_bytes, prompt)
 
     secrets = [value for _, value in settings.headers]
     if result.detail is not None:
@@ -106,11 +107,11 @@ def _log(result: TestOutcome, settings: ResolvedSettings, display_name: str) -> 
 
 
 async def _run(settings: ResolvedSettings, mode: str, transport: httpx.AsyncBaseTransport | None, resolver: Resolver,
-               deadline_s: float, connect_timeout_s: float, max_bytes: int) -> TestOutcome:
+               deadline_s: float, connect_timeout_s: float, max_bytes: int, prompt: str = GREETING) -> TestOutcome:
     if not await asyncio.to_thread(is_allowed, settings.url, mode, resolver):
         return outcome("address_not_allowed")
 
-    url, body = build_request(settings.method, settings.url, settings.body_template, GREETING)
+    url, body = build_request(settings.method, settings.url, settings.body_template, prompt)
     headers = dict(settings.headers)
     lower = {name.lower() for name in headers}
     if body is not None and "content-type" not in lower:

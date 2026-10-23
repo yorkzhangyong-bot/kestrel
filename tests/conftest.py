@@ -31,8 +31,10 @@ def make_client(settings):
     """Build a TestClient over create_app; tests can pass an httpx.MockTransport and a fake resolver."""
     clients = []
 
-    def make(app_settings: Settings | None = None, *, transport=None, resolver=None) -> TestClient:
-        client = TestClient(create_app(app_settings or settings, transport=transport, resolver=resolver))
+    def make(app_settings: Settings | None = None, *, transport=None, resolver=None, library=None,
+             judge=None) -> TestClient:
+        client = TestClient(create_app(app_settings or settings, transport=transport, resolver=resolver,
+                                       library=library, judge=judge))
         client.__enter__()
         clients.append(client)
         return client

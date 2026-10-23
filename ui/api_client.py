@@ -22,9 +22,9 @@ def base_url() -> str:
     return os.environ.get("KESTREL_API_URL", DEFAULT_API_URL).rstrip("/")
 
 
-def _request(method: str, path: str, *, json: Any = None, timeout: float = 10.0) -> Any:
+def _request(method: str, path: str, *, json: Any = None, params: Any = None, timeout: float = 10.0) -> Any:
     try:
-        response = httpx.request(method, base_url() + path, json=json, timeout=timeout)
+        response = httpx.request(method, base_url() + path, json=json, params=params, timeout=timeout)
     except httpx.HTTPError:
         raise ApiError(0, {"error": {"code": "api_unreachable", "field": None,
                                      "message": "Kestrel's API isn't reachable. Is it running?"}}) from None
@@ -64,3 +64,24 @@ def update_target(target_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 def delete_target(target_id: int) -> None:
     _request("DELETE", f"/api/targets/{target_id}")
+
+
+def attack_families() -> dict[str, Any]:
+    return _request("GET", "/api/attack-families")
+
+
+def attack_prompts(family: str) -> dict[str, Any]:
+    return _request("GET", "/api/attack-prompts", params={"family": family})
+
+
+def run_attack(payload: dict[str, Any]) -> dict[str, Any]:
+    # Above the API's own 90-second deadline, so the API always answers first (FR-013).
+    return _request("POST", "/api/runs", json=payload, timeout=120.0)
+
+
+def list_runs(target_id: int) -> list[dict[str, Any]]:
+    return _request("GET", f"/api/targets/{target_id}/runs")
+
+
+def get_run(run_id: int) -> dict[str, Any]:
+    return _request("GET", f"/api/runs/{run_id}")

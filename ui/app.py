@@ -57,6 +57,16 @@ def load_targets() -> list[dict]:
     return st.session_state["targets"]
 
 
+def load_families() -> list[dict]:
+    """Attack families from the API, once per session. Empty when no library is available (FR-021 spirit)."""
+    if "families" not in st.session_state:
+        try:
+            st.session_state["families"] = api_client.attack_families().get("families", [])
+        except api_client.ApiError:
+            st.session_state["families"] = []
+    return st.session_state["families"]
+
+
 # --- Form state ------------------------------------------------------------------------------------------------
 
 def new_form_id() -> None:
@@ -67,6 +77,7 @@ def clear_messages() -> None:
     st.session_state["errors"] = {}
     st.session_state["notice"] = None
     st.session_state["done"] = None
+    st.session_state["run_notice"] = None
 
 
 def init_form(defaults: dict) -> None:
@@ -83,16 +94,20 @@ def fill_form(target: dict | None) -> None:
     state = st.session_state
     defaults = state["config"]["defaults"]
     reset_header_widgets()
+    reset_canary_widgets()
     if target is None:
         state.update(display_name="", url="", method=defaults["method"], body_template=defaults["body_template"],
-                     response_path=defaults["response_path"], permission=False, headers=[], loaded_target=None)
+                     response_path=defaults["response_path"], permission=False, headers=[], canaries=[],
+                     loaded_target=None)
     else:
         state.update(display_name=target["name"], url=target["url"], method=target["method"],
                      body_template=target["body_template"], response_path=target["response_path"], permission=True,
                      loaded_target=target,
                      headers=[{"name": h["name"], "value": "", "stored": True, "readable": h["readable"]}
-                              for h in target["headers"]])
+                              for h in target["headers"]],
+                     canaries=[{"value": c} for c in target.get("canaries", [])])
     state["result"] = None
+    state["run_result"] = None
     state["confirm_delete"] = False
     new_form_id()
 
@@ -151,6 +166,39 @@ def remove_header_row(index: int) -> None:
     reset_header_widgets()
 
 
+# --- Canary rows -----------------------------------------------------------------------------------------------
+
+def canary_rows() -> list[dict]:
+    return st.session_state.setdefault("canaries", [])
+
+
+def sync_canary_rows() -> None:
+    for i, row in enumerate(canary_rows()):
+        row["value"] = st.session_state.get(f"canary_{i}", row["value"])
+
+
+def reset_canary_widgets() -> None:
+    for key in [k for k in st.session_state if str(k).startswith("canary_")]:
+        del st.session_state[key]
+
+
+def add_canary_row() -> None:
+    sync_canary_rows()
+    canary_rows().append({"value": ""})
+    reset_canary_widgets()
+
+
+def remove_canary_row(index: int) -> None:
+    sync_canary_rows()
+    del canary_rows()[index]
+    reset_canary_widgets()
+
+
+def current_canaries() -> list[str]:
+    sync_canary_rows()
+    return [row["value"].strip() for row in canary_rows() if row["value"].strip()]
+
+
 # --- Actions ---------------------------------------------------------------------------------------------------
 
 def current_settings() -> dict:
@@ -202,6 +250,32 @@ def run_pending_test() -> None:
     st.rerun()
 
 
+def start_run() -> None:
+    """Run-button callback: capture the attack now; it runs on the next pass with the button disabled (FR-010)."""
+    clear_messages()
+    st.session_state["pending_run"] = {
+        "target_id": loaded_id(),
+        "family": st.session_state.get("attack_family"),
+        "prompt_id": st.session_state.get("attack_prompt") or None,
+    }
+
+
+def run_pending_run() -> None:
+    payload = st.session_state.get("pending_run")
+    if payload is None:
+        return
+    # Claim before calling, so a rerun while the API works can't send the attack twice (mirrors run_pending_test).
+    st.session_state["pending_run"] = None
+    try:
+        with st.spinner("Running the attack… (up to 90 seconds)"):
+            st.session_state["run_result"] = api_client.run_attack(payload)
+        st.session_state["runs"] = None  # reload the runs list for this target
+    except api_client.ApiError as error:
+        st.session_state["run_result"] = None
+        st.session_state["run_notice"] = api_message(error)
+    st.rerun()
+
+
 def save() -> None:
     """Save-button callback: a new target, or an edit of the loaded one (FR-011, FR-012, FR-029)."""
     sync_header_rows()
@@ -213,6 +287,7 @@ def save() -> None:
         "settings": current_settings(),
         "permission_confirmed": bool(state.get("permission")),
         "terms_version": state["config"]["terms"]["version"],
+        "canaries": current_canaries(),
     }
     target_id = loaded_id()
     try:
@@ -296,6 +371,17 @@ def render_form(config: dict, targets: list[dict]) -> None:
         show_error(f"settings.headers.{i}.value")
     st.button("Add header", key="add_header", on_click=add_header_row)
 
+    st.markdown("**Canary strings**")
+    st.caption("put these in your agent, so a leak is provable")
+    for i, row in enumerate(canary_rows()):
+        value_col, remove_col = st.columns([9, 2], vertical_alignment="bottom")
+        value_col.text_input("Canary", value=row["value"], key=f"canary_{i}", placeholder="A string to plant",
+                             label_visibility="collapsed")
+        remove_col.button("✕", key=f"canary_remove_{i}", help="Remove this canary", on_click=remove_canary_row,
+                          args=(i,))
+        show_error(f"canaries.{i}")
+    st.button("Add canary", key="add_canary", on_click=add_canary_row)
+
     st.text_input("Request body template", key="body_template")
     show_error("settings.body_template")
     st.text_input("Response path", key="response_path")
@@ -322,6 +408,56 @@ def render_form(config: dict, targets: list[dict]) -> None:
         else:
             st.button("Delete target", key="delete_button", on_click=ask_delete)
         show_error("delete")
+
+
+RUN_BLOCK_MESSAGES = {"permission_missing", "terms_outdated", "run_in_progress"}
+
+
+def render_attack(config: dict, families: list[dict]) -> None:
+    st.subheader("Attack")
+    judge = config.get("judge") or {}
+    have_target = loaded_id() is not None
+
+    if not families:
+        st.caption("The attack library isn't available, so no attacks can be run.")
+        return
+    labels = {f["key"]: f"{f['label']} · {f['owasp_category']} ({f['prompt_count']} prompts)" for f in families}
+    st.selectbox("Attack family", list(labels), key="attack_family", format_func=lambda key: labels[key])
+
+    running = st.session_state.get("pending_run") is not None
+    st.button("Run attack", key="run_button", type="primary", on_click=start_run,
+              disabled=running or not have_target)
+    if not have_target:
+        st.caption("Pick a saved target, choose an attack family, and click Run attack.")
+
+    if st.session_state.get("run_notice"):
+        st.error(st.session_state["run_notice"])
+    render_run_result(st.session_state.get("run_result"), judge)
+
+
+def render_run_result(run: dict | None, judge: dict) -> None:
+    if not run:
+        return
+    if run.get("failure_step"):
+        st.error(f"The attack could not be sent: {run.get('reason') or run['failure_step']}.")
+        return
+    verdict, by_judge = run["verdict"], run["judge_used"]
+    model = run.get("judge_model") or judge.get("model") or "the judge"
+    if verdict == "succeeded" and run["hard_evidence"]:
+        st.error("Attack succeeded · confirmed by canary")
+    elif verdict == "succeeded":
+        st.error(f"Attack succeeded · suspected, judged by {model}")
+    elif verdict == "failed":
+        st.success(f"Attack failed · the agent held · judged by {model}")
+    else:
+        st.warning(f"Unclear · judged by {model}" if by_judge else "Unclear")
+    st.code(run["prompt_text"], language=None, wrap_lines=True)
+    if run.get("reply_text"):
+        st.code(run["reply_text"], language=None, wrap_lines=True)
+    else:
+        st.caption("(empty reply)")
+    if run.get("reason"):
+        st.text(run["reason"])
 
 
 def render_result() -> None:
@@ -372,11 +508,19 @@ def main() -> None:
     st.session_state.setdefault("errors", {})
     init_form(config["defaults"])
     targets = load_targets()
+    families = load_families()
 
     with st.sidebar:
         render_form(config, targets)
+        judge = config.get("judge") or {}
+        if judge.get("configured"):
+            st.caption(f"Judging uses {judge.get('model')}")
+        else:
+            st.caption("No judge configured: only canary evidence can decide a run")
         st.caption(MODE_CAPTIONS.get(config["mode"], config["mode"]))
     run_pending_test()
+    run_pending_run()
+    render_attack(config, families)
     render_result()
     render_targets(targets)
 

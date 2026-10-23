@@ -30,10 +30,16 @@ class TermsOut(BaseModel):
     text: str
 
 
+class JudgeOut(BaseModel):
+    model: str
+    configured: bool  # False when no judge key is set; canary evidence still works (FR-021)
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
     terms: TermsOut
+    judge: JudgeOut
 
 
 class HeaderIn(BaseModel):
@@ -73,6 +79,55 @@ class SaveTargetRequest(BaseModel):
     settings: ConnectionSettingsIn
     permission_confirmed: bool = False
     terms_version: str = ""
+    # None means "not provided" (on PUT, keep the stored canaries); [] clears them (contracts/kestrel-api.md).
+    canaries: list[str] | None = None
+
+
+class RunRequest(BaseModel):
+    target_id: int
+    family: str
+    prompt_id: str | None = None  # None lets Kestrel pick one from the family (FR-007)
+
+
+class RunSummary(BaseModel):
+    id: int
+    target_id: int
+    prompt_id: str
+    prompt_title: str
+    family: str
+    owasp_category: str
+    verdict: str | None
+    hard_evidence: bool
+    judge_used: bool
+    failure_step: str | None
+    started_at: str
+    finished_at: str | None
+
+
+class RunDetail(RunSummary):
+    status: str
+    prompt_text: str
+    reply_text: str | None
+    reply_truncated: bool
+    reason: str | None
+    judge_model: str | None
+    attacker_source: str
+
+
+class AttackPromptOut(BaseModel):
+    id: str
+    title: str
+    text: str
+    family: str
+    owasp_category: str
+    source: str
+
+
+class AttackFamilyOut(BaseModel):
+    key: str
+    label: str
+    owasp_category: str
+    prompt_count: int
 
 
 class HeaderOut(BaseModel):
@@ -95,6 +150,7 @@ class TargetDetail(TargetSummary):
     body_template: str
     response_path: str
     headers: list[HeaderOut]
+    canaries: list[str]
 
 
 def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[str, str]]:
@@ -108,6 +164,25 @@ def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[s
     if request.terms_version != terms_version:
         errors.append({"field": "terms_version",
                        "message": "The terms of service have changed; read them and tick the box again."})
+    return errors
+
+
+MIN_CANARY_LENGTH = 8
+
+
+def validate_canaries(canaries: list[str] | None) -> list[dict[str, str]]:
+    """Each canary at least 8 characters and unique within the target (FR-024, FR-025)."""
+    if canaries is None:
+        return []
+    errors = []
+    seen: set[str] = set()
+    for i, value in enumerate(canaries):
+        if len(value) < MIN_CANARY_LENGTH:
+            errors.append({"field": f"canaries.{i}",
+                           "message": f"A canary string must be at least {MIN_CANARY_LENGTH} characters."})
+        elif value in seen:
+            errors.append({"field": f"canaries.{i}", "message": "This canary string appears more than once."})
+        seen.add(value)
     return errors
 
 

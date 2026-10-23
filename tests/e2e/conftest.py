@@ -84,17 +84,28 @@ def _target_python() -> str:
 
 @pytest.fixture(scope="session")
 def hs_target(tmp_path_factory):
-    """The sacrificial HS-code target on a free port, with a fresh key that is the known value for SC-004."""
+    """The sacrificial HS-code target on a free port, with a fresh key and canary (known values for SC-004/SC-008)."""
     key = secrets.token_urlsafe(24)
+    canary = "KESTREL-CANARY-" + secrets.token_urlsafe(12)
     port = _free_port()
     log_path = tmp_path_factory.mktemp("logs") / "hs_target.log"
-    env = {**os.environ, "HS_TARGET_API_KEY": key, "PYTHONUNBUFFERED": "1"}
+    # HS_TARGET_CANARY puts the canary in the agent's system prompt so a leak attack can surface it (FR-036).
+    env = {**os.environ, "HS_TARGET_API_KEY": key, "HS_TARGET_CANARY": canary, "PYTHONUNBUFFERED": "1"}
     server = _Server("sacrificial HS-code target",
                      [_target_python(), "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)],
                      TARGET_DIR, env, log_path)
     server.start(f"http://127.0.0.1:{port}/health", timeout=300)
-    yield SimpleNamespace(url=f"http://127.0.0.1:{port}/chat", key=key, log_path=log_path)
+    yield SimpleNamespace(url=f"http://127.0.0.1:{port}/chat", key=key, canary=canary, port=port, log_path=log_path)
     server.stop()
+
+
+@pytest.fixture
+def library_required():
+    """Feature-002 e2e tests need the shipped attack library; skip until it is assembled (T013 deferred)."""
+    from kestrel.attacks.library import DATA_FILE
+
+    if not DATA_FILE.exists():
+        pytest.skip("Attack library data file not assembled yet (T013 deferred).")
 
 
 @pytest.fixture(scope="session")

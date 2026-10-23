@@ -11,15 +11,19 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from kestrel.api.schemas import (ConfigOut, ConnectionSettingsIn, ConnectionTestRequest, ConnectionTestResult,
-                                 FormDefaults, HeaderOut, SaveTargetRequest, TargetDetail, TargetSummary, TermsOut,
-                                 validate_save, validate_settings)
+from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, ConfigOut, ConnectionSettingsIn,
+                                 ConnectionTestRequest, ConnectionTestResult, FormDefaults, HeaderOut, JudgeOut,
+                                 RunDetail, RunRequest, RunSummary, SaveTargetRequest, TargetDetail, TargetSummary,
+                                 TermsOut, validate_canaries, validate_save, validate_settings)
+from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import ResolvedSettings, refused, run_test
+from kestrel.judge.client import JudgeClient
+from kestrel.runs import execute_run
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
-from kestrel.store import NameTaken, Target, TargetNotFound, TargetStore
+from kestrel.store import NameTaken, Run, RunInProgress, Target, TargetNotFound, TargetStore
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
@@ -29,8 +33,8 @@ NAME_TAKEN = "Another saved target already has this name."
 
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
-               resolver: Any = None) -> FastAPI:
-    """Build the app. Tests pass settings, an httpx transport standing in for targets, and a fake resolver."""
+               resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None) -> FastAPI:
+    """Build the app. Tests pass settings, an httpx transport for targets, a fake resolver, a library and a judge."""
     settings = settings or load_settings()
     logger = _configure_logging()
     key, _source = load_or_create_key(settings, logger)
@@ -40,6 +44,17 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     if not store.key_matches():
         logger.error("The encryption key doesn't match the one used to save targets, so saved auth header values "
                      "can't be read. Restore the old key, or re-enter the values.")
+    closed = store.close_interrupted_runs()  # release any run the last process left in progress (FR-031)
+    if closed:
+        logger.info("Closed %d run(s) that were interrupted by a previous shutdown.", closed)
+
+    if library is None:
+        try:
+            library = load_library()
+        except LibraryError as error:
+            logger.warning("The attack library could not be loaded, so attacks are unavailable: %s", error)
+    judge = judge or JudgeClient(model=settings.judge_model, api_key=settings.judge_api_key,
+                                 base_url=settings.judge_base_url)
 
     app = FastAPI(title="Kestrel API", version="0.1.0")
     app.state.settings = settings
@@ -48,11 +63,14 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.transport = transport
     app.state.resolver = resolver or default_resolver
     app.state.sessions = FormSessions()
+    app.state.library = library
+    app.state.judge = judge
     app.add_exception_handler(RequestValidationError, _validation_error)
 
     @app.get("/api/config", response_model=ConfigOut)
     def get_config() -> ConfigOut:
-        return ConfigOut(mode=settings.mode, defaults=DEFAULTS, terms=terms)
+        return ConfigOut(mode=settings.mode, defaults=DEFAULTS, terms=terms,
+                         judge=JudgeOut(model=settings.judge_model, configured=app.state.judge.configured))
 
     @app.post("/api/connection-tests", response_model=ConnectionTestResult)
     async def connection_test(body: ConnectionTestRequest, request: Request) -> Any:
@@ -93,7 +111,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
 
     @app.post("/api/targets", status_code=201, response_model=TargetDetail)
     def save_target(body: SaveTargetRequest, request: Request) -> Any:
-        errors = validate_settings(body.settings, has_target=False) + validate_save(body, terms.version)
+        errors = (validate_settings(body.settings, has_target=False) + validate_save(body, terms.version)
+                  + validate_canaries(body.canaries))
         if errors:
             return form_errors(errors)
         resolved = resolve(body.settings)
@@ -104,14 +123,16 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             target = store.create_target(name=body.name.strip(), url=resolved.url, method=resolved.method,
                                          headers=list(resolved.headers), body_template=resolved.body_template,
                                          response_path=resolved.response_path, terms_version=terms.version)
+            if body.canaries:
+                store.set_canaries(target.id, body.canaries)
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
-        return detail(target)
+        return detail(store.get_target(target.id), store.list_canaries(target.id))
 
     @app.get("/api/targets/{target_id}", response_model=TargetDetail)
     def get_target(target_id: int) -> Any:
         try:
-            return detail(store.get_target(target_id))
+            return detail(store.get_target(target_id), store.list_canaries(target_id))
         except TargetNotFound:
             return not_found(target_id)
 
@@ -123,7 +144,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         except TargetNotFound:
             return not_found(target_id)
         errors = (validate_settings(body.settings, has_target=True) + kept_value_errors(body.settings, stored)
-                  + validate_save(body, terms.version))
+                  + validate_save(body, terms.version) + validate_canaries(body.canaries))
         if errors:
             return form_errors(errors)
 
@@ -142,7 +163,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                          terms_version=terms.version)
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
-        return detail(target)
+        if body.canaries is not None:  # None keeps the stored canaries; [] clears them (contracts/kestrel-api.md)
+            store.set_canaries(target_id, body.canaries)
+        return detail(store.get_target(target_id), store.list_canaries(target_id))
 
     @app.delete("/api/targets/{target_id}", status_code=204)
     def delete_target(target_id: int) -> Response:
@@ -151,6 +174,78 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         except TargetNotFound:
             return not_found(target_id)
         return Response(status_code=204)
+
+    @app.post("/api/runs", status_code=201, response_model=RunDetail)
+    async def start_run(body: RunRequest, request: Request) -> Any:
+        library: AttackLibrary | None = request.app.state.library
+        if library is None:
+            return api_error(503, "library_unavailable", "The attack library is not available.")
+        try:
+            target = store.get_target(body.target_id)
+        except TargetNotFound:
+            return not_found(body.target_id)
+
+        # Preconditions are checked before any run row is written (contracts/kestrel-api.md).
+        if not target.permission_confirmed_at:
+            return api_error(409, "permission_missing",
+                             "Tick the permission box and save the target before attacking it.")
+        if target.terms_version != terms.version:
+            return api_error(409, "terms_outdated",
+                             "The terms of service have changed; read them and tick the box again.")
+        try:
+            prompt = library.pick(body.family, body.prompt_id)
+        except LookupError as error:
+            field = "prompt_id" if body.prompt_id else "family"
+            return form_errors([{"field": field, "message": str(error)}])
+
+        resolved = ResolvedSettings(
+            url=target.url, method=target.method,
+            headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
+                          for h in target.headers),
+            body_template=target.body_template, response_path=target.response_path)
+        try:
+            run = await execute_run(store, target_id=target.id, prompt=prompt,
+                                    attacker_source=library.attacker_source, canaries=store.list_canaries(target.id),
+                                    resolved=resolved, mode=settings.mode, judge=request.app.state.judge,
+                                    transport=request.app.state.transport, resolver=request.app.state.resolver)
+        except RunInProgress:
+            return api_error(409, "run_in_progress", "A run against this target is already in progress.")
+        return run_detail(run)
+
+    @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
+    def list_runs(target_id: int) -> Any:
+        try:
+            return [run_summary(run) for run in store.list_runs(target_id)]
+        except TargetNotFound:
+            return not_found(target_id)
+
+    @app.get("/api/runs/{run_id}", response_model=RunDetail)
+    def get_run(run_id: int) -> Any:
+        try:
+            return run_detail(store.get_run(run_id))
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+
+    @app.get("/api/attack-families")
+    def attack_families(request: Request) -> Any:
+        library: AttackLibrary | None = request.app.state.library
+        if library is None:
+            return api_error(503, "library_unavailable", "The attack library is not available.")
+        return {"library_version": library.version,
+                "families": [AttackFamilyOut(**f).model_dump() for f in library.families()]}
+
+    @app.get("/api/attack-prompts")
+    def attack_prompts(family: str, request: Request) -> Any:
+        library: AttackLibrary | None = request.app.state.library
+        if library is None:
+            return api_error(503, "library_unavailable", "The attack library is not available.")
+        try:
+            prompts = library.prompts_in(family)
+        except LookupError as error:
+            return form_errors([{"field": "family", "message": str(error)}])
+        return {"prompts": [AttackPromptOut(id=p.id, title=p.title, text=p.text, family=p.family,
+                                            owasp_category=p.owasp_category, source=p.source).model_dump()
+                            for p in prompts]}
 
     return app
 
@@ -192,10 +287,24 @@ def summary(target: Target) -> TargetSummary:
                          permission_confirmed_at=target.permission_confirmed_at, terms_version=target.terms_version)
 
 
-def detail(target: Target) -> TargetDetail:
+def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
     return TargetDetail(**summary(target).model_dump(), body_template=target.body_template,
                         response_path=target.response_path,
-                        headers=[HeaderOut(name=h.name, has_value=True, readable=h.readable) for h in target.headers])
+                        headers=[HeaderOut(name=h.name, has_value=True, readable=h.readable) for h in target.headers],
+                        canaries=canaries if canaries is not None else [])
+
+
+def run_summary(run: Run) -> RunSummary:
+    return RunSummary(id=run.id, target_id=run.target_id, prompt_id=run.prompt_id, prompt_title=run.prompt_title,
+                      family=run.family, owasp_category=run.owasp_category, verdict=run.verdict,
+                      hard_evidence=run.hard_evidence, judge_used=run.judge_used, failure_step=run.failure_step,
+                      started_at=run.started_at, finished_at=run.finished_at)
+
+
+def run_detail(run: Run) -> RunDetail:
+    return RunDetail(**run_summary(run).model_dump(), status=run.status, prompt_text=run.prompt_text,
+                     reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
+                     judge_model=run.judge_model, attacker_source=run.attacker_source)
 
 
 def load_terms(path: Path = TERMS_PATH) -> TermsOut:
