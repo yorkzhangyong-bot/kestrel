@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MVP architecture</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#2458b3}a:hover{color:#183d80}
+</style>
+</helmet>
+<div style="position: relative; width: 1440px; height: 1000px; background: #ffffff; font-family: ui-sans-serif, system-ui, 'Segoe UI', 'Noto Sans', 'Noto Sans SC', sans-serif; font-size: 15px; line-height: 20px; color: #1f2328">
+
+<div style="position: absolute; left: 110px; top: 368px; width: 1260px; height: 200px; background: #eef2fb; border: 1px solid #c7d3ee; border-radius: 14px"></div>
+<div style="position: absolute; left: 450px; top: 600px; width: 240px; height: 336px; background: #fdf3ec; border: 1px solid #efd4bf; border-radius: 14px"></div>
+
+<svg width="8" height="47" viewBox="0 0 8 47" preserveAspectRatio="none" style="position: absolute; left: 683px; top: 200px; width: 8px; height: 47px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-1" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 4 0 L 4 43" marker-end="url(#dc-arrow-head-filled-1)"></path></svg>
+<svg width="8" height="47" viewBox="0 0 8 47" preserveAspectRatio="none" style="position: absolute; left: 749px; top: 201px; width: 8px; height: 47px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-2" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 4 47 L 4 4" marker-end="url(#dc-arrow-head-filled-2)"></path></svg>
+<svg width="8" height="47" viewBox="0 0 8 47" preserveAspectRatio="none" style="position: absolute; left: 716px; top: 320px; width: 8px; height: 47px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-3" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 4 0 L 4 43" marker-end="url(#dc-arrow-head-filled-3)"></path></svg>
+
+<svg width="8" height="26" viewBox="0 0 8 26" preserveAspectRatio="none" style="position: absolute; left: 906px; top: 414px; width: 8px; height: 26px; overflow: visible; fill: none; stroke: #2458b3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><path d="M 4 26 L 4 0"></path></svg>
+<svg width="680" height="8" viewBox="0 0 680 8" preserveAspectRatio="none" style="position: absolute; left: 230px; top: 410px; width: 680px; height: 8px; overflow: visible; fill: none; stroke: #2458b3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><path d="M 680 4 L 0 4"></path></svg>
+<svg width="8" height="15" viewBox="0 0 8 15" preserveAspectRatio="none" style="position: absolute; left: 226px; top: 414px; width: 8px; height: 15px; overflow: visible; fill: none; stroke: #2458b3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-4" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#2458b3" stroke="none" style="stroke: none; fill: #2458b3; fill: context-stroke"/></marker></defs><path d="M 4 0 L 4 11" marker-end="url(#dc-arrow-head-filled-4)"></path></svg>
+
+<svg width="139" height="8" viewBox="0 0 139 8" preserveAspectRatio="none" style="position: absolute; left: 330px; top: 472px; width: 139px; height: 8px; overflow: visible; fill: none; stroke: #2458b3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-5" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#2458b3" stroke="none" style="stroke: none; fill: #2458b3; fill: context-stroke"/></marker></defs><path d="M 0 4 L 135 4" marker-end="url(#dc-arrow-head-filled-5)"></path></svg>
+<svg width="139" height="8" viewBox="0 0 139 8" preserveAspectRatio="none" style="position: absolute; left: 670px; top: 472px; width: 139px; height: 8px; overflow: visible; fill: none; stroke: #2458b3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-6" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#2458b3" stroke="none" style="stroke: none; fill: #2458b3; fill: context-stroke"/></marker></defs><path d="M 0 4 L 135 4" marker-end="url(#dc-arrow-head-filled-6)"></path></svg>
+<svg width="139" height="8" viewBox="0 0 139 8" preserveAspectRatio="none" style="position: absolute; left: 1010px; top: 460px; width: 139px; height: 8px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-7" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 0 4 L 135 4" marker-end="url(#dc-arrow-head-filled-7)"></path></svg>
+<svg width="138" height="8" viewBox="0 0 138 8" preserveAspectRatio="none" style="position: absolute; left: 1011px; top: 484px; width: 138px; height: 8px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-8" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 138 4 L 4 4" marker-end="url(#dc-arrow-head-filled-8)"></path></svg>
+
+<svg width="8" height="97" viewBox="0 0 8 97" preserveAspectRatio="none" style="position: absolute; left: 226px; top: 523px; width: 8px; height: 97px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-9" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 4 97 L 4 4" marker-end="url(#dc-arrow-head-filled-9)"></path></svg>
+<svg width="8" height="87" viewBox="0 0 8 87" preserveAspectRatio="none" style="position: absolute; left: 566px; top: 512px; width: 8px; height: 87px; overflow: visible; fill: none; stroke: #c2611b; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-10" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#c2611b" stroke="none" style="stroke: none; fill: #c2611b; fill: context-stroke"/></marker></defs><path d="M 4 0 L 4 83" marker-end="url(#dc-arrow-head-filled-10)"></path></svg>
+<svg width="8" height="107" viewBox="0 0 8 107" preserveAspectRatio="none" style="position: absolute; left: 906px; top: 512px; width: 8px; height: 107px; overflow: visible; fill: none; stroke: #6b7280; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-11" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#6b7280" stroke="none" style="stroke: none; fill: #6b7280; fill: context-stroke"/></marker></defs><path d="M 4 0 L 4 103" marker-end="url(#dc-arrow-head-filled-11)"></path></svg>
+
+<svg width="8" height="268" viewBox="0 0 8 268" preserveAspectRatio="none" style="position: absolute; left: 906px; top: 692px; width: 8px; height: 268px; overflow: visible; fill: none; stroke: #7c3aed; stroke-width: 2; stroke-dasharray: 6 5; stroke-linecap: round; stroke-linejoin: round"><path d="M 4 0 L 4 268"></path></svg>
+<svg width="680" height="8" viewBox="0 0 680 8" preserveAspectRatio="none" style="position: absolute; left: 230px; top: 956px; width: 680px; height: 8px; overflow: visible; fill: none; stroke: #7c3aed; stroke-width: 2; stroke-dasharray: 6 5; stroke-linecap: round; stroke-linejoin: round"><path d="M 680 4 L 0 4"></path></svg>
+<svg width="8" height="268" viewBox="0 0 8 268" preserveAspectRatio="none" style="position: absolute; left: 226px; top: 692px; width: 8px; height: 268px; overflow: visible; fill: none; stroke: #7c3aed; stroke-width: 2; stroke-dasharray: 6 5; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-12" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#7c3aed" stroke="none" style="stroke: none; fill: #7c3aed; fill: context-stroke"/></marker></defs><path d="M 4 268 L 4 4" marker-end="url(#dc-arrow-head-filled-12)"></path></svg>
+<div style="position: absolute; left: 690px; top: 966px; width: 240px; text-align: center; font-size: 13px; line-height: 16px; font-weight: 600; color: #7c3aed">after each run: write back what worked / failed per target (long-term memory)</div>
+
+<div style="position: absolute; left: 64px; top: 64px; font-size: 24px; line-height: 32px; font-weight: 700">MVP architecture: attacker – target – judge loop</div>
+
+<div style="position: absolute; left: 620px; top: 128px; width: 200px; height: 72px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>Streamlit UI</b><br>launch runs, status, compare</span></div>
+<div style="position: absolute; left: 620px; top: 248px; width: 200px; height: 72px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>FastAPI</b><br>runs, rate limits,<br>target auth headers</span></div>
+
+<div style="position: absolute; left: 130px; top: 430px; width: 200px; height: 92px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 2px solid #2458b3; border-radius: 10px"><span><b>Attacker</b><br>LangGraph agent · DeepSeek / Qwen (won’t refuse)</span></div>
+<div style="position: absolute; left: 470px; top: 440px; width: 200px; height: 72px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>Target adapter</b><br>logs every tool call</span></div>
+<div style="position: absolute; left: 810px; top: 440px; width: 200px; height: 72px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 2px solid #2458b3; border-radius: 10px"><span><b>Judge</b><br>strict paid LLM + canary check</span></div>
+<div style="position: absolute; left: 1150px; top: 440px; width: 200px; height: 72px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>Jailbreak classifier</b><br>fine-tuned, cheap pre-filter</span></div>
+
+<div style="position: absolute; left: 130px; top: 612px; width: 200px; height: 88px; box-sizing: border-box; padding: 6px 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px; font-size: 12px; line-height: 15px"><span><b>ChromaDB</b> (one collection)<br><span style="color: #4b5563">type: pattern</span> — shared attack library, any target<br><span style="color: #7c3aed">type: memory</span> — per-target lessons (write-back)</span></div>
+<div style="position: absolute; left: 810px; top: 620px; width: 200px; height: 72px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>Report</b><br>OWASP mapping · risk score</span></div>
+
+<div style="position: absolute; left: 470px; top: 640px; width: 200px; height: 64px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>HS-code agent</b><br>own target · fake email tool</span></div>
+<div style="position: absolute; left: 470px; top: 728px; width: 200px; height: 64px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>Damn Vulnerable LLM Agent</b><br>open source · local</span></div>
+<div style="position: absolute; left: 470px; top: 816px; width: 200px; height: 64px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #ffffff; border: 1px solid #c9cdd2; border-radius: 10px"><span><b>AIGoat</b><br>open source · local</span></div>
+
+<div style="position: absolute; left: 122px; top: 380px; font-size: 13px; line-height: 16px; font-weight: 600; color: #2458b3">LangGraph attack loop · adaptive, up to N turns per attack</div>
+<div style="position: absolute; left: 462px; top: 612px; font-size: 13px; line-height: 16px; font-weight: 600; color: #c2611b">Targets · one per run</div>
+
+<div style="position: absolute; left: 595px; top: 216px; width: 80px; text-align: right; font-size: 13px; line-height: 16px; color: #4b5563">start run</div>
+<div style="position: absolute; left: 765px; top: 216px; width: 120px; font-size: 13px; line-height: 16px; color: #4b5563">status · scores</div>
+<div style="position: absolute; left: 500px; top: 392px; width: 140px; text-align: center; font-size: 13px; line-height: 16px; color: #2458b3">next turn</div>
+<div style="position: absolute; left: 344px; top: 444px; width: 112px; text-align: center; font-size: 13px; line-height: 16px; color: #4b5563">attack prompt</div>
+<div style="position: absolute; left: 688px; top: 444px; width: 104px; text-align: center; font-size: 13px; line-height: 16px; color: #4b5563">reply + trace</div>
+<div style="position: absolute; left: 1056px; top: 432px; width: 48px; text-align: center; font-size: 13px; line-height: 16px; color: #4b5563">reply</div>
+<div style="position: absolute; left: 1044px; top: 500px; width: 72px; text-align: center; font-size: 13px; line-height: 16px; color: #4b5563">0/1 score</div>
+<div style="position: absolute; left: 242px; top: 558px; width: 128px; font-size: 13px; line-height: 16px; color: #4b5563">similar patterns + memory for this target</div>
+<div style="position: absolute; left: 582px; top: 548px; width: 128px; font-size: 13px; line-height: 16px; color: #4b5563">HTTP / tool calls</div>
+<div style="position: absolute; left: 922px; top: 558px; width: 80px; font-size: 13px; line-height: 16px; color: #4b5563">verdicts</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
