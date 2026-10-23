@@ -24,6 +24,15 @@
 >
 > Out of scope for this feature: attacks, judge, ChromaDB, reports, multiple users, login.
 
+## Clarifications
+
+### Session 2026-10-23
+
+- Q: Will Kestrel run on a server reachable from the internet (for example a capstone demo) before login is added? → A: It may. When Kestrel runs hosted, Test connection refuses localhost, private-network and cloud-metadata addresses; on the user's own machine they stay allowed.
+- Q: How should Kestrel display an agent's reply? → A: As plain text, exactly as received; markdown, HTML, links and images in it are never rendered or loaded.
+- Q: Should this feature also add the terms of service that put liability on the user (Principle VIII)? → A: Yes. A short terms text is linked next to the permission checkbox; ticking the box accepts it, and the accepted version and date are stored with the permission.
+- Q: How long should Test connection wait for a reply before it gives up? → A: A fixed 60 seconds.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Test the connection to my agent (Priority: P1)
@@ -59,6 +68,7 @@ After a successful test, the user ticks "I own this agent or have written permis
 3. **Given** no successful test connection for the current settings, **When** the user tries to save, **Then** saving is blocked and the user is told to run a successful test first.
 4. **Given** a successful test, **When** the user changes the endpoint URL, HTTP method, auth headers, request body template or response path, **Then** saving is blocked until a new test succeeds.
 5. **Given** a saved target, **When** Kestrel restarts, **Then** the target is still in the list.
+6. **Given** a partly filled form, **When** the user opens the terms link next to the permission checkbox, **Then** the terms of service are shown and the form input is kept.
 
 ---
 
@@ -83,13 +93,15 @@ The user picks a saved target from the list to see its details, test it again, e
 ### Edge Cases
 
 - A required field is empty, the URL is not a valid http or https address, or the prompt placeholder is missing or appears more than once: the form names the field at fault and nothing is sent.
-- The agent does not answer within 30 seconds: the test stops and shows the "timed out" message.
+- The agent does not answer within 60 seconds: the test stops and shows the "timed out" message.
 - The endpoint answers with an error status other than an authentication refusal (for example 404 or 500): the "endpoint error" message is shown with the status code.
 - The endpoint answers with a redirect: Kestrel does not follow it, so auth header values are never sent to another address, and shows the "endpoint error" message with the redirect location so the user can update the URL.
+- Kestrel runs hosted and the URL points to localhost, a private network or a cloud-metadata address, directly or through a name that resolves to one: the test is refused before anything is sent (FR-028).
 - The secure connection fails (for example, an untrusted certificate): shown as "unreachable", naming the certificate problem.
 - The response path matches something other than text (a list, an object, a number or nothing): the "reply is not text" message is shown.
 - The reply text is empty: the test counts as successful and shows "(empty reply)".
 - The reply is very long: the first 2,000 characters are shown, with a note that it was shortened.
+- The reply contains markdown, HTML, a script, a link or an image reference: it is shown as plain text, and nothing in it is loaded or clickable.
 - The agent's reply or an error detail contains one of the target's auth header values: the value is masked before display.
 - The user clicks "Test connection" again while a test is running: no second request is sent.
 - A display name is already used by another saved target, ignoring letter case: saving is blocked with a message.
@@ -111,10 +123,10 @@ The user picks a saved target from the list to see its details, test it again, e
 
 - **FR-005**: "Test connection" MUST send exactly one request to the endpoint, built from the current form values, with the prompt placeholder replaced by the greeting `Hello`.
 - **FR-006**: Filling in the placeholder MUST produce a well-formed request even when the prompt contains quotes, backslashes, line breaks or non-ASCII characters, so that later features can send any attack text.
-- **FR-007**: On success, the system MUST show the reply text found at the response path.
+- **FR-007**: On success, the system MUST show the reply text found at the response path as plain text, exactly as received: markdown, HTML, links and images in it are shown as characters and never rendered, followed or loaded. The same applies to any text from the target that appears in an error message.
 - **FR-008**: On failure, the system MUST show one message naming the step that failed:
   - **Unreachable**: no connection could be made to the URL.
-  - **Timed out**: no response arrived within 30 seconds.
+  - **Timed out**: no response arrived within 60 seconds.
   - **Authentication rejected**: the endpoint refused the request as unauthorized or forbidden (status 401 or 403).
   - **Endpoint error**: any other error status, or a redirect, shown with its status code and, for a redirect, its location.
   - **Non-JSON response**: the endpoint answered successfully, but the body is not JSON.
@@ -125,10 +137,10 @@ The user picks a saved target from the list to see its details, test it again, e
 
 **Saving**
 
-- **FR-011**: The system MUST NOT save a target unless the checkbox "I own this agent or have written permission to test it" is ticked.
+- **FR-011**: The system MUST NOT save a target unless the checkbox "I own this agent or have written permission to test it" is ticked. Ticking it also accepts the terms of service (FR-029).
 - **FR-012**: The system MUST NOT save a target unless the most recent test connection succeeded with exactly the connection settings being saved (endpoint URL, HTTP method, auth headers, request body template, response path). Changing only the display name MUST NOT require a new test.
 - **FR-013**: Display names MUST be unique among saved targets, ignoring letter case.
-- **FR-014**: Saved targets, including the permission confirmation and the date it was given, MUST persist across restarts of Kestrel.
+- **FR-014**: Saved targets, including the permission confirmation, the date it was given and the version of the terms accepted, MUST persist across restarts of Kestrel.
 
 **Managing saved targets**
 
@@ -152,9 +164,17 @@ The user picks a saved target from the list to see its details, test it again, e
 - **FR-026**: The sacrificial target MUST require an auth header with a known test value and refuse requests without it, or with a wrong value, as unauthorized (status 401). The end-to-end tests then also cover auth headers and the "authentication rejected" message.
 - **FR-027**: The end-to-end tests MUST start the sacrificial target themselves and stop it afterwards, with no manual steps beyond CargoLint's one-time setup.
 
+**Running on a server**
+
+- **FR-028**: Whether Kestrel runs on the user's own machine or hosted on a server MUST be a deployment setting, and Kestrel MUST behave as hosted when the setting is missing. When hosted, Test connection MUST refuse, before sending anything, any endpoint whose address is localhost, on a private network or link-local (which covers cloud-metadata addresses), including names that resolve to such an address, and MUST say that these addresses only work when Kestrel runs on the user's own machine. On the user's own machine these addresses MUST stay allowed.
+
+**Terms of service**
+
+- **FR-029**: A link next to the permission checkbox MUST open a short terms of service without losing what the user has typed into the form. The terms MUST say that the user owns the agent or has written permission to test it, that the user is responsible for every test and scan they run against it, and that Kestrel only sends plain conversational messages within fixed limits. The terms MUST carry a version number, and the version accepted is stored with the permission confirmation.
+
 ### Key Entities
 
-- **Target**: An agent endpoint the user registered. Holds a unique display name, the endpoint URL, the HTTP method, its auth headers, the request body template, the response path, and the permission confirmation with the date it was given.
+- **Target**: An agent endpoint the user registered. Holds a unique display name, the endpoint URL, the HTTP method, its auth headers, the request body template, the response path, and the permission confirmation with the date it was given and the version of the terms accepted.
 - **Auth header**: A name and a secret value belonging to one target. The value is stored encrypted and never shown in full.
 - **Connection test result**: The outcome of one test: either the reply text, or the step that failed and its message. It is shown to the user and not stored.
 
@@ -163,23 +183,26 @@ The user picks a saved target from the list to see its details, test it again, e
 ### Measurable Outcomes
 
 - **SC-001**: A user who knows their agent's endpoint, request format and reply field can test and save it in under 3 minutes on the first attempt.
-- **SC-002**: Every test connection ends with a reply or a failure message; none waits longer than the 30-second time limit.
+- **SC-002**: Every test connection ends with a reply or a failure message; none waits longer than the 60-second time limit.
 - **SC-003**: For each failure step in FR-008, a deliberately caused failure is reported under that step, with no misclassifications.
 - **SC-004**: Across all acceptance tests, a known test value used as an auth header value appears 0 times in logs, error messages, the target list or any other output.
 - **SC-005**: Every attempt to save without the permission checkbox ticked, or without a successful test of the current connection settings, is blocked, with no exceptions.
 - **SC-006**: Three end-to-end tests pass against the sacrificial HS-code target: its reply is shown; a wrong response path shows "response path not found"; after a successful test, saving without the permission checkbox is blocked.
+- **SC-007**: When Kestrel runs hosted, every test connection to localhost, a private-network or a cloud-metadata address, including through a name that resolves to one, is refused without a request being sent.
+- **SC-008**: A reply containing HTML, a script, a link and an image reference is displayed as plain text, and displaying it makes 0 requests to any outside address.
 
 ## Assumptions
 
 - Single user, no login (constitution Principle IX). Multiple users and login are out of scope.
 - Also out of scope for this feature: attacks, the judge, the attack-pattern store and reports.
 - A test connection is not a scan. It produces no findings and writes nothing to the attack-pattern store; the write-back rule in Principle V applies to scan runs.
-- For now Kestrel runs as a single-user tool on the user's own machine, so endpoints on localhost or a private network are allowed. Before Kestrel is reachable from the internet, requests to private and internal addresses must be restricted; otherwise anyone could use Kestrel to reach the server's own network.
+- Kestrel may run hosted, for example as a capstone demo, before login exists. FR-028 stops a hosted copy from reaching its own internal network. Login, and with it protection against strangers using a hosted copy, comes at public launch (Principle IX).
 - Endpoints take a JSON request and return a JSON response. Streaming replies and other formats are out of scope.
 - Only POST and GET are offered; other methods can be added later.
 - Credentials belong in auth headers. Anything typed into the URL or the request body template is not treated as a secret.
-- The greeting is the fixed text "Hello", and a test times out after 30 seconds.
+- The greeting is the fixed text "Hello", and a test times out after a fixed 60 seconds.
 - Auth header values are fully masked when shown; revealing part of a value is not offered.
+- The terms of service are a short plain-language text written for the MVP; they get a legal review before public launch.
 - Response paths use the notation of the form default: `$` for the whole response, dots for fields and `[n]` for list positions, for example `$.choices[0].message.content`.
 - Dependency: the HS-code matching agent is CargoLint, a separate repo (`C:\ai\CargoLint`) that runs as an interactive app with no HTTP endpoint. The sacrificial HS-code target in this repo (FR-024 to FR-027) wraps it. Running the target needs CargoLint's one-time setup on the same machine: its knowledge base and its model-provider API key.
 - End-to-end tests against the sacrificial target make real model calls through CargoLint, so they need network access and cost a small amount per run.
