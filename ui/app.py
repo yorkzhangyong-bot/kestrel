@@ -67,6 +67,17 @@ def load_families() -> list[dict]:
     return st.session_state["families"]
 
 
+def load_runs(target_id: int) -> list[dict]:
+    """Runs for the selected target, cached until a new run or a target change clears them (FR-028)."""
+    if st.session_state.get("runs") is None:
+        try:
+            st.session_state["runs"] = api_client.list_runs(target_id)
+        except api_client.ApiError as error:
+            st.session_state["notice"] = api_message(error)
+            return []
+    return st.session_state["runs"]
+
+
 # --- Form state ------------------------------------------------------------------------------------------------
 
 def new_form_id() -> None:
@@ -108,6 +119,7 @@ def fill_form(target: dict | None) -> None:
                      canaries=[{"value": c} for c in target.get("canaries", [])])
     state["result"] = None
     state["run_result"] = None
+    state["runs"] = None  # reload the runs list for the newly selected target
     state["confirm_delete"] = False
     new_form_id()
 
@@ -460,6 +472,39 @@ def render_run_result(run: dict | None, judge: dict) -> None:
         st.text(run["reason"])
 
 
+def _evidence(run: dict) -> str:
+    if run.get("failure_step"):
+        return "—"
+    if run["hard_evidence"]:
+        return "canary"
+    return f"judge · {run['judge_model']}" if run["judge_used"] else "—"
+
+
+def render_runs(config: dict) -> None:
+    st.subheader("Runs")
+    target_id = loaded_id()
+    if target_id is None:
+        st.caption("Select a saved target to see its runs.")
+        return
+    runs = load_runs(target_id)
+    if not runs:
+        st.caption("No runs yet for this target.")
+        return
+    st.dataframe([{"When": r["started_at"][:19].replace("T", " "), "Family": r["family"],
+                   "Prompt": r["prompt_title"], "Verdict": r["verdict"] or r["failure_step"] or "—",
+                   "Evidence": _evidence(r)} for r in runs], hide_index=True)
+
+    labels = {r["id"]: f"{r['started_at'][:19].replace('T', ' ')} · {r['prompt_title']}" for r in runs}
+    chosen = st.selectbox("Open a run", [None, *labels], key="open_run",
+                          format_func=lambda rid: "Choose a run to see its prompt and reply" if rid is None
+                          else labels[rid])
+    if chosen is not None:
+        try:
+            render_run_result(api_client.get_run(chosen), config.get("judge") or {})
+        except api_client.ApiError as error:
+            st.error(api_message(error))
+
+
 def render_result() -> None:
     st.subheader("Connection test")
     if st.session_state.get("notice"):
@@ -521,6 +566,7 @@ def main() -> None:
     run_pending_test()
     run_pending_run()
     render_attack(config, families)
+    render_runs(config)
     render_result()
     render_targets(targets)
 

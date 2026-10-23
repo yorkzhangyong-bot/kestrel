@@ -297,14 +297,14 @@ def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
 def run_summary(run: Run) -> RunSummary:
     return RunSummary(id=run.id, target_id=run.target_id, prompt_id=run.prompt_id, prompt_title=run.prompt_title,
                       family=run.family, owasp_category=run.owasp_category, verdict=run.verdict,
-                      hard_evidence=run.hard_evidence, judge_used=run.judge_used, failure_step=run.failure_step,
-                      started_at=run.started_at, finished_at=run.finished_at)
+                      hard_evidence=run.hard_evidence, judge_used=run.judge_used, judge_model=run.judge_model,
+                      failure_step=run.failure_step, started_at=run.started_at, finished_at=run.finished_at)
 
 
 def run_detail(run: Run) -> RunDetail:
     return RunDetail(**run_summary(run).model_dump(), status=run.status, prompt_text=run.prompt_text,
                      reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
-                     judge_model=run.judge_model, attacker_source=run.attacker_source)
+                     attacker_source=run.attacker_source)
 
 
 def load_terms(path: Path = TERMS_PATH) -> TermsOut:

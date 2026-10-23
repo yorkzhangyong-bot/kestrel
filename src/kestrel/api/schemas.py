@@ -99,6 +99,7 @@ class RunSummary(BaseModel):
     verdict: str | None
     hard_evidence: bool
     judge_used: bool
+    judge_model: str | None  # in the summary so the runs table can show "judge · <model>" (contracts/ui-screen.md)
     failure_step: str | None
     started_at: str
     finished_at: str | None
@@ -110,7 +111,6 @@ class RunDetail(RunSummary):
     reply_text: str | None
     reply_truncated: bool
     reason: str | None
-    judge_model: str | None
     attacker_source: str
 
 

@@ -142,16 +142,16 @@ Tests and code written in different tasks rely on these:
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T038 [P] [US2] Write `tests/integration/test_api_run_history.py` (FR-028, FR-030, SC-010): `GET /api/targets/{id}/runs` is newest first and 404s for an unknown target; `GET /api/runs/{id}` returns RunDetail and 404s; deleting a target removes its runs.
-- [ ] T039 [P] [US2] Write `tests/integration/test_api_startup_sweep.py` (FR-031, SC-012): a database holding an `in_progress` row is swept on start-up to `unclear` with an interrupted reason, the count is logged, and a new run against that target can then be claimed.
-- [ ] T040 [P] [US2] Write `tests/integration/test_ui_runs.py` with `api_client` stubbed (FR-028, FR-032): the runs table shows when, family, prompt title, verdict and evidence; with no target selected it shows the empty line; opening a row shows prompt, reply and reason through `st.code`.
-- [ ] T041 [P] [US2] Write `tests/e2e/test_us2_judged_run.py` (FR-005, FR-019, SC-004, SC-008): a harmless prompt against the sacrificial target is judged `failed`, and the stored run names the judge model — the second and third tests of SC-008.
+- [X] T038 [P] [US2] Write `tests/integration/test_api_run_history.py` (FR-028, FR-030, SC-010): `GET /api/targets/{id}/runs` is newest first and 404s for an unknown target; `GET /api/runs/{id}` returns RunDetail and 404s; deleting a target removes its runs.
+- [X] T039 [P] [US2] Write `tests/integration/test_api_startup_sweep.py` (FR-031, SC-012): a database holding an `in_progress` row is swept on start-up to `unclear` with an interrupted reason, the count is logged, and a new run against that target can then be claimed.
+- [X] T040 [P] [US2] Write `tests/integration/test_ui_runs.py` with `api_client` stubbed (FR-028, FR-032): the runs table shows when, family, prompt title, verdict and evidence; with no target selected it shows the empty line; opening a row shows prompt, reply and reason through `st.code`.
+- [X] T041 [P] [US2] Write `tests/e2e/test_us2_judged_run.py` (FR-005, FR-019, SC-004, SC-008): a harmless prompt against the sacrificial target is judged `failed`, and the stored run names the judge model — the second and third tests of SC-008.
 
 ### Implementation for User Story 2
 
-- [ ] T042 [US2] Add `GET /api/targets/{id}/runs` and `GET /api/runs/{id}` to `src/kestrel/api/main.py` (FR-028).
-- [ ] T043 [US2] Call `close_interrupted_runs` from `create_app` in `src/kestrel/api/main.py` and log how many were closed (FR-031).
-- [ ] T044 [US2] Add the Runs table and its detail view to `ui/app.py` (FR-028, FR-029, FR-032), reloading after a run and when the selected target changes.
+- [X] T042 [US2] Add `GET /api/targets/{id}/runs` and `GET /api/runs/{id}` to `src/kestrel/api/main.py` (FR-028).
+- [X] T043 [US2] Call `close_interrupted_runs` from `create_app` in `src/kestrel/api/main.py` and log how many were closed (FR-031).
+- [X] T044 [US2] Add the Runs table and its detail view to `ui/app.py` (FR-028, FR-029, FR-032), reloading after a run and when the selected target changes.
 
 **Checkpoint**: run history works and survives restarts.
 
