@@ -1,0 +1,1417 @@
+{
+ "list": "ics2_unacceptable",
+ "source_doc": "DG TAXUD Guidance on acceptable and unacceptable terms for the description of goods, v4.10 (TAXUD b.1(2021)1688480)",
+ "source_date": "2021-03-04",
+ "entries": [
+  {
+   "term": "accessories",
+   "lang": "en",
+   "acceptable_example": "Bathroom fittings, Lighting and electrical accessories,",
+   "as_printed": "Accessories"
+  },
+  {
+   "term": "adapter",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Adapter"
+  },
+  {
+   "term": "agricultural products",
+   "lang": "en",
+   "acceptable_example": "Oranges, Fish, Rice, Bread",
+   "as_printed": "Agricultural products"
+  },
+  {
+   "term": "aid consignment",
+   "lang": "en",
+   "acceptable_example": "Blankets, Medications",
+   "as_printed": "Aid consignment"
+  },
+  {
+   "term": "alcohol",
+   "lang": "en",
+   "acceptable_example": "Denatured industrial ethyl alcohol, undenatured industrial ethyl alcohol of an alcoholic strength by volume of 80 % vol., Whiskey, Rum",
+   "as_printed": "Alcohol"
+  },
+  {
+   "term": "all kind of cargo",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "All kind of Cargo"
+  },
+  {
+   "term": "all kind of goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "All kind of Goods"
+  },
+  {
+   "term": "animals",
+   "lang": "en",
+   "acceptable_example": "Horse, Poultry, Bovine",
+   "as_printed": "Animals"
+  },
+  {
+   "term": "apparel",
+   "lang": "en",
+   "acceptable_example": "Men's Shirts, Lingerie, Girls' Vests, Boys’ Jackets",
+   "as_printed": "Apparel"
+  },
+  {
+   "term": "appliances",
+   "lang": "en",
+   "acceptable_example": "Refrigerator, Stove, Microwave Oven, Coffee Machines",
+   "as_printed": "Appliances"
+  },
+  {
+   "term": "arms",
+   "lang": "en",
+   "acceptable_example": "Daggers, Machine guns",
+   "as_printed": "Arms"
+  },
+  {
+   "term": "articles",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Articles"
+  },
+  {
+   "term": "artwork",
+   "lang": "en",
+   "acceptable_example": "(Specify which type of Artwork: Bust, picture, bronze sculpture)",
+   "as_printed": "Artwork"
+  },
+  {
+   "term": "as ordered […]",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "As ordered […]"
+  },
+  {
+   "term": "as per attached [invoice]",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "As per attached [invoice]"
+  },
+  {
+   "term": "attached [manifest]",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Attached [manifest]"
+  },
+  {
+   "term": "auto",
+   "lang": "en",
+   "acceptable_example": "Ford Fiesta, VW Polo",
+   "as_printed": "Auto"
+  },
+  {
+   "term": "auto parts",
+   "lang": "en",
+   "acceptable_example": "Automobile Brakes, Windshield Glass for Automobiles",
+   "as_printed": "Auto Parts"
+  },
+  {
+   "term": "automobiles",
+   "lang": "en",
+   "acceptable_example": "Ford Fiesta, VW Polo",
+   "as_printed": "Automobiles"
+  },
+  {
+   "term": "awb",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "AWB/ HAWB"
+  },
+  {
+   "term": "hawb",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "AWB/ HAWB"
+  },
+  {
+   "term": "baggage",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Baggage"
+  },
+  {
+   "term": "bags",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Bags (or other types of packaging)"
+  },
+  {
+   "term": "battery",
+   "lang": "en",
+   "acceptable_example": "Lithium batteries",
+   "as_printed": "Battery"
+  },
+  {
+   "term": "bazaar goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Bazaar goods"
+  },
+  {
+   "term": "biological substances",
+   "lang": "en",
+   "acceptable_example": "(See chemicals or other specific examples in the table)",
+   "as_printed": "Biological Substances"
+  },
+  {
+   "term": "birthday gifts",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Birthday gifts"
+  },
+  {
+   "term": "bits",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Bits"
+  },
+  {
+   "term": "boards",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Boards"
+  },
+  {
+   "term": "box",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Box"
+  },
+  {
+   "term": "cables",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Cables"
+  },
+  {
+   "term": "cars",
+   "lang": "en",
+   "acceptable_example": "Ford Fiesta, VW Polo",
+   "as_printed": "Cars"
+  },
+  {
+   "term": "case",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Case"
+  },
+  {
+   "term": "caps",
+   "lang": "en",
+   "acceptable_example": "Plastic Caps",
+   "as_printed": "Caps"
+  },
+  {
+   "term": "cartons",
+   "lang": "en",
+   "acceptable_example": "New packaging made of carton, Cartons to be recycled, A4 print paper packaged in cartons",
+   "as_printed": "Cartons, CTN"
+  },
+  {
+   "term": "ctn",
+   "lang": "en",
+   "acceptable_example": "New packaging made of carton, Cartons to be recycled, A4 print paper packaged in cartons",
+   "as_printed": "Cartons, CTN"
+  },
+  {
+   "term": "charity",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Charity"
+  },
+  {
+   "term": "chemicals",
+   "lang": "en",
+   "acceptable_example": "The name mentioned in the ECICS database or the actual Chemicals name (not brand name)",
+   "as_printed": "Chemicals"
+  },
+  {
+   "term": "flammable",
+   "lang": "en",
+   "acceptable_example": "The name mentioned in the ECICS database or the actual Chemicals name (not brand name)",
+   "as_printed": "Chemicals, flammable"
+  },
+  {
+   "term": "hazardous",
+   "lang": "en",
+   "acceptable_example": "The name mentioned in the ECICS database or the actual Chemicals name (not brand name)",
+   "as_printed": "Chemicals, hazardous"
+  },
+  {
+   "term": "non- hazardous",
+   "lang": "en",
+   "acceptable_example": "The name mentioned in the ECICS database or the actual Chemicals name (not brand name)",
+   "as_printed": "Chemicals, non- Hazardous"
+  },
+  {
+   "term": "cleaning products",
+   "lang": "en",
+   "acceptable_example": "Detergents",
+   "as_printed": "Cleaning products"
+  },
+  {
+   "term": "clothes",
+   "lang": "en",
+   "acceptable_example": "Men's Shirts, Lingerie, Girls' Vests, Boys',Jackets",
+   "as_printed": "Clothes"
+  },
+  {
+   "term": "clothing",
+   "lang": "en",
+   "acceptable_example": "Men's Shirts, Lingerie, Girls' Vests, Boys',Jackets",
+   "as_printed": "Clothing"
+  },
+  {
+   "term": "collected items",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Collected items"
+  },
+  {
+   "term": "commodity",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Commodity"
+  },
+  {
+   "term": "company names",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Company names"
+  },
+  {
+   "term": "component",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Component"
+  },
+  {
+   "term": "consol",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consol, CON, CNSL"
+  },
+  {
+   "term": "con",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consol, CON, CNSL"
+  },
+  {
+   "term": "cnsl",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consol, CON, CNSL"
+  },
+  {
+   "term": "consolidated cargo",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consolidated cargo"
+  },
+  {
+   "term": "consolidated goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consolidated goods"
+  },
+  {
+   "term": "consolidated",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consolidated"
+  },
+  {
+   "term": "consolidation",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consolidation"
+  },
+  {
+   "term": "consumer",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Consumer"
+  },
+  {
+   "term": "courier",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Courier"
+  },
+  {
+   "term": "courier bags",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Courier bags"
+  },
+  {
+   "term": "courier goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Courier goods"
+  },
+  {
+   "term": "courier material",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Courier material"
+  },
+  {
+   "term": "dangerous goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Dangerous goods"
+  },
+  {
+   "term": "decorative crafts",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Decorative crafts"
+  },
+  {
+   "term": "decorative items",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Decorative items"
+  },
+  {
+   "term": "decorations",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Decorations"
+  },
+  {
+   "term": "didactic articles",
+   "lang": "en",
+   "acceptable_example": "Pencils, Smartboards, Books",
+   "as_printed": "Didactic articles"
+  },
+  {
+   "term": "documents",
+   "lang": "en",
+   "acceptable_example": "Passports (or any other kind of documents)",
+   "as_printed": "Documents, Documentations, Docs, Dox"
+  },
+  {
+   "term": "documentations",
+   "lang": "en",
+   "acceptable_example": "Passports (or any other kind of documents)",
+   "as_printed": "Documents, Documentations, Docs, Dox"
+  },
+  {
+   "term": "docs",
+   "lang": "en",
+   "acceptable_example": "Passports (or any other kind of documents)",
+   "as_printed": "Documents, Documentations, Docs, Dox"
+  },
+  {
+   "term": "dox",
+   "lang": "en",
+   "acceptable_example": "Passports (or any other kind of documents)",
+   "as_printed": "Documents, Documentations, Docs, Dox"
+  },
+  {
+   "term": "drugs",
+   "lang": "en",
+   "acceptable_example": "Cough syrup, insulin doses, seasonal flu vaccine (preferably INN name for a pure substance)",
+   "as_printed": "Drugs"
+  },
+  {
+   "term": "drums2 e-commerce",
+   "lang": "en",
+   "acceptable_example": "Empty plastic barrels for packaging, Liquid hand soap transported in drums",
+   "as_printed": "Drums2 e-Commerce"
+  },
+  {
+   "term": "electronic equipment",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Electronic equipment"
+  },
+  {
+   "term": "electronic goods",
+   "lang": "en",
+   "acceptable_example": "Computers, Televisions, CD Players, Walkmans, Tape Record, Mobile Phones, Monitors, Printers",
+   "as_printed": "Electronic goods"
+  },
+  {
+   "term": "electronic items",
+   "lang": "en",
+   "acceptable_example": "Computers, Televisions, CD Players, Walkmans, Tape Record, Mobile Phones, Monitors, Printers",
+   "as_printed": "Electronic items"
+  },
+  {
+   "term": "electronics",
+   "lang": "en",
+   "acceptable_example": "Computers, Televisions, CD Players, Walkmans, Tape Record, Mobile Phones, Monitors, Printers",
+   "as_printed": "Electronics"
+  },
+  {
+   "term": "equipment",
+   "lang": "en",
+   "acceptable_example": "Oil Well Equipment, Poultry equipment",
+   "as_printed": "Equipment, EQP"
+  },
+  {
+   "term": "eqp",
+   "lang": "en",
+   "acceptable_example": "Oil Well Equipment, Poultry equipment",
+   "as_printed": "Equipment, EQP"
+  },
+  {
+   "term": "exhibition goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Exhibition goods"
+  },
+  {
+   "term": "express",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Express"
+  },
+  {
+   "term": "firearm",
+   "lang": "en",
+   "acceptable_example": "Machine guns, Guns, Pistols",
+   "as_printed": "Firearm"
+  },
+  {
+   "term": "fish",
+   "lang": "en",
+   "acceptable_example": "European Hake, Swordfish, Lobsters, Tuna",
+   "as_printed": "Fish"
+  },
+  {
+   "term": "food",
+   "lang": "en",
+   "acceptable_example": "Prepared cakes, Rice, Tomatoes sauce, Powdered eggs",
+   "as_printed": "Food"
+  },
+  {
+   "term": "foodstuff",
+   "lang": "en",
+   "acceptable_example": "Beverages (See other examples for \"Agricultural products\")",
+   "as_printed": "Foodstuff"
+  },
+  {
+   "term": "footwear",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Footwear"
+  },
+  {
+   "term": "freight all kinds",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Freight All Kinds"
+  },
+  {
+   "term": "fresh fruit",
+   "lang": "en",
+   "acceptable_example": "Apples, Apricots, Bananas, Pineapples",
+   "as_printed": "Fresh Fruit"
+  },
+  {
+   "term": "fresh herbs",
+   "lang": "en",
+   "acceptable_example": "Basil, Thyme, Parsley",
+   "as_printed": "Fresh Herbs"
+  },
+  {
+   "term": "fresh plants",
+   "lang": "en",
+   "acceptable_example": "Lavandula angustifolia, Rosmarinus officinalis, Prunus avium",
+   "as_printed": "Fresh Plants"
+  },
+  {
+   "term": "fresh vegetable",
+   "lang": "en",
+   "acceptable_example": "Broccoli, Tomatoes, Onions, Eggplants",
+   "as_printed": "Fresh Vegetable"
+  },
+  {
+   "term": "from upu postal",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "From UPU Postal"
+  },
+  {
+   "term": "fruit",
+   "lang": "en",
+   "acceptable_example": "Oranges, Pears, Bananas, Apples, Strawberries",
+   "as_printed": "Fruit"
+  },
+  {
+   "term": "fruit products",
+   "lang": "en",
+   "acceptable_example": "Apricot pulp, Apple pulp, Mixed fruits pulp",
+   "as_printed": "Fruit products"
+  },
+  {
+   "term": "fruit pulp",
+   "lang": "en",
+   "acceptable_example": "Apricot pulp, Apple pulp, Mixed fruits pulp",
+   "as_printed": "Fruit Pulp"
+  },
+  {
+   "term": "fuel",
+   "lang": "en",
+   "acceptable_example": "Diesel fuel, Petrol, Gasoline",
+   "as_printed": "Fuel"
+  },
+  {
+   "term": "garments",
+   "lang": "en",
+   "acceptable_example": "Cotton T-shirts, Silk headscarves",
+   "as_printed": "Garments"
+  },
+  {
+   "term": "general cargo",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "General cargo"
+  },
+  {
+   "term": "general goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "General goods"
+  },
+  {
+   "term": "general merchandise",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "General merchandise"
+  },
+  {
+   "term": "gift box",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Gift box"
+  },
+  {
+   "term": "gifts",
+   "lang": "en",
+   "acceptable_example": "Dolls, Remote Control cars (describe type of gifts)",
+   "as_printed": "Gifts"
+  },
+  {
+   "term": "gizmos",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Gizmos"
+  },
+  {
+   "term": "glass",
+   "lang": "en",
+   "acceptable_example": "Glass panel for windows, Glass blocks",
+   "as_printed": "Glass"
+  },
+  {
+   "term": "goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Goods, GDS"
+  },
+  {
+   "term": "gds",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Goods, GDS"
+  },
+  {
+   "term": "granulate",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Granulate"
+  },
+  {
+   "term": "handcraft",
+   "lang": "en",
+   "acceptable_example": "(Describe which type of Handicrafts -Vases, dishes, Necklaces, chairs-)",
+   "as_printed": "Handcraft"
+  },
+  {
+   "term": "handicraft",
+   "lang": "en",
+   "acceptable_example": "(Describe which type of Handicrafts -Vases, dishes, Necklaces, chairs-)",
+   "as_printed": "Handicraft"
+  },
+  {
+   "term": "handling codes",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Handling codes"
+  },
+  {
+   "term": "hardware for gift",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Hardware for gift"
+  },
+  {
+   "term": "herbs",
+   "lang": "en",
+   "acceptable_example": "Basil, Thyme, Parsley",
+   "as_printed": "Herbs"
+  },
+  {
+   "term": "home goods",
+   "lang": "en",
+   "acceptable_example": "Plates, Dishes, Tableware, ( See also examples for \"Appliances\")",
+   "as_printed": "Home goods"
+  },
+  {
+   "term": "household goods",
+   "lang": "en",
+   "acceptable_example": "Plates, Dishes, Tableware, ( See also examples for \"Appliances\")",
+   "as_printed": "Household goods"
+  },
+  {
+   "term": "invoice",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Invoice"
+  },
+  {
+   "term": "i.t. goods",
+   "lang": "en",
+   "acceptable_example": "(See examples for \"Electronics\")",
+   "as_printed": "I.T. goods"
+  },
+  {
+   "term": "industrial products",
+   "lang": "en",
+   "acceptable_example": "(See examples for \"Electronics\")",
+   "as_printed": "Industrial products"
+  },
+  {
+   "term": "instruments",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Instruments"
+  },
+  {
+   "term": "iron",
+   "lang": "en",
+   "acceptable_example": "Iron Pipes, Steel Pipes, Iron Building Material, Steel Building Material",
+   "as_printed": "Iron, Steel"
+  },
+  {
+   "term": "steel",
+   "lang": "en",
+   "acceptable_example": "Iron Pipes, Steel Pipes, Iron Building Material, Steel Building Material",
+   "as_printed": "Iron, Steel"
+  },
+  {
+   "term": "iso tanks",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Iso Tanks"
+  },
+  {
+   "term": "jewellery",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Jewellery, Jewelry"
+  },
+  {
+   "term": "jewelry",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Jewellery, Jewelry"
+  },
+  {
+   "term": "jewels",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Jewels"
+  },
+  {
+   "term": "joint shipping",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Joint shipping"
+  },
+  {
+   "term": "label",
+   "lang": "en",
+   "acceptable_example": "Paper printed A4 labels, Plastic labels",
+   "as_printed": "Label"
+  },
+  {
+   "term": "leather articles",
+   "lang": "en",
+   "acceptable_example": "Saddles, Leather Handbags, Leather Jackets",
+   "as_printed": "Leather Articles"
+  },
+  {
+   "term": "line",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Line"
+  },
+  {
+   "term": "likewise",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Likewise"
+  },
+  {
+   "term": "liquids",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Liquids, Fluids"
+  },
+  {
+   "term": "fluids",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Liquids, Fluids"
+  },
+  {
+   "term": "live animals",
+   "lang": "en",
+   "acceptable_example": "Dogs (Labrador retriever), Cows (Aberdeen angus)",
+   "as_printed": "Live Animals"
+  },
+  {
+   "term": "live plants",
+   "lang": "en",
+   "acceptable_example": "Lavandula angustifolia, Rosmarinus officinalis, Prunus avium",
+   "as_printed": "Live plants"
+  },
+  {
+   "term": "machine parts",
+   "lang": "en",
+   "acceptable_example": "Pump, Seals, Engines",
+   "as_printed": "Machine parts"
+  },
+  {
+   "term": "machinery",
+   "lang": "en",
+   "acceptable_example": "Metal Working Machinery, Cigarette Making Machinery, Sewing Machines, Printing Machines",
+   "as_printed": "Machinery"
+  },
+  {
+   "term": "machines",
+   "lang": "en",
+   "acceptable_example": "( See Examples for \"Machinery\")",
+   "as_printed": "Machines"
+  },
+  {
+   "term": "mail",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Mail"
+  },
+  {
+   "term": "materials",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Materials"
+  },
+  {
+   "term": "mdf",
+   "lang": "en",
+   "acceptable_example": "MDF boards, wooden chipboard for MDF",
+   "as_printed": "MDF"
+  },
+  {
+   "term": "meat",
+   "lang": "en",
+   "acceptable_example": "Poultry meat, Beef meat, Pork meat, Lamb meat",
+   "as_printed": "Meat"
+  },
+  {
+   "term": "medical equipment",
+   "lang": "en",
+   "acceptable_example": "Band aids, Medical ventilator, blood sampling syringes",
+   "as_printed": "Medical equipment"
+  },
+  {
+   "term": "medicines",
+   "lang": "en",
+   "acceptable_example": "Antiviral sprays, Viagra pills, Painkillers, Anti-inflammatories, Mucolytic (preferably INN name for a pure substance)",
+   "as_printed": "Medicines"
+  },
+  {
+   "term": "merchandise",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Merchandise, Merc."
+  },
+  {
+   "term": "merc",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Merchandise, Merc."
+  },
+  {
+   "term": "metal",
+   "lang": "en",
+   "acceptable_example": "Iron scrap, Steel tubes, Aluminium wire",
+   "as_printed": "Metal"
+  },
+  {
+   "term": "miscellaneous products",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Miscellaneous products, Misc, Mixed, Mix"
+  },
+  {
+   "term": "misc",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Miscellaneous products, Misc, Mixed, Mix"
+  },
+  {
+   "term": "mixed",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Miscellaneous products, Misc, Mixed, Mix"
+  },
+  {
+   "term": "mix",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Miscellaneous products, Misc, Mixed, Mix"
+  },
+  {
+   "term": "model",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Model"
+  },
+  {
+   "term": "none",
+   "lang": "en",
+   "acceptable_example": "(Describe type of goods)",
+   "as_printed": "None"
+  },
+  {
+   "term": "non-woven",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Non-Woven"
+  },
+  {
+   "term": "odd parts",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Odd parts"
+  },
+  {
+   "term": "oil",
+   "lang": "en",
+   "acceptable_example": "Mineral oil, lubricating oil, vegetable oil, palm oil",
+   "as_printed": "Oil"
+  },
+  {
+   "term": "ore",
+   "lang": "en",
+   "acceptable_example": "Iron Ore, Copper Ore",
+   "as_printed": "Ore"
+  },
+  {
+   "term": "others",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Others"
+  },
+  {
+   "term": "pad",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Pad"
+  },
+  {
+   "term": "package numbers",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Package numbers"
+  },
+  {
+   "term": "pallets",
+   "lang": "en",
+   "acceptable_example": "Empty wooden pallets, Empty steel pallets for airfreight",
+   "as_printed": "Pallets, PLT"
+  },
+  {
+   "term": "plt",
+   "lang": "en",
+   "acceptable_example": "Empty wooden pallets, Empty steel pallets for airfreight",
+   "as_printed": "Pallets, PLT"
+  },
+  {
+   "term": "parcel",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Parcel"
+  },
+  {
+   "term": "party accessories",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Party accessories"
+  },
+  {
+   "term": "parts",
+   "lang": "en",
+   "acceptable_example": "(See Examples for \"Machine parts\")",
+   "as_printed": "Parts"
+  },
+  {
+   "term": "perishables",
+   "lang": "en",
+   "acceptable_example": "Broccoli, Tomatoes, Chicken breasts",
+   "as_printed": "Perishables"
+  },
+  {
+   "term": "personal address",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Personal address"
+  },
+  {
+   "term": "personal effects",
+   "lang": "en",
+   "acceptable_example": "(See Examples in the Table)",
+   "as_printed": "Personal effects"
+  },
+  {
+   "term": "pharmaceutical",
+   "lang": "en",
+   "acceptable_example": "Cough syrup, insulin doses, seasonal flu vaccine (preferably INN name for a pure substance)",
+   "as_printed": "Pharmaceutical"
+  },
+  {
+   "term": "pieces",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Pieces, pces"
+  },
+  {
+   "term": "pces",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Pieces, pces"
+  },
+  {
+   "term": "pipes",
+   "lang": "en",
+   "acceptable_example": "Plastic Pipes, Steel Pipes, Copper Pipes",
+   "as_printed": "Pipes"
+  },
+  {
+   "term": "plants",
+   "lang": "en",
+   "acceptable_example": "Cut Christmas trees, Tulips bulbs, fresh Lavandula angustifolia in pots, cuttings of rosemary in pots",
+   "as_printed": "Plants"
+  },
+  {
+   "term": "plastic goods",
+   "lang": "en",
+   "acceptable_example": "Plastic Kitchenware, Plastic House Ware",
+   "as_printed": "Plastic Goods"
+  },
+  {
+   "term": "plates",
+   "lang": "en",
+   "acceptable_example": "Vehicle registration plates, Iron plates",
+   "as_printed": "Plates"
+  },
+  {
+   "term": "polyurethane",
+   "lang": "en",
+   "acceptable_example": "Polyurethane Threads, Polyurethane Medical Gloves",
+   "as_printed": "Polyurethane"
+  },
+  {
+   "term": "powder",
+   "lang": "en",
+   "acceptable_example": "Wheat flour type 00, Industrial icing sugar, Iron powder",
+   "as_printed": "Powder"
+  },
+  {
+   "term": "pre-addressed parcel",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Pre-addressed parcel"
+  },
+  {
+   "term": "printed material",
+   "lang": "en",
+   "acceptable_example": "Paper labels with logo, Printed plastic fabric in rolls",
+   "as_printed": "Printed material"
+  },
+  {
+   "term": "private things",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Private things"
+  },
+  {
+   "term": "produce",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Produce"
+  },
+  {
+   "term": "products",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Products"
+  },
+  {
+   "term": "propellant",
+   "lang": "en",
+   "acceptable_example": "(See Examples for Chemicals)",
+   "as_printed": "Propellant"
+  },
+  {
+   "term": "pvc items",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "PVC items"
+  },
+  {
+   "term": "quilts",
+   "lang": "en",
+   "acceptable_example": "Cotton quilts (beddings)",
+   "as_printed": "Quilts"
+  },
+  {
+   "term": "raw material",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Raw material"
+  },
+  {
+   "term": "returned goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Returned goods"
+  },
+  {
+   "term": "rod",
+   "lang": "en",
+   "acceptable_example": "Welding Rod, Fuel Rod, Copper Rod",
+   "as_printed": "Rod"
+  },
+  {
+   "term": "rubber articles",
+   "lang": "en",
+   "acceptable_example": "Rubber Hisses, Rubber Conveyor Belts",
+   "as_printed": "Rubber Articles"
+  },
+  {
+   "term": "said to contain",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Said to Contain"
+  },
+  {
+   "term": "sample",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Sample"
+  },
+  {
+   "term": "samples for analysis",
+   "lang": "en",
+   "acceptable_example": "Blood sample for analysis, Salt (sodium chloride) for analysis",
+   "as_printed": "Samples for analysis"
+  },
+  {
+   "term": "sanitary goods",
+   "lang": "en",
+   "acceptable_example": "Towels, Buckets, Detergents, Tooth brushes",
+   "as_printed": "Sanitary goods"
+  },
+  {
+   "term": "scrap",
+   "lang": "en",
+   "acceptable_example": "Plastic Scrap, Foam Scrap, Iron Scrap",
+   "as_printed": "Scrap"
+  },
+  {
+   "term": "see [invoice]",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "See [invoice]"
+  },
+  {
+   "term": "see attached invoice",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "See attached invoice"
+  },
+  {
+   "term": "several",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Several"
+  },
+  {
+   "term": "several goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Several goods"
+  },
+  {
+   "term": "shoes",
+   "lang": "en",
+   "acceptable_example": "Men leather shoes, Women plastic sandals, Kids fabric shoes",
+   "as_printed": "Shoes"
+  },
+  {
+   "term": "snickers",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Snickers"
+  },
+  {
+   "term": "souvenirs",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Souvenirs"
+  },
+  {
+   "term": "spare",
+   "lang": "en",
+   "acceptable_example": "(See Examples for \"Machine parts\")",
+   "as_printed": "Spare"
+  },
+  {
+   "term": "spare parts",
+   "lang": "en",
+   "acceptable_example": "(See Examples for \"Machine parts\")",
+   "as_printed": "Spare parts, SPPT"
+  },
+  {
+   "term": "sppt",
+   "lang": "en",
+   "acceptable_example": "(See Examples for \"Machine parts\")",
+   "as_printed": "Spare parts, SPPT"
+  },
+  {
+   "term": "sporting goods",
+   "lang": "en",
+   "acceptable_example": "Football shoes, boxing gloves, surf board",
+   "as_printed": "Sporting Goods"
+  },
+  {
+   "term": "stuff",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Stuff"
+  },
+  {
+   "term": "substance",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Substance"
+  },
+  {
+   "term": "tablet accessories",
+   "lang": "en",
+   "acceptable_example": "Plastic cases for tablets, Chargers for tablets",
+   "as_printed": "Tablet accessories"
+  },
+  {
+   "term": "tablets",
+   "lang": "en",
+   "acceptable_example": "iPad, Tablets Samsung",
+   "as_printed": "Tablets"
+  },
+  {
+   "term": "technology",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Technology"
+  },
+  {
+   "term": "test",
+   "lang": "en",
+   "acceptable_example": "COVID-19 Quick tests, Leather shoes (sample), Recycled toilet paper (test shipment)",
+   "as_printed": "Test"
+  },
+  {
+   "term": "textile goods",
+   "lang": "en",
+   "acceptable_example": "Cotton fabric in rolls, Polyester curtains, Cotton sheets",
+   "as_printed": "Textile goods"
+  },
+  {
+   "term": "textiles",
+   "lang": "en",
+   "acceptable_example": "Linen Fabric, T-shirts (See Examples for \"Apparel)",
+   "as_printed": "Textiles"
+  },
+  {
+   "term": "things",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Things"
+  },
+  {
+   "term": "tires",
+   "lang": "en",
+   "acceptable_example": "New car tires",
+   "as_printed": "Tires"
+  },
+  {
+   "term": "tools",
+   "lang": "en",
+   "acceptable_example": "Hand Tools, Electric Tools",
+   "as_printed": "Tools"
+  },
+  {
+   "term": "toys",
+   "lang": "en",
+   "acceptable_example": "(See Examples for \"Gifts\")",
+   "as_printed": "Toys"
+  },
+  {
+   "term": "tubing",
+   "lang": "en",
+   "acceptable_example": "Copper tubes, Iron tubes",
+   "as_printed": "Tubing"
+  },
+  {
+   "term": "uniform",
+   "lang": "en",
+   "acceptable_example": "Men's Shirts, Lingerie, Girls' Vests, Boys' Jackets",
+   "as_printed": "Uniform"
+  },
+  {
+   "term": "vaccine",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Vaccine"
+  },
+  {
+   "term": "various",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Various"
+  },
+  {
+   "term": "various goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Various goods"
+  },
+  {
+   "term": "various products",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the Table)",
+   "as_printed": "Various products"
+  },
+  {
+   "term": "vegetables",
+   "lang": "en",
+   "acceptable_example": "Broccoli, Tomatoes, Onions, Eggplants",
+   "as_printed": "Vegetables"
+  },
+  {
+   "term": "vehicles",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Vehicles"
+  },
+  {
+   "term": "waste",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "Waste"
+  },
+  {
+   "term": "weapons",
+   "lang": "en",
+   "acceptable_example": "Daggers, Machine guns",
+   "as_printed": "Weapons"
+  },
+  {
+   "term": "wearing apparel",
+   "lang": "en",
+   "acceptable_example": "Men's Shirts, Lingerie, Girls' Vests, Boys' Jackets",
+   "as_printed": "Wearing apparel"
+  },
+  {
+   "term": "white goods",
+   "lang": "en",
+   "acceptable_example": "(See other specific examples in the table)",
+   "as_printed": "White goods"
+  },
+  {
+   "term": "wires",
+   "lang": "en",
+   "acceptable_example": "Iron and Steel Wire, Copper Wire",
+   "as_printed": "Wires"
+  },
+  {
+   "term": "wooden articles 1004",
+   "lang": "en",
+   "acceptable_example": "Wooden furniture, Wooden kitchen utensils",
+   "as_printed": "Wooden articles 1004, 1005, etc. (numbers)"
+  },
+  {
+   "term": "1005",
+   "lang": "en",
+   "acceptable_example": "Wooden furniture, Wooden kitchen utensils",
+   "as_printed": "Wooden articles 1004, 1005, etc. (numbers)"
+  },
+  {
+   "term": "etc",
+   "lang": "en",
+   "acceptable_example": "Wooden furniture, Wooden kitchen utensils",
+   "as_printed": "Wooden articles 1004, 1005, etc. (numbers)"
+  },
+  {
+   "term": "wpx",
+   "lang": "en",
+   "acceptable_example": "File extensions not accepted",
+   "as_printed": "WPX, .wpx (file extension)"
+  },
+  {
+   "term": "xxx",
+   "lang": "en",
+   "acceptable_example": "Not accepted to be only 3 or more equal symbols or letters",
+   "as_printed": "XXX, … (three or more equal symbols or letters) “.”, “-“, “ ” (empty characters) $%^&< > : \" / \\ | ? * (special characters) !£12 (special characters and numbers)"
+  },
+  {
+   "term": "…  “.”",
+   "lang": "en",
+   "acceptable_example": "Not accepted to be only 3 or more equal symbols or letters",
+   "as_printed": "XXX, … (three or more equal symbols or letters) “.”, “-“, “ ” (empty characters) $%^&< > : \" / \\ | ? * (special characters) !£12 (special characters and numbers)"
+  },
+  {
+   "term": "“-“",
+   "lang": "en",
+   "acceptable_example": "Not accepted to be only 3 or more equal symbols or letters",
+   "as_printed": "XXX, … (three or more equal symbols or letters) “.”, “-“, “ ” (empty characters) $%^&< > : \" / \\ | ? * (special characters) !£12 (special characters and numbers)"
+  },
+  {
+   "term": "“ ”  $%^&< > : \"",
+   "lang": "en",
+   "acceptable_example": "Not accepted to be only 3 or more equal symbols or letters",
+   "as_printed": "XXX, … (three or more equal symbols or letters) “.”, “-“, “ ” (empty characters) $%^&< > : \" / \\ | ? * (special characters) !£12 (special characters and numbers)"
+  },
+  {
+   "term": "\\ | ? *  !£12",
+   "lang": "en",
+   "acceptable_example": "Not accepted to be only 3 or more equal symbols or letters",
+   "as_printed": "XXX, … (three or more equal symbols or letters) “.”, “-“, “ ” (empty characters) $%^&< > : \" / \\ | ? * (special characters) !£12 (special characters and numbers)"
+  }
+ ]
+}

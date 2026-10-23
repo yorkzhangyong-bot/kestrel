@@ -1,0 +1,29 @@
+[project]
+name = "hs-code-target"
+version = "0.1.0"
+description = "Sacrificial HS-code target for Kestrel's end-to-end tests: copied CargoLint classifier code behind a small FastAPI app"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2.7,<3",
+    # Pinned to CargoLint's versions so the copied files run as they do in CargoLint (research R11).
+    "langchain-core==1.6.10",
+    "langchain-openai==1.7.1",
+    "rank_bm25==0.2.2",
+    "lxml>=5",
+    "python-dotenv>=1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

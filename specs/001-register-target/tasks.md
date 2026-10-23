@@ -60,7 +60,7 @@ Tests and code written in different tasks rely on these names.
 
 ### Kestrel core
 
-- [ ] T005 [P] Write `tests/unit/test_settings.py` for `kestrel.settings.load_settings(env)`. Cases:
+- [X] T005 [P] Write `tests/unit/test_settings.py` for `kestrel.settings.load_settings(env)`. Cases:
   - `KESTREL_MODE` "local" and "hosted" are accepted; unset gives "hosted".
   - Any other value, such as "dev", raises `SettingsError` with a message naming `KESTREL_MODE`.
   - `KESTREL_DB_PATH` defaults to `data/kestrel.db` under the repo root, which is the folder holding `pyproject.toml` (`Path(kestrel.settings.__file__).resolve().parents[2]`). A relative value is resolved against the repo root too.
@@ -68,7 +68,7 @@ Tests and code written in different tasks rely on these names.
   - `KESTREL_SECRET_KEY` is optional.
 
   Confirm the tests fail.
-- [ ] T006 [P] Write `tests/unit/test_secrets.py` for `kestrel.secrets` (research R5). Cases for `load_or_create_key(settings, logger)`:
+- [X] T006 [P] Write `tests/unit/test_secrets.py` for `kestrel.secrets` (research R5). Cases for `load_or_create_key(settings, logger)`:
   - It uses `KESTREL_SECRET_KEY` when set (source "env"), and raises `SettingsError` for an invalid key.
   - It reads an existing key file (source "file").
   - It creates a missing file and its parent folders (source "generated"), logging a WARNING with the full path and "back this file up".
@@ -80,23 +80,23 @@ Tests and code written in different tasks rely on these names.
   - Values of 1 to 3 characters are left alone.
 
   Confirm the tests fail.
-- [ ] T007 Implement `src/kestrel/settings.py` (frozen `Settings` dataclass with `mode`, `db_path`, `key_file`, `secret_key`; `load_settings(env=os.environ)`; `SettingsError`) to pass T005. Anchor `db_path` to the repo root, `Path(__file__).resolve().parents[2]` (research R6).
-- [ ] T008 Implement `src/kestrel/secrets.py` (`load_or_create_key`, `Vault` built on `cryptography.fernet.Fernet`, `mask_values`) to pass T006. Write a generated key file with `os.chmod(path, 0o600)` where the OS supports it, and ignore the error on Windows.
-- [ ] T009 Create `tests/conftest.py` with the fixtures `settings`, `hosted_settings`, `client` and `all_logs` from "Shared conventions". The `client` fixture builds `create_app(settings, transport=..., resolver=...)` from `kestrel.api.main`, so tests can pass an `httpx.MockTransport` and a fake resolver.
-- [ ] T010 Write `tests/integration/test_api_base.py`. Cases:
+- [X] T007 Implement `src/kestrel/settings.py` (frozen `Settings` dataclass with `mode`, `db_path`, `key_file`, `secret_key`; `load_settings(env=os.environ)`; `SettingsError`) to pass T005. Anchor `db_path` to the repo root, `Path(__file__).resolve().parents[2]` (research R6).
+- [X] T008 Implement `src/kestrel/secrets.py` (`load_or_create_key`, `Vault` built on `cryptography.fernet.Fernet`, `mask_values`) to pass T006. Write a generated key file with `os.chmod(path, 0o600)` where the OS supports it, and ignore the error on Windows.
+- [X] T009 Create `tests/conftest.py` with the fixtures `settings`, `hosted_settings`, `client` and `all_logs` from "Shared conventions". The `client` fixture builds `create_app(settings, transport=..., resolver=...)` from `kestrel.api.main`, so tests can pass an `httpx.MockTransport` and a fake resolver.
+- [X] T010 Write `tests/integration/test_api_base.py`. Cases:
   - `GET /api/config` returns `mode` and `defaults` exactly as in contracts/kestrel-api.md: `{"method": "POST", "body_template": "{\"message\": \"{{prompt}}\"}", "response_path": "$.reply"}`.
   - A request whose body misses a required field returns 422 in the shape `{"errors": [{"field": ..., "message": ...}]}`. Send `"headers": [{"name": "X", "value": "s3cret-value-123"}]` with no URL, and assert the response text doesn't contain `s3cret-value-123`.
   - `create_app()` with `KESTREL_MODE=dev` in the environment raises `SettingsError`.
 
   Confirm the tests fail.
-- [ ] T011 Implement `src/kestrel/api/main.py` and `src/kestrel/api/schemas.py` to pass T010.
+- [X] T011 Implement `src/kestrel/api/main.py` and `src/kestrel/api/schemas.py` to pass T010.
   - `create_app(settings=None, *, transport=None, resolver=None)` loads settings (`load_settings()` when `None`) and the key with `load_or_create_key`.
   - It configures the `kestrel` logger to write to stderr with `%(asctime)s %(levelname)s %(name)s %(message)s`.
   - It registers a `RequestValidationError` handler that returns only `{"errors": [{"field": "<dotted location without 'body'>", "message": "<text>"}]}` and never the input.
   - It serves `GET /api/config` with `mode` and `defaults`.
   - The API runs with `uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000`, the command in `specs/001-register-target/quickstart.md`. Don't add a module-level `app`: it would create a key file at import time.
-- [ ] T012 [P] Write `tests/integration/test_ui_boundary.py`. It parses every `ui/*.py` with `ast` and fails if any file imports `kestrel` (plan, Structure Decision).
-- [ ] T013 Create `ui/api_client.py` and a first `ui/app.py`.
+- [X] T012 [P] Write `tests/integration/test_ui_boundary.py`. It parses every `ui/*.py` with `ast` and fails if any file imports `kestrel` (plan, Structure Decision).
+- [X] T013 Create `ui/api_client.py` and a first `ui/app.py`.
   - `ui/api_client.py`: the base URL comes from `KESTREL_API_URL` (default `http://127.0.0.1:8000`). Add an `ApiError(status, body)` exception and `get_config()`.
   - `ui/app.py`: call `st.set_page_config(page_title="Kestrel")`, put the sidebar title "Kestrel", and fetch `/api/config` once per session into `st.session_state["config"]`.
   - Show the mode caption "Running locally" or "Running hosted: local and private addresses are blocked" (contracts/ui-form.md, row 11).
@@ -104,13 +104,13 @@ Tests and code written in different tasks rely on these names.
 
 ### Sacrificial HS-code target (FR-024 to FR-027)
 
-- [ ] T014 [P] Create `targets/hs_code/pyproject.toml` as its own uv project.
+- [X] T014 [P] Create `targets/hs_code/pyproject.toml` as its own uv project.
   - Name `hs-code-target`, `requires-python = ">=3.12,<3.13"`, and `[tool.uv] package = false`.
   - Dependencies: `fastapi`, `uvicorn`, `pydantic>=2.7,<3`, `langchain-core==1.6.10`, `langchain-openai==1.7.1`, `rank_bm25==0.2.2`, `lxml>=5`, `python-dotenv>=1`.
   - Dev group: `pytest`. Pytest settings: `testpaths = ["tests"]` and `pythonpath = ["."]`.
 
   Run `uv sync --project targets/hs_code`.
-- [ ] T015 [P] Copy CargoLint files unchanged into `targets/hs_code/`, keeping their relative paths.
+- [X] T015 [P] Copy CargoLint files unchanged into `targets/hs_code/`, keeping their relative paths.
   - Take every file from commit `51ec448` with `git -C C:/ai/CargoLint show 51ec448:<path> > targets/hs_code/<path>`. CargoLint's working tree has uncommitted edits, so don't copy from disk.
   - Code: `agent/__init__.py`, `agent/config.py`, `agent/llm.py`, `agent/prompts.py`, `agent/routing.py`, `agent/schemas.py`, `rag/__init__.py`, `rag/nomenclature.py`, `rag/retriever.py`, `rag/rules.py`, `rag/translate.py`, `tools/__init__.py`, `tools/classify_hs6.py`, `tools/common.py`.
   - Data: `data/nomenclature_2026.jsonl`, `data/rules/firm_stop_words.json`, `data/rules/ics2_aliases.json`, `data/rules/ics2_stop_words.json`, `data/rules/ics2_unacceptable_terms.json`, `data/model_prices.json`, `data/SOURCES.md`.
@@ -121,7 +121,7 @@ Tests and code written in different tasks rely on these names.
   - what was deliberately left out, and why (research R11).
 
   Never import from `C:\ai\CargoLint`.
-- [ ] T016 Write `targets/hs_code/tests/test_app.py` (needs T014 and T015). Cases:
+- [X] T016 Write `targets/hs_code/tests/test_app.py` (needs T014 and T015). Cases:
   - `import tools.classify_hs6` works. This catches lazily imported modules that weren't copied.
   - Starting `app` without `HS_TARGET_API_KEY` fails.
   - `GET /health` returns 200 `{"status": "ok"}` without a key.
@@ -130,13 +130,13 @@ Tests and code written in different tasks rely on these names.
   - When the fake client raises, it returns 502 `{"detail": "model call failed"}`.
 
   Build the fake from CargoLint's `tests/fakes.py` at commit `51ec448` (and the pieces of its `tests/conftest.py` the fake needs). Copy it into `targets/hs_code/tests/fakes.py` and list it in `PROVENANCE.md`. Confirm the tests fail.
-- [ ] T017 Implement `targets/hs_code/kb.py` with `build_kb()` (research R11). It returns an object with:
+- [X] T017 Implement `targets/hs_code/kb.py` with `build_kb()` (research R11). It returns an object with:
   - `index`: `NomenclatureIndex.from_jsonl("data/nomenclature_2026.jsonl")`;
   - `retriever`: `HybridRetriever(bm25=BM25Index(docs), vectors=NullVectorSearch(), chunks=index)`;
   - `bti=None`, `bti_vectors=None`, `shippers=[]`.
 
   Build the BM25 `docs` from the index's chunks, using the same `(id, text)` pairs that CargoLint's `rag/loader.py` writes to `store/bm25.pkl`. Read `C:/ai/CargoLint/rag/loader.py` for reference only; don't copy it. `NullVectorSearch.embed_queries(queries)` returns `[[0.0] for _ in queries]`, and `search_by_vector(...)` and `search(...)` return `[]`.
-- [ ] T018 Implement `targets/hs_code/app.py` to pass T016.
+- [X] T018 Implement `targets/hs_code/app.py` to pass T016.
   - Refuse to start without `HS_TARGET_API_KEY`.
   - Serve `GET /health`.
   - `POST /chat` first compares `X-API-Key` with `hmac.compare_digest`, then builds the KB once (lazily, then cached).
@@ -146,7 +146,7 @@ Tests and code written in different tasks rely on these names.
 
 ### End-to-end harness
 
-- [ ] T019 Create `tests/e2e/conftest.py` (needs T011, T013, T018). Mark every test in the folder `e2e`, and skip with a clear reason when `OPENROUTER_API_KEY` is unset. Start each server with its own interpreter rather than through `uv run`, so stopping it doesn't leave a child server running on Windows.
+- [X] T019 Create `tests/e2e/conftest.py` (needs T011, T013, T018). Mark every test in the folder `e2e`, and skip with a clear reason when `OPENROUTER_API_KEY` is unset. Start each server with its own interpreter rather than through `uv run`, so stopping it doesn't leave a child server running on Windows.
   - **`hs_target`** (session fixture):
     - Run the interpreter printed by `uv run --project targets/hs_code python -c "import sys; print(sys.executable)"` with `-m uvicorn app:app --host 127.0.0.1 --port <free port>` and cwd `targets/hs_code`.
     - Set `HS_TARGET_API_KEY` to a fresh random value of at least 24 characters; that's the known value for SC-004.

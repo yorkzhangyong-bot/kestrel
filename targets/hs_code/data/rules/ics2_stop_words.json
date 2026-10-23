@@ -1,0 +1,1967 @@
+{
+ "list": "ics2_stop_words",
+ "source_doc": "Introduction of Stop Words/Phrases in the Common Repository (ICS2, CIRCABC), version in force 2026-08-03",
+ "source_date": "2026-08-03",
+ "entries": [
+  {
+   "term": "xxx",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2025-08-01",
+   "origin": "Business knowledge",
+   "as_printed": "xxx"
+  },
+  {
+   "term": "aid products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Aid products"
+  },
+  {
+   "term": "as loaded",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "As loaded"
+  },
+  {
+   "term": "as received",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "As received"
+  },
+  {
+   "term": "comercial",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Comercial"
+  },
+  {
+   "term": "consumption",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Consumption"
+  },
+  {
+   "term": "ensemble",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Ensemble"
+  },
+  {
+   "term": "fake",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Fake"
+  },
+  {
+   "term": "genca",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-08-03",
+   "origin": "Business knowledge",
+   "as_printed": "GENCA"
+  },
+  {
+   "term": "general items",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-08-03",
+   "origin": "Business knowledge",
+   "as_printed": "General items"
+  },
+  {
+   "term": "headwear",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Headwear"
+  },
+  {
+   "term": "item",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Item"
+  },
+  {
+   "term": "load and count as per shipper",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "Load and Count as per shipper"
+  },
+  {
+   "term": "loaded by shipper",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "Loaded by shipper"
+  },
+  {
+   "term": "miscelaneous",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Miscelaneous"
+  },
+  {
+   "term": "miscellaneous",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Miscellaneous"
+  },
+  {
+   "term": "not available",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "Business knowledge",
+   "as_printed": "Not available"
+  },
+  {
+   "term": "oddments",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Oddments"
+  },
+  {
+   "term": "promotional",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-02-02",
+   "origin": "Business knowledge",
+   "as_printed": "Promotional"
+  },
+  {
+   "term": "shipper load and count",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "Shipper Load and Count"
+  },
+  {
+   "term": "shippers load stow and count",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "Shippers Load Stow and Count"
+  },
+  {
+   "term": "slac",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "SLAC"
+  },
+  {
+   "term": "slsc",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2026-05-04",
+   "origin": "Business knowledge",
+   "as_printed": "SLSC"
+  },
+  {
+   "term": "unknown",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "Business knowledge",
+   "as_printed": "Unknown"
+  },
+  {
+   "term": "vegan",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "2025-08-01",
+   "origin": "Business knowledge",
+   "as_printed": "Vegan"
+  },
+  {
+   "term": "accessories",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "Business knowledge",
+   "as_printed": "Accessories"
+  },
+  {
+   "term": "adapter",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Adapter"
+  },
+  {
+   "term": "agricultural products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Agricultural products"
+  },
+  {
+   "term": "aid consignment",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Aid consignment"
+  },
+  {
+   "term": "alcohol",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Alcohol"
+  },
+  {
+   "term": "all kind of cargo",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "All kind of Cargo"
+  },
+  {
+   "term": "all kind of goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "All kind of Goods"
+  },
+  {
+   "term": "animals",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Animals"
+  },
+  {
+   "term": "apparel",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Apparel"
+  },
+  {
+   "term": "appliances",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Appliances"
+  },
+  {
+   "term": "arms",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Arms"
+  },
+  {
+   "term": "articles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Articles"
+  },
+  {
+   "term": "artwork",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Artwork"
+  },
+  {
+   "term": "as ordered",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "As ordered"
+  },
+  {
+   "term": "as per attached invoice",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "As per attached invoice"
+  },
+  {
+   "term": "attached manifest",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Attached manifest"
+  },
+  {
+   "term": "auto",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Auto"
+  },
+  {
+   "term": "auto parts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Auto Parts"
+  },
+  {
+   "term": "automobiles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Automobiles"
+  },
+  {
+   "term": "hawb",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "HAWB"
+  },
+  {
+   "term": "baggage",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Baggage"
+  },
+  {
+   "term": "bags",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Bags"
+  },
+  {
+   "term": "battery",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Battery"
+  },
+  {
+   "term": "bazaar goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Bazaar goods"
+  },
+  {
+   "term": "biological substances",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Biological Substances"
+  },
+  {
+   "term": "birthday gifts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Birthday gifts"
+  },
+  {
+   "term": "bits",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Bits"
+  },
+  {
+   "term": "boards",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Boards"
+  },
+  {
+   "term": "boxes",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Boxes"
+  },
+  {
+   "term": "cables",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Cables"
+  },
+  {
+   "term": "cars",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Cars"
+  },
+  {
+   "term": "case",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Case"
+  },
+  {
+   "term": "caps",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Caps"
+  },
+  {
+   "term": "cartons",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Cartons"
+  },
+  {
+   "term": "charity",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Charity"
+  },
+  {
+   "term": "chemicals",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Chemicals"
+  },
+  {
+   "term": "chemicals flammable",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Chemicals flammable"
+  },
+  {
+   "term": "chemicals hazardous",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Chemicals hazardous"
+  },
+  {
+   "term": "chemicals non-hazardous",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Chemicals non-hazardous"
+  },
+  {
+   "term": "cleaning products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Cleaning products"
+  },
+  {
+   "term": "clothes",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Clothes"
+  },
+  {
+   "term": "clothing",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Clothing"
+  },
+  {
+   "term": "collected items",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Collected items"
+  },
+  {
+   "term": "commodity",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Commodity"
+  },
+  {
+   "term": "company names",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Company names"
+  },
+  {
+   "term": "component",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Component"
+  },
+  {
+   "term": "consol",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Consol"
+  },
+  {
+   "term": "cnsl",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "CNSL"
+  },
+  {
+   "term": "consolidated cargo",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Consolidated cargo"
+  },
+  {
+   "term": "consolidated goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Consolidated goods"
+  },
+  {
+   "term": "consolidated",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Consolidated"
+  },
+  {
+   "term": "consolidation",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Consolidation"
+  },
+  {
+   "term": "consumer",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Consumer"
+  },
+  {
+   "term": "courier",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Courier"
+  },
+  {
+   "term": "courier bags",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Courier bags"
+  },
+  {
+   "term": "courier goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Courier goods"
+  },
+  {
+   "term": "courier material",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Courier material"
+  },
+  {
+   "term": "dangerous goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Dangerous goods"
+  },
+  {
+   "term": "decorative crafts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Decorative crafts"
+  },
+  {
+   "term": "decorative items",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Decorative items"
+  },
+  {
+   "term": "decorations",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Decorations"
+  },
+  {
+   "term": "didactic articles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Didactic articles"
+  },
+  {
+   "term": "documents",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Documents"
+  },
+  {
+   "term": "documentations",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Documentations"
+  },
+  {
+   "term": "docs",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Docs"
+  },
+  {
+   "term": "dox",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Dox"
+  },
+  {
+   "term": "drugs",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Drugs"
+  },
+  {
+   "term": "drums",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Drums"
+  },
+  {
+   "term": "e-commerce",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "e-Commerce"
+  },
+  {
+   "term": "electronic equipment",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Electronic equipment"
+  },
+  {
+   "term": "electronic goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Electronic goods"
+  },
+  {
+   "term": "electronic items",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Electronic items"
+  },
+  {
+   "term": "electronics",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Electronics"
+  },
+  {
+   "term": "equipment",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Equipment"
+  },
+  {
+   "term": "exhibition goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Exhibition goods"
+  },
+  {
+   "term": "express",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Express"
+  },
+  {
+   "term": "firearm",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Firearm"
+  },
+  {
+   "term": "fish",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fish"
+  },
+  {
+   "term": "food",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Food"
+  },
+  {
+   "term": "foodstuff",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Foodstuff"
+  },
+  {
+   "term": "footwear",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Footwear"
+  },
+  {
+   "term": "freight all kinds",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Freight All Kinds"
+  },
+  {
+   "term": "fresh fruit",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fresh Fruit"
+  },
+  {
+   "term": "fresh herbs",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fresh Herbs"
+  },
+  {
+   "term": "fresh plants",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fresh Plants"
+  },
+  {
+   "term": "fresh vegetable",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fresh Vegetable"
+  },
+  {
+   "term": "from upu postal",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "From UPU Postal"
+  },
+  {
+   "term": "fruit",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fruit"
+  },
+  {
+   "term": "fruit products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fruit products"
+  },
+  {
+   "term": "fruit pulp",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fruit Pulp"
+  },
+  {
+   "term": "fuel",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fuel"
+  },
+  {
+   "term": "garments",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Garments"
+  },
+  {
+   "term": "general cargo",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "General cargo"
+  },
+  {
+   "term": "general goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "General goods"
+  },
+  {
+   "term": "general merchandise",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "General merchandise"
+  },
+  {
+   "term": "gift box",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Gift box"
+  },
+  {
+   "term": "gifts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Gifts"
+  },
+  {
+   "term": "gizmos",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Gizmos"
+  },
+  {
+   "term": "glass",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Glass"
+  },
+  {
+   "term": "goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Goods"
+  },
+  {
+   "term": "granulate",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Granulate"
+  },
+  {
+   "term": "handcraft",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Handcraft"
+  },
+  {
+   "term": "handicraft",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Handicraft"
+  },
+  {
+   "term": "handling codes",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Handling codes"
+  },
+  {
+   "term": "hardware for gift",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Hardware for gift"
+  },
+  {
+   "term": "herbs",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Herbs"
+  },
+  {
+   "term": "home goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Home goods"
+  },
+  {
+   "term": "household goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Household goods"
+  },
+  {
+   "term": "invoice",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Invoice"
+  },
+  {
+   "term": "i.t. goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "I.T. goods"
+  },
+  {
+   "term": "industrial products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Industrial products"
+  },
+  {
+   "term": "instruments",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Instruments"
+  },
+  {
+   "term": "iron",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Iron"
+  },
+  {
+   "term": "steel",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Steel"
+  },
+  {
+   "term": "iso tanks",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Iso Tanks"
+  },
+  {
+   "term": "jewellery",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Jewellery"
+  },
+  {
+   "term": "jewelry",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Jewelry"
+  },
+  {
+   "term": "jewels",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Jewels"
+  },
+  {
+   "term": "joint shipping",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Joint shipping"
+  },
+  {
+   "term": "label",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Label"
+  },
+  {
+   "term": "leather articles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Leather Articles"
+  },
+  {
+   "term": "line",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Line"
+  },
+  {
+   "term": "likewise",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Likewise"
+  },
+  {
+   "term": "liquids",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Liquids"
+  },
+  {
+   "term": "fluids",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Fluids"
+  },
+  {
+   "term": "live animals",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Live Animals"
+  },
+  {
+   "term": "live plants",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Live plants"
+  },
+  {
+   "term": "machine parts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Machine parts"
+  },
+  {
+   "term": "machinery",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Machinery"
+  },
+  {
+   "term": "machines",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Machines"
+  },
+  {
+   "term": "mail",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Mail"
+  },
+  {
+   "term": "materials",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Materials"
+  },
+  {
+   "term": "meat",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Meat"
+  },
+  {
+   "term": "medical equipment",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Medical equipment"
+  },
+  {
+   "term": "medicines",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Medicines"
+  },
+  {
+   "term": "merchandise",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Merchandise"
+  },
+  {
+   "term": "merc",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Merc."
+  },
+  {
+   "term": "metal",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Metal"
+  },
+  {
+   "term": "miscellaneous products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Miscellaneous products"
+  },
+  {
+   "term": "misc",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Misc"
+  },
+  {
+   "term": "mixed",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Mixed"
+  },
+  {
+   "term": "model",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Model"
+  },
+  {
+   "term": "none",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "None"
+  },
+  {
+   "term": "non-woven",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Non-Woven"
+  },
+  {
+   "term": "odd parts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Odd parts"
+  },
+  {
+   "term": "oils",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Oils"
+  },
+  {
+   "term": "ores",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Ores"
+  },
+  {
+   "term": "others",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Others"
+  },
+  {
+   "term": "pads",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Pads"
+  },
+  {
+   "term": "package numbers",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Package numbers"
+  },
+  {
+   "term": "pallets",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Pallets"
+  },
+  {
+   "term": "parcel",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Parcel"
+  },
+  {
+   "term": "party accessories",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Party accessories"
+  },
+  {
+   "term": "parts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Parts"
+  },
+  {
+   "term": "perishables",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Perishables"
+  },
+  {
+   "term": "personal address",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Personal address"
+  },
+  {
+   "term": "personal effects",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Personal effects"
+  },
+  {
+   "term": "pharmaceutical",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Pharmaceutical"
+  },
+  {
+   "term": "pieces",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Pieces"
+  },
+  {
+   "term": "pces",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "pces"
+  },
+  {
+   "term": "pipes",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Pipes"
+  },
+  {
+   "term": "plants",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Plants"
+  },
+  {
+   "term": "plastic goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Plastic Goods"
+  },
+  {
+   "term": "plates",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Plates"
+  },
+  {
+   "term": "polyurethane",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Polyurethane"
+  },
+  {
+   "term": "powder",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Powder"
+  },
+  {
+   "term": "pre-addressed parcel",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Pre-addressed parcel"
+  },
+  {
+   "term": "printed material",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Printed material"
+  },
+  {
+   "term": "private things",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Private things"
+  },
+  {
+   "term": "produce",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Produce"
+  },
+  {
+   "term": "products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Products"
+  },
+  {
+   "term": "propellant",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Propellant"
+  },
+  {
+   "term": "pvc items",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "PVC items"
+  },
+  {
+   "term": "quilts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Quilts"
+  },
+  {
+   "term": "raw material",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Raw material"
+  },
+  {
+   "term": "returned goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Returned goods"
+  },
+  {
+   "term": "rods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Rods"
+  },
+  {
+   "term": "rubber articles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Rubber Articles"
+  },
+  {
+   "term": "said to contain",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Said to Contain"
+  },
+  {
+   "term": "sample",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Sample"
+  },
+  {
+   "term": "samples for analysis",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Samples for analysis"
+  },
+  {
+   "term": "sanitary goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Sanitary goods"
+  },
+  {
+   "term": "scrap",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Scrap"
+  },
+  {
+   "term": "see invoice",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "See invoice"
+  },
+  {
+   "term": "see attached invoice",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "See attached invoice"
+  },
+  {
+   "term": "several",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Several"
+  },
+  {
+   "term": "several goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Several goods"
+  },
+  {
+   "term": "shoes",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Shoes"
+  },
+  {
+   "term": "snickers",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Snickers"
+  },
+  {
+   "term": "souvenirs",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Souvenirs"
+  },
+  {
+   "term": "spare",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Spare"
+  },
+  {
+   "term": "spare parts",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Spare parts"
+  },
+  {
+   "term": "sppt",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "SPPT"
+  },
+  {
+   "term": "sporting goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Sporting Goods"
+  },
+  {
+   "term": "stuff",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Stuff"
+  },
+  {
+   "term": "substance",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Substance"
+  },
+  {
+   "term": "tablet accessories",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Tablet accessories"
+  },
+  {
+   "term": "tablets",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Tablets"
+  },
+  {
+   "term": "technology",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Technology"
+  },
+  {
+   "term": "test",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Test"
+  },
+  {
+   "term": "textile goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Textile goods"
+  },
+  {
+   "term": "textiles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Textiles"
+  },
+  {
+   "term": "things",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Things"
+  },
+  {
+   "term": "tires",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Tires"
+  },
+  {
+   "term": "tools",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Tools"
+  },
+  {
+   "term": "toys",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Toys"
+  },
+  {
+   "term": "tubing",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Tubing"
+  },
+  {
+   "term": "uniform",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Uniform"
+  },
+  {
+   "term": "vaccine",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Vaccine"
+  },
+  {
+   "term": "various",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Various"
+  },
+  {
+   "term": "various goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Various goods"
+  },
+  {
+   "term": "various products",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Various products"
+  },
+  {
+   "term": "vegetables",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Vegetables"
+  },
+  {
+   "term": "vehicles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Vehicles"
+  },
+  {
+   "term": "waste",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Waste"
+  },
+  {
+   "term": "weapons",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Weapons"
+  },
+  {
+   "term": "wearing apparel",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Wearing apparel"
+  },
+  {
+   "term": "white goods",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "White goods"
+  },
+  {
+   "term": "wires",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Wires"
+  },
+  {
+   "term": "wooden articles",
+   "lang": "en",
+   "category": "Goods description",
+   "implementation_date": "Initial list",
+   "origin": "List of examples of unacceptable descriptions of goods",
+   "as_printed": "Wooden articles"
+  }
+ ]
+}
