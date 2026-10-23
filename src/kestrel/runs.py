@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Awaitable, Callable, Protocol, Sequence
 
 from kestrel.attacks.library import AttackPrompt
@@ -99,11 +100,19 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
 def _finish(store: TargetStore, run_id: int, prompt: AttackPrompt, **fields) -> Run:
     run = store.finish_run(run_id, **fields)
     # One line, no prompt text, reply, reason or header value (research R13).
-    log.info("attack run target_id=%d family=%s prompt=%s verdict=%s hard_evidence=%s judge=%s duration_ms=%s",
+    log.info("attack run target_id=%d family=%s prompt=%s verdict=%s hard_evidence=%s judge=%s step=%s duration_ms=%s",
              run.target_id, run.family, run.prompt_id, run.verdict or "-", run.hard_evidence,
-             run.judge_model or "-", _ms(run))
+             run.judge_model or "-", run.failure_step or "-", _duration_ms(run))
     return run
 
 
-def _ms(run: Run) -> str:
-    return "-"  # duration is recorded by started_at/finished_at; the API computes it when needed
+def _duration_ms(run: Run) -> int | str:
+    """Milliseconds from start to finish, parsed from the stored ISO timestamps, or '-' if either is missing."""
+    if not run.finished_at:
+        return "-"
+    try:
+        start = datetime.fromisoformat(run.started_at)
+        end = datetime.fromisoformat(run.finished_at)
+    except ValueError:
+        return "-"
+    return int((end - start).total_seconds() * 1000)

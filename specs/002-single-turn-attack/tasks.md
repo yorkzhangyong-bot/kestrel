@@ -181,11 +181,12 @@ Tests and code written in different tasks rely on these:
 
 **Purpose**: documentation, the manual checks, and a last secret-hygiene pass.
 
-- [ ] T049 [P] Update the root `README.md`: declaring canaries, configuring the judge and what happens without a key, and the per-run judge cost.
-- [ ] T050 [P] Update `targets/hs_code/README.md`: `HS_TARGET_CANARY`, the fake `send_email` tool and `GET /debug/tool-calls`, and that the target now has a tool-calling loop.
-- [ ] T051 Go through the 19 manual checks in [quickstart.md](./quickstart.md) against a running API, screen and sacrificial target. Fix any difference, in the code or in quickstart.md.
-- [ ] T052 Review secret hygiene on the judge path across `src/kestrel/**/*.py` and `ui/app.py` (FR-014, FR-015, FR-020, SC-006): confirm no header value, target URL or target name can reach the judge request, the run record or a log line, and that the reply is masked before it is stored, judged or shown (R13).
-- [ ] T053 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --directory targets/hs_code pytest`.
+- [X] T049 [P] Update the root `README.md`: declaring canaries, configuring the judge and what happens without a key, and the per-run judge cost.
+- [X] T050 [P] Update `targets/hs_code/README.md`: `HS_TARGET_CANARY`, the fake `send_email` tool and `GET /debug/tool-calls`, and that the target now has a tool-calling loop.
+- [ ] T051 **(DEFERRED with T013)** Go through the 19 manual checks in [quickstart.md](./quickstart.md) against a running API, screen and sacrificial target. Fix any difference, in the code or in quickstart.md.
+  - Most checks run an attack, which needs the library (T013). Deferred until it is assembled; the offline and e2e suites cover the rest.
+- [X] T052 Review secret hygiene on the judge path across `src/kestrel/**/*.py` and `ui/app.py` (FR-014, FR-015, FR-020, SC-006): confirm no header value, target URL or target name can reach the judge request, the run record or a log line, and that the reply is masked before it is stored, judged or shown (R13).
+- [X] T053 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --directory targets/hs_code pytest`.
 
 ---
 

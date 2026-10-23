@@ -2,7 +2,9 @@
 
 Kestrel is a hosted red-teaming platform for tool-using AI agents. A user registers an agent endpoint (a URL plus optional headers), Kestrel runs adaptive attacks against it, judges the outcomes with hard evidence where possible, and produces a report mapped to the OWASP LLM Top 10 with a risk score. It's built for people who made an agent with Cursor, Claude Code or Lovable and haven't done any security testing.
 
-**Status**: feature 001 is done. You can register an agent, test the connection, and save, edit and delete targets. Attacks, judging and reports come in later features. The project's rules are in the [constitution](.specify/memory/constitution.md).
+**Status**: features 001 and 002 are done. You can register an agent, test the connection, save, edit and delete targets, then run a single-turn attack from a built-in library and get a verdict. Multi-turn attacks, the attack-pattern store and reports come in later features. The project's rules are in the [constitution](.specify/memory/constitution.md).
+
+> The built-in attack-prompt library (`src/kestrel/attacks/data/library.json`) is not yet populated; until it is, the attack routes report that no library is available and the end-to-end attack tests skip. See `specs/002-single-turn-attack/tasks.md` (T013).
 
 ## Run it on your own machine
 
@@ -21,6 +23,16 @@ uv run streamlit run ui/app.py
 `KESTREL_MODE=local` matters. Without it, Kestrel assumes it runs on a server and refuses agents on `localhost` or a private network.
 
 Saved targets live in `data/kestrel.db` under the repo root. Other settings are listed in [.env.example](.env.example).
+
+## Running an attack
+
+Once a target is saved, declare any **canary strings** you have placed in your agent (for example a secret marker in its system prompt). If a canary turns up in a reply, the attack is **confirmed** by hard evidence, with no model involved. Otherwise a **judge** model reads the attack and the reply and returns succeeded, failed or unclear — always marked "suspected", never confirmed.
+
+The judge is optional:
+
+- Set `KESTREL_JUDGE_API_KEY`, or reuse `OPENROUTER_API_KEY`, to turn it on. Pick the model with `KESTREL_JUDGE_MODEL` (default `google/gemini-3.8-flash`).
+- Without a key, canary evidence still decides runs and judged runs end "unclear" rather than failing.
+- Each judged run sends the attack and the (capped) reply to the model provider, so a run costs a fraction of a cent. The terms of service say this, and the judge never receives your auth header values.
 
 ## Your encryption key
 
