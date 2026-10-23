@@ -263,7 +263,7 @@ Tests and code written in different tasks rely on these names.
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T036 [P] [US2] Write `tests/unit/test_store.py` for `kestrel.store.TargetStore(db_path, vault)` (data-model.md). Cases:
+- [X] T036 [P] [US2] Write `tests/unit/test_store.py` for `kestrel.store.TargetStore(db_path, vault)` (data-model.md). Cases:
   - `create_target(...)` round-trips through `list_targets()` and `get_target(id)`.
   - Header values are stored as Fernet tokens: read the raw `target_headers.value_encrypted` column and assert it differs from the value. They come back decrypted only through `resolve_headers(id)`.
   - `name_key` makes "HS Agent" and "hs agent" collide with `NameTaken`, and also "Ärger" and "ärger".
@@ -271,7 +271,7 @@ Tests and code written in different tasks rely on these names.
   - The unique index rejects two headers named `X-Key` and `x-key` on one target.
   - Reopening the same file keeps the data (FR-014).
   - `PRAGMA foreign_keys` and `PRAGMA secure_delete` are on, and `meta` holds `schema_version = 1`.
-- [ ] T037 [P] [US2] Write `tests/integration/test_api_save.py` for `POST /api/targets` and `GET /api/targets` (contracts/kestrel-api.md). Cases:
+- [X] T037 [P] [US2] Write `tests/integration/test_api_save.py` for `POST /api/targets` and `GET /api/targets` (contracts/kestrel-api.md). Cases:
   - **Success**: after a successful test with the same `form_id`, saving returns 201 with headers as `{"name", "has_value": true, "readable": true}` and no values.
   - **409 `not_tested`**: when the form never tested, when its most recent test failed, and when the settings changed after the test. A different display name alone still saves (FR-012).
   - **422**: field `permission_confirmed` when it's false (FR-011); field `terms_version` when it's not the current version (FR-029).
@@ -279,20 +279,20 @@ Tests and code written in different tasks rely on these names.
   - **Listing**: `GET /api/targets` lists the target with `permission_confirmed_at` and `terms_version`, also from a new app instance on the same database (FR-014).
   - **Config**: `GET /api/config` includes `terms.version` and `terms.text`.
   - **Secrets**: the saved header value appears 0 times in `all_logs` and in every response body (SC-004).
-- [ ] T038 [P] [US2] Write `tests/integration/test_ui_save.py` with `AppTest` and a stubbed `api_client`. Cases:
+- [X] T038 [P] [US2] Write `tests/integration/test_ui_save.py` with `AppTest` and a stubbed `api_client`. Cases:
   - The `permission` checkbox label is exactly "I own this agent or have written permission to test it".
   - The expander "Terms of service (version 1)" shows the terms text, and opening it keeps the typed form values (US2.6).
   - `save_button` sends `permission_confirmed` and `terms_version`.
   - Errors are shown for 409 `not_tested`, 409 `name_taken` and 422 `permission_confirmed`.
   - After a save, the saved-targets table shows name, URL, method, permission date and terms version; the typed header values are gone from `st.session_state`; and a new `form_id` is in use.
-- [ ] T039 [US2] Write `tests/e2e/test_us2_save.py` (marker `e2e`).
+- [X] T039 [US2] Write `tests/e2e/test_us2_save.py` (marker `e2e`).
   - **Spec acceptance test 3 (US2.2)**: fill in `display_name`, so the checkbox is the only thing missing. Test the sacrificial target successfully, leave `permission` unticked and click `save_button`. Assert saving is blocked and the table has no row.
   - **US2.1**: tick `permission`, save, and assert the target is listed.
   - End with `assert_no_secret_in_logs()`.
 
 ### Implementation for User Story 2
 
-- [ ] T040 [US2] Implement `src/kestrel/store.py` to pass T036, with `sqlite3` only (no ORM).
+- [X] T040 [US2] Implement `src/kestrel/store.py` to pass T036, with `sqlite3` only (no ORM).
   - **Schema**: create it on open, with these constraints quoted from data-model.md.
     - `targets`:
       - `id` INTEGER PRIMARY KEY;
@@ -315,8 +315,8 @@ Tests and code written in different tasks rely on these names.
     - `meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)`, holding `schema_version = 1`.
   - **Connections**: open one per call, with `PRAGMA foreign_keys=ON` and `PRAGMA secure_delete=ON`.
   - **Interface**: `create_target`, `list_targets`, `get_target`, `resolve_headers` (decrypted values for the tester) and the `NameTaken` exception.
-- [ ] T041 [P] [US2] Write `src/kestrel/api/terms.md`. The first line is `version: 1`, followed by a short plain-language text. It says the user owns the agent or has written permission to test it, that the user is responsible for every test and scan run against it, and that Kestrel only sends plain conversational messages within fixed limits (FR-029).
-- [ ] T042 [US2] Extend `src/kestrel/api/main.py` and `src/kestrel/api/schemas.py`. Pass T037.
+- [X] T041 [P] [US2] Write `src/kestrel/api/terms.md`. The first line is `version: 1`, followed by a short plain-language text. It says the user owns the agent or has written permission to test it, that the user is responsible for every test and scan run against it, and that Kestrel only sends plain conversational messages within fixed limits (FR-029).
+- [X] T042 [US2] Extend `src/kestrel/api/main.py` and `src/kestrel/api/schemas.py`. Pass T037.
   - **Config**: load `terms.md` (version and text) into `GET /api/config`.
   - **Store**: open `TargetStore` at start-up, creating the folder of `db_path`.
   - **Endpoints**: add `GET /api/targets` and `POST /api/targets`, with `SaveTargetRequest`, `TargetSummary`, `TargetDetail` and `HeaderOut`.
@@ -327,13 +327,13 @@ Tests and code written in different tasks rely on these names.
     - the form session's last successful fingerprint must match the submitted settings, otherwise 409 `not_tested`;
     - `NameTaken` becomes 409 `name_taken` with field `name`.
   - **Permission date**: set `permission_confirmed_at` to the current UTC time.
-- [ ] T043 [US2] Add `save_target(payload)` and `list_targets()` to `ui/api_client.py`, and the US2 parts of `ui/app.py`: contracts/ui-form.md rows 7 to 9 and the Saved targets table. Pass T038.
+- [X] T043 [US2] Add `save_target(payload)` and `list_targets()` to `ui/api_client.py`, and the US2 parts of `ui/app.py`: contracts/ui-form.md rows 7 to 9 and the Saved targets table. Pass T038.
   - **Permission**: the `permission` checkbox.
   - **Terms**: `st.expander("Terms of service (version N)")`, showing the text from `/api/config` with `st.text`.
   - **Saving**: `save_button`, with errors shown at the matching field.
   - **Table**: `st.dataframe` of saved targets.
   - **After a save**: clear the typed header values and start a new `form_id`.
-- [ ] T044 [US2] Run `uv run pytest` and `uv run pytest -m e2e tests/e2e/test_us2_save.py` (T039 green).
+- [X] T044 [US2] Run `uv run pytest` and `uv run pytest -m e2e tests/e2e/test_us2_save.py` (T039 green).
 
 **Checkpoint**: User Stories 1 and 2 work: test, tick, save, restart, still listed.
 

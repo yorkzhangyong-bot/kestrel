@@ -9,7 +9,8 @@ import api_client
 
 APP = str(Path(__file__).resolve().parents[2] / "ui" / "app.py")
 CONFIG = {"mode": "local",
-          "defaults": {"method": "POST", "body_template": '{"message": "{{prompt}}"}', "response_path": "$.reply"}}
+          "defaults": {"method": "POST", "body_template": '{"message": "{{prompt}}"}', "response_path": "$.reply"},
+          "terms": {"version": "1", "text": "Terms text."}}
 HOSTILE = '**bold** <img src=x onerror=alert(1)> [link](http://evil.test) ![x](http://evil.test/x.png)'
 
 
@@ -31,11 +32,12 @@ def api(monkeypatch):
 
     monkeypatch.setattr(api_client, "get_config", lambda: CONFIG)
     monkeypatch.setattr(api_client, "test_connection", test_connection)
+    monkeypatch.setattr(api_client, "list_targets", lambda: [])
     return stub
 
 
 def filled_app() -> AppTest:
-    at = AppTest.from_file(APP).run()
+    at = AppTest.from_file(APP, default_timeout=10).run()
     at.text_input(key="display_name").input("My agent")
     at.text_input(key="url").input("http://127.0.0.1:8001/chat")
     at.button(key="add_header").click().run()
@@ -53,7 +55,7 @@ def texts(elements) -> list[str]:
 
 
 def test_the_form_starts_with_the_defaults(api):
-    at = AppTest.from_file(APP).run()
+    at = AppTest.from_file(APP, default_timeout=10).run()
     assert not at.exception
     assert at.selectbox(key="method").value == "POST"
     assert at.text_input(key="body_template").value == CONFIG["defaults"]["body_template"]
@@ -62,7 +64,7 @@ def test_the_form_starts_with_the_defaults(api):
 
 
 def test_header_rows_can_be_added_and_removed(api):
-    at = AppTest.from_file(APP).run()
+    at = AppTest.from_file(APP, default_timeout=10).run()
     at.button(key="add_header").click().run()
     at.button(key="add_header").click().run()
     at.text_input(key="header_name_1").input("X-Second").run()

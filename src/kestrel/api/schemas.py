@@ -25,9 +25,15 @@ class FormDefaults(BaseModel):
     response_path: str
 
 
+class TermsOut(BaseModel):
+    version: str
+    text: str
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
+    terms: TermsOut
 
 
 class HeaderIn(BaseModel):
@@ -59,6 +65,50 @@ class ConnectionTestResult(BaseModel):
     reply_text: str | None
     reply_truncated: bool
     duration_ms: int
+
+
+class SaveTargetRequest(BaseModel):
+    form_id: uuid.UUID
+    name: str = ""
+    settings: ConnectionSettingsIn
+    permission_confirmed: bool = False
+    terms_version: str = ""
+
+
+class HeaderOut(BaseModel):
+    """A stored header: its name only, never its value (FR-021)."""
+    name: str
+    has_value: bool
+    readable: bool
+
+
+class TargetSummary(BaseModel):
+    id: int
+    name: str
+    url: str
+    method: str
+    permission_confirmed_at: str
+    terms_version: str
+
+
+class TargetDetail(TargetSummary):
+    body_template: str
+    response_path: str
+    headers: list[HeaderOut]
+
+
+def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[str, str]]:
+    """The save-only rules (FR-004, FR-011, FR-029); the connection settings are checked by validate_settings."""
+    errors = []
+    if not 1 <= len(request.name.strip()) <= 100:
+        errors.append({"field": "name", "message": "Enter a display name of 1 to 100 characters."})
+    if not request.permission_confirmed:
+        errors.append({"field": "permission_confirmed",
+                       "message": "Tick the box to confirm you own this agent or have written permission to test it."})
+    if request.terms_version != terms_version:
+        errors.append({"field": "terms_version",
+                       "message": "The terms of service have changed; read them and tick the box again."})
+    return errors
 
 
 def url_carries_credentials(url: str) -> bool:

@@ -44,3 +44,11 @@ def get_config() -> dict[str, Any]:
 def test_connection(payload: dict[str, Any]) -> dict[str, Any]:
     # Longer than the API's 60-second deadline, so the API always answers first.
     return _request("POST", "/api/connection-tests", json=payload, timeout=90.0)
+
+
+def list_targets() -> list[dict[str, Any]]:
+    return _request("GET", "/api/targets")
+
+
+def save_target(payload: dict[str, Any]) -> dict[str, Any]:
+    return _request("POST", "/api/targets", json=payload)

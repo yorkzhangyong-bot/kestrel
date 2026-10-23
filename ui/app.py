@@ -16,11 +16,21 @@ MODE_CAPTIONS = {
     "hosted": "Running hosted: local and private addresses are blocked",
 }
 METHODS = ["POST", "GET"]
-FORM_FIELDS = {"settings.url", "settings.body_template", "settings.response_path"}
+PERMISSION_LABEL = "I own this agent or have written permission to test it"
+SIDEBAR_FIELDS = {"name", "settings.url", "settings.body_template", "settings.response_path", "permission_confirmed",
+                  "terms_version", "save"}
 
 
 def api_message(error: api_client.ApiError) -> str:
     return (error.body.get("error") or {}).get("message") or "Kestrel's API answered with an error."
+
+
+def errors_from(error: api_client.ApiError, default_field: str) -> dict[str, str]:
+    """Field errors from a 422, or one error under default_field (or the field the API names) otherwise."""
+    if error.status == 422:
+        return {e["field"]: e["message"] for e in error.body.get("errors", [])}
+    detail = error.body.get("error") or {}
+    return {detail.get("field") or default_field: api_message(error)}
 
 
 def load_config() -> dict | None:
@@ -32,6 +42,16 @@ def load_config() -> dict | None:
             st.error(api_message(error))
             return None
     return st.session_state["config"]
+
+
+def load_targets() -> list[dict]:
+    if st.session_state.get("targets") is None:
+        try:
+            st.session_state["targets"] = api_client.list_targets()
+        except api_client.ApiError as error:
+            st.session_state["notice"] = api_message(error)
+            return []
+    return st.session_state["targets"]
 
 
 # --- Header rows -----------------------------------------------------------------------------------------------
@@ -65,7 +85,7 @@ def remove_header_row(index: int) -> None:
     reset_header_widgets()
 
 
-# --- Test connection -------------------------------------------------------------------------------------------
+# --- Actions ---------------------------------------------------------------------------------------------------
 
 def current_settings() -> dict:
     state = st.session_state
@@ -79,17 +99,22 @@ def current_settings() -> dict:
             "body_template": state.get("body_template") or "", "response_path": (state.get("response_path") or "").strip()}
 
 
+def clear_messages() -> None:
+    st.session_state["errors"] = {}
+    st.session_state["notice"] = None
+    st.session_state["saved"] = False
+
+
 def start_test() -> None:
     """Button callback: capture the form now; the test runs on the next pass, with the button disabled."""
     sync_header_rows()
+    clear_messages()
     st.session_state["pending_test"] = {
         "form_id": st.session_state["form_id"],
         "target_id": None,
         "display_name": (st.session_state.get("display_name") or "").strip(),
         "settings": current_settings(),
     }
-    st.session_state["errors"] = {}
-    st.session_state["notice"] = None
 
 
 def run_pending_test() -> None:
@@ -102,12 +127,38 @@ def run_pending_test() -> None:
     except api_client.ApiError as error:
         st.session_state["result"] = None
         if error.status == 422:
-            st.session_state["errors"] = {e["field"]: e["message"] for e in error.body.get("errors", [])}
+            st.session_state["errors"] = errors_from(error, "test")
         else:
             st.session_state["notice"] = api_message(error)
     finally:
         st.session_state["pending_test"] = None
     st.rerun()
+
+
+def save() -> None:
+    """Save-button callback (FR-011, FR-012, FR-029)."""
+    sync_header_rows()
+    clear_messages()
+    state = st.session_state
+    payload = {
+        "form_id": state["form_id"],
+        "name": (state.get("display_name") or "").strip(),
+        "settings": current_settings(),
+        "permission_confirmed": bool(state.get("permission")),
+        "terms_version": state["config"]["terms"]["version"],
+    }
+    try:
+        api_client.save_target(payload)
+    except api_client.ApiError as error:
+        state["errors"] = errors_from(error, "save")
+        return
+    # The typed header values leave the session; a new form starts (contracts/ui-form.md, session behaviour).
+    reset_header_widgets()
+    for row in header_rows():
+        row["value"] = ""
+    state["form_id"] = str(uuid.uuid4())
+    state["targets"] = None
+    state["saved"] = True
 
 
 # --- Rendering -------------------------------------------------------------------------------------------------
@@ -121,6 +172,7 @@ def show_error(field: str) -> None:
 def render_form(config: dict) -> None:
     defaults = config["defaults"]
     st.text_input("Display name", key="display_name", placeholder="My agent")
+    show_error("name")
 
     method_col, url_col = st.columns([2, 5])
     method_col.selectbox("Method", METHODS, index=METHODS.index(defaults["method"]), key="method")
@@ -149,13 +201,22 @@ def render_form(config: dict) -> None:
     st.button("Test connection", key="test_button", on_click=start_test,
               disabled=st.session_state.get("pending_test") is not None)
 
+    st.checkbox(PERMISSION_LABEL, key="permission")
+    show_error("permission_confirmed")
+    terms = config["terms"]
+    with st.expander(f"Terms of service (version {terms['version']})"):
+        st.text(terms["text"])
+    show_error("terms_version")
+    st.button("Save target", key="save_button", type="primary", on_click=save)
+    show_error("save")
+
 
 def render_result() -> None:
     st.subheader("Connection test")
     if st.session_state.get("notice"):
         st.warning(st.session_state["notice"])
     for field, message in st.session_state.get("errors", {}).items():
-        if field not in FORM_FIELDS and not field.startswith("settings.headers."):
+        if field not in SIDEBAR_FIELDS and not field.startswith("settings.headers."):
             st.error(message)
 
     result = st.session_state.get("result")
@@ -176,6 +237,19 @@ def render_result() -> None:
             st.code(result["detail"], language=None, wrap_lines=True)
 
 
+def render_targets() -> None:
+    st.subheader("Saved targets")
+    if st.session_state.get("saved"):
+        st.success("Target saved.")
+    targets = load_targets()
+    if not targets:
+        st.caption("No saved targets yet.")
+        return
+    st.dataframe([{"Name": t["name"], "URL": t["url"], "Method": t["method"],
+                   "Permission confirmed": t["permission_confirmed_at"][:10], "Terms version": t["terms_version"]}
+                  for t in targets], hide_index=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Kestrel", layout="wide")
     st.sidebar.title("Kestrel")
@@ -190,6 +264,7 @@ def main() -> None:
         st.caption(MODE_CAPTIONS.get(config["mode"], config["mode"]))
     run_pending_test()
     render_result()
+    render_targets()
 
 
 main()
