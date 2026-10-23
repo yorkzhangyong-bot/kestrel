@@ -39,3 +39,8 @@ def _request(method: str, path: str, *, json: Any = None, timeout: float = 10.0)
 
 def get_config() -> dict[str, Any]:
     return _request("GET", "/api/config")
+
+
+def test_connection(payload: dict[str, Any]) -> dict[str, Any]:
+    # Longer than the API's 60-second deadline, so the API always answers first.
+    return _request("POST", "/api/connection-tests", json=payload, timeout=90.0)

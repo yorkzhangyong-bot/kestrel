@@ -170,27 +170,27 @@ Tests and code written in different tasks rely on these names.
 
 > Write these first and make sure they fail before T028.
 
-- [ ] T020 [P] [US1] Write `tests/unit/test_template.py` for `kestrel.connection.template` (FR-003, FR-004, FR-006).
+- [X] T020 [P] [US1] Write `tests/unit/test_template.py` for `kestrel.connection.template` (FR-003, FR-004, FR-006).
   - **Errors on the body template** (`TemplateError` with `field` `settings.body_template`): POST with 0 or 2 placeholders; the placeholder outside a JSON string, as in `{"m": {{prompt}}}`; a template that isn't valid JSON.
   - **Errors on the URL** (`TemplateError` with `field` `settings.url`): POST with the placeholder in the URL; GET with it 0 or 2 times, or outside the query string. GET ignores the body template.
   - **POST filling**: `build_request("POST", url, '{"message": "{{prompt}}"}', prompt)` gives valid JSON whose `message` equals the prompt. Try prompts containing `"`, `\`, a line break, `{{`, `}}` and `漢字 ü`, plus a placeholder inside a longer string such as `"Q: {{prompt}}"`.
   - **GET filling**: `build_request("GET", "http://h/chat?q={{prompt}}", ...)` percent-encodes the prompt and returns no body.
-- [ ] T021 [P] [US1] Write `tests/unit/test_response_path.py` for `kestrel.connection.response_path` (research R4).
+- [X] T021 [P] [US1] Write `tests/unit/test_response_path.py` for `kestrel.connection.response_path` (research R4).
   - `parse` accepts `$`, `$.reply`, `$.choices[0].message.content` and `$.a.b[2][0]`.
   - `parse` rejects `reply`, `$.`, `$..a`, `$.a[`, `$.a[-1]` and `$.a[x]` with `PathSyntaxError`.
   - `extract(doc, path)` returns the matched value, and raises `PathNotFound` for a missing field, an index out of range, or a step into a string or number.
-- [ ] T022 [P] [US1] Write `tests/unit/test_address_guard.py` for `kestrel.connection.address_guard.is_allowed(url, mode, resolver)` (FR-028, research R8).
+- [X] T022 [P] [US1] Write `tests/unit/test_address_guard.py` for `kestrel.connection.address_guard.is_allowed(url, mode, resolver)` (FR-028, research R8).
   - Local mode allows everything without resolving.
   - Hosted mode refuses `localhost`, `api.localhost`, `127.0.0.1`, `[::1]`, `10.1.2.3`, `172.16.0.1`, `192.168.1.1`, `169.254.169.254`, `100.100.100.200`, `0.0.0.0`, `224.0.0.1`, `[::ffff:127.0.0.1]` and `[fd00:ec2::254]`.
   - Hosted mode refuses a name the fake resolver maps to `10.0.0.5`, including when it also returns a public address.
   - Hosted mode allows a name that resolves only to `93.184.216.34`.
   - A resolver error counts as allowed; the tester then reports `unreachable`.
-- [ ] T023 [P] [US1] Write `tests/unit/test_sessions.py` for `kestrel.connection.sessions.FormSessions` (FR-009, FR-012, research R7).
+- [X] T023 [P] [US1] Write `tests/unit/test_sessions.py` for `kestrel.connection.sessions.FormSessions` (FR-009, FR-012, research R7).
   - `start(form_id)` returns False while that form has a test in flight, and True for another form.
   - `finish(form_id, fingerprint)` releases the form and records the fingerprint; `finish(form_id, None)` clears an earlier one.
   - `fingerprint(settings)` is the same when header names differ only in order or case. It changes when the URL, method, a header value, the body template or the response path changes. It's a hex HMAC that contains no header value.
   - Sessions unused for 60 minutes are dropped; use a fake clock.
-- [ ] T024 [P] [US1] Write `tests/unit/test_tester.py` for `kestrel.connection.tester.run_test(...)`, using `httpx.MockTransport` (FR-005, FR-007, FR-008, FR-010, FR-023, research R1, R2, R9). Each case in rows 2 and 4 to 13 of research R2 must give the right `step` (rows 1 and 3, an invalid form and unreadable stored headers, come from the API and are tested in T025 and T046), the exact `message` from contracts/kestrel-api.md, and the right `detail`:
+- [X] T024 [P] [US1] Write `tests/unit/test_tester.py` for `kestrel.connection.tester.run_test(...)`, using `httpx.MockTransport` (FR-005, FR-007, FR-008, FR-010, FR-023, research R1, R2, R9). Each case in rows 2 and 4 to 13 of research R2 must give the right `step` (rows 1 and 3, an invalid form and unreadable stored headers, come from the API and are tested in T025 and T046), the exact `message` from contracts/kestrel-api.md, and the right `detail`:
   - **Replies**: success with reply text; an empty reply gives `reply_text == ""` and `ok`.
   - **Status codes**: 401 and 403 give `auth_rejected`. 302 with `Location` gives `endpoint_error` with the location in `detail`, and no second request is sent. 500 gives `endpoint_error`.
   - **Size cap**: a body over 1,048,576 bytes, signalled by `Content-Length` or found while streaming without one, gives `endpoint_error` with "Response larger than 1 MB".
@@ -200,7 +200,7 @@ Tests and code written in different tasks rely on these names.
   - **The request**: exactly one per run, carrying `Hello`, the user's headers and `User-Agent: Kestrel/0.1 (connection test)`.
   - **Output**: a reply over 2,000 characters is cut, with `reply_truncated` set. A header value echoed in the reply or detail comes back as `••••`.
   - **Logging**: one INFO line on logger `kestrel.connection` with target name, the URL's scheme, host, port and path, method, step, status and duration. For the GET URL `http://h:8001/chat?q={{prompt}}&lang=en`, the line contains `http://h:8001/chat` and no `?`, `q=` or `Hello`. The log text never contains the header value or the reply.
-- [ ] T025 [P] [US1] Write `tests/integration/test_api_connection_tests.py` for `POST /api/connection-tests` (contracts/kestrel-api.md).
+- [X] T025 [P] [US1] Write `tests/integration/test_api_connection_tests.py` for `POST /api/connection-tests` (contracts/kestrel-api.md).
   - A success and two failure steps return 200 with the result shape.
   - Invalid forms return 422 naming `settings.url`, `settings.body_template`, `settings.response_path` or `settings.headers.0.name`, and never the submitted values.
   - `http://user:pass@h/chat`, `http://h/chat?api_key=abc123`, `http://h/chat?client_secret=abc123`, `http://h/chat?code=abc123` and `http://h/chat?sig=abc123` each return 422 on `settings.url` with the message "put credentials in an auth header, not the URL"; `http://h/chat?keyword=x` is accepted.
@@ -210,7 +210,7 @@ Tests and code written in different tasks rely on these names.
   - After `app.state.sessions.start(form_id)`, a request with that `form_id` gets 409 `test_in_progress`.
   - `hosted_settings`, with a fake resolver returning `10.0.0.5`, gives `address_not_allowed`.
   - `all_logs` contains the header value 0 times (SC-004).
-- [ ] T026 [P] [US1] Write `tests/integration/test_ui_connection.py` with `AppTest` and a stubbed `api_client` (import `api_client`, which `pythonpath` makes possible, and monkeypatch its functions). Cases:
+- [X] T026 [P] [US1] Write `tests/integration/test_ui_connection.py` with `AppTest` and a stubbed `api_client` (import `api_client`, which `pythonpath` makes possible, and monkeypatch its functions). Cases:
   - The form shows the defaults from `/api/config` (FR-002).
   - `add_header` adds a row that can be filled in.
   - Clicking `test_button` sends the form values with a `form_id`.
@@ -218,36 +218,36 @@ Tests and code written in different tasks rely on these names.
   - A reply containing `**bold**`, `<img src=x onerror=alert(1)>`, `[link](http://evil)` and `![x](http://evil/x.png)` appears only inside the code element and in no markdown element (SC-008).
   - An empty reply shows "(empty reply)", and a cut reply shows the caption.
   - A failure shows `st.error` with the message and the detail in a code element.
-- [ ] T027 [US1] Write `tests/e2e/test_us1_connection.py` (marker `e2e`; uses the T019 fixtures).
+- [X] T027 [US1] Write `tests/e2e/test_us1_connection.py` (marker `e2e`; uses the T019 fixtures).
   - **Spec acceptance test 1 (US1.1)**: fill in `url` with the sacrificial target's URL, add the header `X-API-Key` with its key, and leave the defaults unchanged. Click `test_button` and assert a success box and a non-empty reply in the code element.
   - **Acceptance test 2 (US1.2)**: set `response_path` to `$.answer` and test again. Assert the error box starts with "Response path not found" and no reply code element is shown.
   - End each test with `assert_no_secret_in_logs()`.
 
 ### Implementation for User Story 1
 
-- [ ] T028 [P] [US1] Implement `src/kestrel/connection/template.py` to pass T020 (research R3): `PLACEHOLDER = "{{prompt}}"`, `TemplateError(field, message)`, `validate(method, url, body_template)`, `build_request(method, url, body_template, prompt)`.
-- [ ] T029 [P] [US1] Implement `src/kestrel/connection/response_path.py` to pass T021: `parse`, `extract`, `PathSyntaxError` and `PathNotFound`.
-- [ ] T030 [P] [US1] Implement `src/kestrel/connection/address_guard.py` to pass T022.
+- [X] T028 [P] [US1] Implement `src/kestrel/connection/template.py` to pass T020 (research R3): `PLACEHOLDER = "{{prompt}}"`, `TemplateError(field, message)`, `validate(method, url, body_template)`, `build_request(method, url, body_template, prompt)`.
+- [X] T029 [P] [US1] Implement `src/kestrel/connection/response_path.py` to pass T021: `parse`, `extract`, `PathSyntaxError` and `PathNotFound`.
+- [X] T030 [P] [US1] Implement `src/kestrel/connection/address_guard.py` to pass T022.
   - Provide `is_allowed(url, mode, resolver=default_resolver)`; `default_resolver` uses `socket.getaddrinfo` over all address families.
   - Check addresses with `ipaddress`: `is_loopback`, `is_private`, `is_link_local`, `is_unspecified`, `is_reserved` and `is_multicast`.
   - Also block `100.64.0.0/10`, and unwrap `ipv4_mapped` IPv6 addresses before checking.
-- [ ] T031 [US1] Implement `ResolvedSettings` and `async run_test(settings, *, mode, display_name, transport=None, resolver=..., deadline_s=60.0, connect_timeout_s=10.0, max_bytes=1_048_576, max_reply_chars=2000)` in `src/kestrel/connection/tester.py` to pass T024 (research R1, R2, R9).
+- [X] T031 [US1] Implement `ResolvedSettings` and `async run_test(settings, *, mode, display_name, transport=None, resolver=..., deadline_s=60.0, connect_timeout_s=10.0, max_bytes=1_048_576, max_reply_chars=2000)` in `src/kestrel/connection/tester.py` to pass T024 (research R1, R2, R9).
   - Use `httpx.AsyncClient(transport=transport, follow_redirects=False, timeout=httpx.Timeout(deadline_s, connect=connect_timeout_s))` inside `asyncio.timeout(deadline_s)`.
   - Stream the body with the 1 MB cap, and classify the outcome in research R2's order.
   - Mask with `mask_values`, cut the reply to 2,000 characters, and log one line on `kestrel.connection` with only the fields listed in research R9: the URL is reduced to scheme, host, port and path, never its query string.
-- [ ] T032 [US1] Implement `FormSessions` in `src/kestrel/connection/sessions.py` to pass T023: `start`, `finish`, `last_success`, `fingerprint`, a per-process random HMAC key, and a 60-minute expiry. Needs T031 for `ResolvedSettings`.
-- [ ] T033 [US1] Add `POST /api/connection-tests` to `src/kestrel/api/main.py`, with `HeaderIn`, `ConnectionSettingsIn`, `ConnectionTestRequest` and `ConnectionTestResult` in `src/kestrel/api/schemas.py`. Pass T025.
+- [X] T032 [US1] Implement `FormSessions` in `src/kestrel/connection/sessions.py` to pass T023: `start`, `finish`, `last_success`, `fingerprint`, a per-process random HMAC key, and a 60-minute expiry. Needs T031 for `ResolvedSettings`.
+- [X] T033 [US1] Add `POST /api/connection-tests` to `src/kestrel/api/main.py`, with `HeaderIn`, `ConnectionSettingsIn`, `ConnectionTestRequest` and `ConnectionTestResult` in `src/kestrel/api/schemas.py`. Pass T025.
   - **Validation (422 in the contract format)**: URL and response path required (the display name isn't, FR-004); URL must be `http` or `https`; a URL with a user name or password before the host, or a query parameter named like a credential (research R9), is refused on `settings.url` with the message "put credentials in an auth header, not the URL"; header names must be HTTP tokens and not `Host`, `Content-Length`, `Transfer-Encoding` or `Connection`; header values other than `null` must be at least 4 characters, which also rules out empty values; `template.validate` and `response_path.parse` must pass; `value: null` without a `target_id` is refused.
   - **Run**: take the `FormSessions` lock (409 `test_in_progress` if taken), then run the test with the app's transport, resolver and mode.
   - **After**: record the fingerprint on success or clear it on failure, then release the lock.
-- [ ] T034 [US1] Add `test_connection(payload)` to `ui/api_client.py` with a 90-second timeout. Add the US1 parts of `ui/app.py`: contracts/ui-form.md rows 2 to 6 and the Connection test panel, using the widget keys from "Shared conventions". Pass T026.
+- [X] T034 [US1] Add `test_connection(payload)` to `ui/api_client.py` with a 90-second timeout. Add the US1 parts of `ui/app.py`: contracts/ui-form.md rows 2 to 6 and the Connection test panel, using the widget keys from "Shared conventions". Pass T026.
   - **Form**: the display name, method and URL fields.
   - **Header rows**: a name input, a `type="password"` value input, Remove, and Add header.
   - **Template and path**: both prefilled from `/api/config`.
   - **`test_button`**: disabled while a test runs; keep a UUID4 `form_id` in `st.session_state`.
   - **Results**: `st.success` and `st.error` carry only Kestrel's wording; `reply_text` and `detail` go through `st.code(text, language=None)`. Show "(empty reply)" and the truncation caption.
   - **Validation errors**: show 422 field errors under the matching field.
-- [ ] T035 [US1] Run `uv run pytest` (all unit and integration tests green), then `uv run pytest -m e2e tests/e2e/test_us1_connection.py` with `OPENROUTER_API_KEY` set (T027 green).
+- [X] T035 [US1] Run `uv run pytest` (all unit and integration tests green), then `uv run pytest -m e2e tests/e2e/test_us1_connection.py` with `OPENROUTER_API_KEY` set (T027 green).
 
 **Checkpoint**: User Story 1 works on its own and is the MVP: register, test, read the reply or the failing step.
 
