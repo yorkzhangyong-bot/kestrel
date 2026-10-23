@@ -28,7 +28,9 @@ The HTTP API the Streamlit UI calls. All rules live behind it; the UI only rende
 }
 ```
 
-`headers[].value`: a string sets a new value. `null` keeps the stored value of the header with the same name; this is only valid when a `target_id` or an edited target supplies one (FR-017).
+`headers[].value`: a string of at least 4 characters sets a new value; shorter or empty values get a 422 on that header (FR-004). `null` keeps the stored value of the header with the same name; this is only valid when a `target_id` or an edited target supplies one (FR-017).
+
+`url` must not carry credentials. A user name or password before the host, or a query parameter named like a credential ([research.md](../research.md) R9), gets a 422 on `settings.url` with the message "put credentials in an auth header, not the URL".
 
 **TargetSummary**
 
@@ -122,6 +124,8 @@ Saves an edit. Same body and errors as `POST /api/targets`, plus 404, with these
 - If the connection settings (after resolving kept header values) equal the stored ones, no test is needed. A name-only change is saved directly (FR-012).
 - Otherwise the same `not_tested` rule as for a new target applies.
 - A changed URL or a newer `terms_version` renews `permission_confirmed_at` (FR-018).
+
+The API requires `permission_confirmed: true` on every save, but it can't tell a fresh tick from an old one. Clearing the checkbox after a URL change (FR-018) is therefore the screen's job ([ui-form.md](./ui-form.md), row 7). It's the one rule the API can't enforce on its own.
 
 200: TargetDetail.
 

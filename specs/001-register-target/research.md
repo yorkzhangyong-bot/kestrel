@@ -78,7 +78,7 @@ For GET, the prompt is percent-encoded into the query string.
 
 ## R6. Storage (planning input)
 
-**Decision**: one SQLite file through the standard-library `sqlite3` module, with no ORM.
+**Decision**: one SQLite file through the standard-library `sqlite3` module, with no ORM. By default it's `data/kestrel.db` under the repo root (the folder holding `pyproject.toml`). A relative `KESTREL_DB_PATH` is resolved against the repo root too, so the API opens the same database whichever folder it starts in.
 - **Connections**: a new connection per request.
 - **Settings**: `PRAGMA foreign_keys=ON` and `PRAGMA secure_delete=ON` (deleted rows are overwritten).
 - **Schema**: created at start-up as version 1 and recorded in a `meta` table; no migration tool yet.
@@ -129,7 +129,7 @@ In hosted mode, before anything is sent, Kestrel:
 
 The resolver can be swapped out in tests.
 
-**Known gap**: the HTTP client resolves the name again when it connects. An attacker who controls DNS could switch the address between the check and the connection (DNS rebinding). Redirects are already off. Closing the gap means connecting to the checked address directly; that work is recorded for public launch.
+**Accepted risk, to fix before public launch**: the HTTP client resolves the name again when it connects. An attacker who controls DNS could switch the address between the check and the connection (DNS rebinding). Redirects are already off. Closing the gap means connecting to the checked address directly. SC-007 covers addresses as they resolve at check time, and the spec's Assumptions record this risk.
 
 **Alternatives**: Always blocking (breaks local agents and the end-to-end tests); an allowlist of public hosts (unworkable for arbitrary agents).
 
@@ -137,9 +137,10 @@ The resolver can be swapped out in tests.
 
 **Decision**:
 - **API responses**: the API never returns header values, only `name`, `has_value` and `readable`.
-- **Logging**: each test writes one log line with a fixed set of fields: target name, configured URL (with the placeholder, not the filled prompt), method, step, status code and duration in milliseconds (planning input). The line never contains reply text, header values or request bodies.
+- **URLs**: a URL with a user name or password before the host, or with a query parameter named like a credential, is refused on `settings.url` with the message "put credentials in an auth header, not the URL" (FR-004). A name counts when, ignoring case and treating `-` as `_`, it equals `key`, `token`, `secret`, `password`, `auth`, `api_key`, `apikey` or `access_token`, or ends with `_` followed by one of them. So `client_secret` and `x-api-key` count; `keyword` and `oauth` don't.
+- **Logging**: each test writes one log line with a fixed set of fields: target name, the URL's scheme, host, port and path (never its query string), method, step, status code and duration in milliseconds (planning input). The line never contains reply text, header values, request bodies or the prompt.
 - **Validation errors**: a custom handler reduces them to field names and messages. FastAPI's default handler echoes the submitted input.
-- **Masking**: before a reply or detail is returned, every stored or submitted header value of 4 or more characters is replaced with `••••`. Shorter values are left alone, because masking 1 to 3 characters would garble normal text and a value that short can't be a real secret.
+- **Masking**: before a reply or detail is returned, every stored or submitted header value is replaced with `••••`. FR-004 rejects values shorter than 4 characters, so every value is long enough to mask without garbling normal text; `mask_values` still skips anything shorter, as a guard.
 - **UI rendering**: the UI shows target text only with `st.code(text, language=None)` or `st.text`. It never uses `st.markdown` or `st.write`, which render markdown, links and images (FR-007, SC-008). `st.error` and `st.success` carry only Kestrel's own wording.
 
 **Rationale**: Each item closes a specific leak path.

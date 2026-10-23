@@ -46,9 +46,9 @@ Tests and code written in different tasks rely on these names.
 **Purpose**: Create the project and its tooling.
 
 - [ ] T001 Create the uv project at the repo root: run `uv init --package --name kestrel --python 3.12`, then `uv add fastapi uvicorn httpx cryptography streamlit` and `uv add --dev pytest`. In `pyproject.toml`, set `requires-python = ">=3.12,<3.13"` and add `[tool.pytest.ini_options]` with `testpaths = ["tests"]`, `pythonpath = ["src", "ui"]`, `markers = ["e2e: starts the sacrificial target and the API; needs OPENROUTER_API_KEY"]` and `addopts = "-m 'not e2e' --import-mode=importlib"`. Confirm `uv run pytest` runs and collects nothing.
-- [ ] T002 Create the package and test folders: `src/kestrel/__init__.py` (emptied of anything `uv init` generated), `src/kestrel/connection/__init__.py`, `src/kestrel/api/__init__.py`, and empty folders `tests/unit/`, `tests/integration/`, `tests/e2e/` (add a `.gitkeep` to each).
+- [ ] T002 Create the package and test folders: `src/kestrel/__init__.py` (emptied of anything `uv init` generated), `src/kestrel/connection/__init__.py`, `src/kestrel/api/__init__.py`, and empty folders `tests/unit/`, `tests/integration/`, `tests/e2e/` (add a `.gitkeep` to each). Also remove the `[project.scripts]` entry (`kestrel = "kestrel:main"`) that `uv init --package` adds to `pyproject.toml`, since the generated `main()` is gone.
 - [ ] T003 [P] Create `.gitignore` at the repo root with `/data/`, `.venv/`, `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.env`, `targets/hs_code/.venv/` and `targets/hs_code/.env`.
-- [ ] T004 [P] Create `.env.example` at the repo root documenting `KESTREL_MODE` ("local" or "hosted"; unset means hosted), `KESTREL_SECRET_KEY` (optional Fernet key), `KESTREL_KEY_FILE` (default `~/.kestrel/secret.key`), `KESTREL_DB_PATH` (default `data/kestrel.db`) and `KESTREL_API_URL` (screen to API, default `http://127.0.0.1:8000`). Say that Kestrel reads real environment variables and doesn't load this file.
+- [ ] T004 [P] Create `.env.example` at the repo root documenting `KESTREL_MODE` ("local" or "hosted"; unset means hosted), `KESTREL_SECRET_KEY` (optional Fernet key), `KESTREL_KEY_FILE` (default `~/.kestrel/secret.key`), `KESTREL_DB_PATH` (default `data/kestrel.db` under the repo root; a relative path resolves against the repo root) and `KESTREL_API_URL` (screen to API, default `http://127.0.0.1:8000`). Say that Kestrel reads real environment variables and doesn't load this file.
 
 ---
 
@@ -63,7 +63,7 @@ Tests and code written in different tasks rely on these names.
 - [ ] T005 [P] Write `tests/unit/test_settings.py` for `kestrel.settings.load_settings(env)`. Cases:
   - `KESTREL_MODE` "local" and "hosted" are accepted; unset gives "hosted".
   - Any other value, such as "dev", raises `SettingsError` with a message naming `KESTREL_MODE`.
-  - `KESTREL_DB_PATH` defaults to `data/kestrel.db`.
+  - `KESTREL_DB_PATH` defaults to `data/kestrel.db` under the repo root, which is the folder holding `pyproject.toml` (`Path(kestrel.settings.__file__).resolve().parents[2]`). A relative value is resolved against the repo root too.
   - `KESTREL_KEY_FILE` defaults to `~/.kestrel/secret.key`, expanded.
   - `KESTREL_SECRET_KEY` is optional.
 
@@ -80,7 +80,7 @@ Tests and code written in different tasks rely on these names.
   - Values of 1 to 3 characters are left alone.
 
   Confirm the tests fail.
-- [ ] T007 Implement `src/kestrel/settings.py` (frozen `Settings` dataclass with `mode`, `db_path`, `key_file`, `secret_key`; `load_settings(env=os.environ)`; `SettingsError`) to pass T005.
+- [ ] T007 Implement `src/kestrel/settings.py` (frozen `Settings` dataclass with `mode`, `db_path`, `key_file`, `secret_key`; `load_settings(env=os.environ)`; `SettingsError`) to pass T005. Anchor `db_path` to the repo root, `Path(__file__).resolve().parents[2]` (research R6).
 - [ ] T008 Implement `src/kestrel/secrets.py` (`load_or_create_key`, `Vault` built on `cryptography.fernet.Fernet`, `mask_values`) to pass T006. Write a generated key file with `os.chmod(path, 0o600)` where the OS supports it, and ignore the error on Windows.
 - [ ] T009 Create `tests/conftest.py` with the fixtures `settings`, `hosted_settings`, `client` and `all_logs` from "Shared conventions". The `client` fixture builds `create_app(settings, transport=..., resolver=...)` from `kestrel.api.main`, so tests can pass an `httpx.MockTransport` and a fake resolver.
 - [ ] T010 Write `tests/integration/test_api_base.py`. Cases:
@@ -94,7 +94,7 @@ Tests and code written in different tasks rely on these names.
   - It configures the `kestrel` logger to write to stderr with `%(asctime)s %(levelname)s %(name)s %(message)s`.
   - It registers a `RequestValidationError` handler that returns only `{"errors": [{"field": "<dotted location without 'body'>", "message": "<text>"}]}` and never the input.
   - It serves `GET /api/config` with `mode` and `defaults`.
-  - The API runs with `uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000`. Replace the API command in `specs/001-register-target/quickstart.md` with this one (a module-level `app` would create a key at import time).
+  - The API runs with `uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000`, the command in `specs/001-register-target/quickstart.md`. Don't add a module-level `app`: it would create a key file at import time.
 - [ ] T012 [P] Write `tests/integration/test_ui_boundary.py`. It parses every `ui/*.py` with `ast` and fails if any file imports `kestrel` (plan, Structure Decision).
 - [ ] T013 Create `ui/api_client.py` and a first `ui/app.py`.
   - `ui/api_client.py`: the base URL comes from `KESTREL_API_URL` (default `http://127.0.0.1:8000`). Add an `ApiError(status, body)` exception and `get_config()`.
@@ -195,14 +195,17 @@ Tests and code written in different tasks rely on these names.
   - **Status codes**: 401 and 403 give `auth_rejected`. 302 with `Location` gives `endpoint_error` with the location in `detail`, and no second request is sent. 500 gives `endpoint_error`.
   - **Size cap**: a body over 1,048,576 bytes, signalled by `Content-Length` or found while streaming without one, gives `endpoint_error` with "Response larger than 1 MB".
   - **Body and path**: non-JSON gives `non_json`; a missing path gives `path_not_found`; a list, number or null gives `not_text` with "Found: list" (or the type found).
-  - **Network**: a closed local port with the real transport gives `unreachable`. A handler that sleeps past a 0.5-second test deadline gives `timed_out`.
+  - **Network**: a closed local port with the real transport gives `unreachable`. A handler raising `httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")` gives `unreachable`, with a `detail` naming the certificate problem. A handler that sleeps past a 0.5-second test deadline gives `timed_out`.
   - **Hosting guard**: hosted mode with a private address gives `address_not_allowed`, and nothing is sent.
   - **The request**: exactly one per run, carrying `Hello`, the user's headers and `User-Agent: Kestrel/0.1 (connection test)`.
   - **Output**: a reply over 2,000 characters is cut, with `reply_truncated` set. A header value echoed in the reply or detail comes back as `••••`.
-  - **Logging**: one INFO line on logger `kestrel.connection` with target name, configured URL, method, step, status and duration. The log text never contains the header value or the reply.
+  - **Logging**: one INFO line on logger `kestrel.connection` with target name, the URL's scheme, host, port and path, method, step, status and duration. For the GET URL `http://h:8001/chat?q={{prompt}}&lang=en`, the line contains `http://h:8001/chat` and no `?`, `q=` or `Hello`. The log text never contains the header value or the reply.
 - [ ] T025 [P] [US1] Write `tests/integration/test_api_connection_tests.py` for `POST /api/connection-tests` (contracts/kestrel-api.md).
   - A success and two failure steps return 200 with the result shape.
   - Invalid forms return 422 naming `settings.url`, `settings.body_template`, `settings.response_path` or `settings.headers.0.name`, and never the submitted values.
+  - `http://user:pass@h/chat`, `http://h/chat?api_key=abc123` and `http://h/chat?client_secret=abc123` each return 422 on `settings.url` with the message "put credentials in an auth header, not the URL"; `http://h/chat?keyword=x` is accepted.
+  - A header value that is empty, or 3 characters long, returns 422 on `settings.headers.0.value`.
+  - A test with an empty `display_name` runs, because the display name is only required to save (FR-004).
   - A header with `value: null` and no `target_id` gives 422.
   - After `app.state.sessions.start(form_id)`, a request with that `form_id` gets 409 `test_in_progress`.
   - `hosted_settings`, with a fake resolver returning `10.0.0.5`, gives `address_not_allowed`.
@@ -231,10 +234,10 @@ Tests and code written in different tasks rely on these names.
 - [ ] T031 [US1] Implement `ResolvedSettings` and `async run_test(settings, *, mode, display_name, transport=None, resolver=..., deadline_s=60.0, connect_timeout_s=10.0, max_bytes=1_048_576, max_reply_chars=2000)` in `src/kestrel/connection/tester.py` to pass T024 (research R1, R2, R9).
   - Use `httpx.AsyncClient(transport=transport, follow_redirects=False, timeout=httpx.Timeout(deadline_s, connect=connect_timeout_s))` inside `asyncio.timeout(deadline_s)`.
   - Stream the body with the 1 MB cap, and classify the outcome in research R2's order.
-  - Mask with `mask_values`, cut the reply to 2,000 characters, and log one line on `kestrel.connection` with only the fields listed in research R9.
+  - Mask with `mask_values`, cut the reply to 2,000 characters, and log one line on `kestrel.connection` with only the fields listed in research R9: the URL is reduced to scheme, host, port and path, never its query string.
 - [ ] T032 [US1] Implement `FormSessions` in `src/kestrel/connection/sessions.py` to pass T023: `start`, `finish`, `last_success`, `fingerprint`, a per-process random HMAC key, and a 60-minute expiry. Needs T031 for `ResolvedSettings`.
 - [ ] T033 [US1] Add `POST /api/connection-tests` to `src/kestrel/api/main.py`, with `HeaderIn`, `ConnectionSettingsIn`, `ConnectionTestRequest` and `ConnectionTestResult` in `src/kestrel/api/schemas.py`. Pass T025.
-  - **Validation (422 in the contract format)**: URL and response path required; URL must be `http` or `https`; header names must be HTTP tokens and not `Host`, `Content-Length`, `Transfer-Encoding` or `Connection`; `template.validate` and `response_path.parse` must pass; `value: null` without a `target_id` is refused.
+  - **Validation (422 in the contract format)**: URL and response path required (the display name isn't, FR-004); URL must be `http` or `https`; a URL with a user name or password before the host, or a query parameter named like a credential (research R9), is refused on `settings.url` with the message "put credentials in an auth header, not the URL"; header names must be HTTP tokens and not `Host`, `Content-Length`, `Transfer-Encoding` or `Connection`; header values other than `null` must be at least 4 characters, which also rules out empty values; `template.validate` and `response_path.parse` must pass; `value: null` without a `target_id` is refused.
   - **Run**: take the `FormSessions` lock (409 `test_in_progress` if taken), then run the test with the app's transport, resolver and mode.
   - **After**: record the fingerprint on success or clear it on failure, then release the lock.
 - [ ] T034 [US1] Add `test_connection(payload)` to `ui/api_client.py` with a 90-second timeout. Add the US1 parts of `ui/app.py`: contracts/ui-form.md rows 2 to 6 and the Connection test panel, using the widget keys from "Shared conventions". Pass T026.
@@ -283,7 +286,7 @@ Tests and code written in different tasks rely on these names.
   - Errors are shown for 409 `not_tested`, 409 `name_taken` and 422 `permission_confirmed`.
   - After a save, the saved-targets table shows name, URL, method, permission date and terms version; the typed header values are gone from `st.session_state`; and a new `form_id` is in use.
 - [ ] T039 [US2] Write `tests/e2e/test_us2_save.py` (marker `e2e`).
-  - **Spec acceptance test 3 (US2.2)**: test the sacrificial target successfully, leave `permission` unticked and click `save_button`. Assert saving is blocked and the table has no row.
+  - **Spec acceptance test 3 (US2.2)**: fill in `display_name`, so the checkbox is the only thing missing. Test the sacrificial target successfully, leave `permission` unticked and click `save_button`. Assert saving is blocked and the table has no row.
   - **US2.1**: tick `permission`, save, and assert the target is listed.
   - End with `assert_no_secret_in_logs()`.
 
@@ -295,7 +298,7 @@ Tests and code written in different tasks rely on these names.
       - `id` INTEGER PRIMARY KEY;
       - `name` TEXT NOT NULL, "Trimmed, 1 to 100 characters";
       - `name_key` TEXT NOT NULL UNIQUE, "`name.casefold()`; makes display names unique ignoring letter case (FR-013)";
-      - `url` TEXT NOT NULL, "`http` or `https`; for GET, contains `{{prompt}}` exactly once in the query string (FR-003)";
+      - `url` TEXT NOT NULL, "`http` or `https`; no user name or password and no credential-like query parameter (FR-004); for GET, contains `{{prompt}}` exactly once in the query string (FR-003)";
       - `method` TEXT NOT NULL, "`CHECK (method IN ('POST', 'GET'))`";
       - `body_template` TEXT NOT NULL, "POST: valid JSON with `{{prompt}}` exactly once inside a string value. GET: stored but not sent";
       - `response_path` TEXT NOT NULL, "Syntax in research R4";
@@ -304,10 +307,10 @@ Tests and code written in different tasks rely on these names.
       - `created_at` and `updated_at` TEXT NOT NULL, "ISO-8601 UTC".
     - `target_headers`:
       - `id` INTEGER PRIMARY KEY;
-      - `target_id` INTEGER NOT NULL, "`REFERENCES targets(id) ON DELETE CASCADE`";
+      - `target_id` INTEGER NOT NULL, "`REFERENCES targets(id) ON DELETE CASCADE`; deleting a target removes its headers (FR-019)";
       - `position` INTEGER NOT NULL, "Order shown in the form";
       - `name` TEXT NOT NULL, "HTTP token characters only. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are not allowed";
-      - `value_encrypted` TEXT NOT NULL, "Fernet token. Never returned by the API (FR-020, FR-021)";
+      - `value_encrypted` TEXT NOT NULL, "Fernet token of a value of at least 4 characters (FR-004). Never returned by the API (FR-020, FR-021)";
       - "Unique index on `(target_id, lower(name))`".
     - `meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)`, holding `schema_version = 1`.
   - **Connections**: open one per call, with `PRAGMA foreign_keys=ON` and `PRAGMA secure_delete=ON`.
@@ -369,6 +372,7 @@ Tests and code written in different tasks rely on these names.
   - Changing `url` clears `permission` (US3.3, FR-018).
   - A name-only change saves (US3.2).
   - `delete_button` shows `delete_confirm` and `delete_cancel`. Cancel changes nothing (US3.5). Confirm calls delete, refreshes the table and starts a new `form_id` (US3.4).
+  - With a saved target loaded, `test_button` sends `target_id` along with the form values (FR-016).
 
 ### Implementation for User Story 3
 
@@ -385,6 +389,7 @@ Tests and code written in different tasks rely on these names.
   - **Permission**: clear `permission` when the URL differs from the loaded one.
   - **Saving**: save edits with `update_target`.
   - **Delete**: the two-step delete.
+  - **Re-testing**: Test connection on a loaded target sends `target_id`, so kept header values are used (FR-016).
   - **`form_id`**: start a new one whenever the selection changes, and after a save or delete.
 - [ ] T051 [US3] Run `uv run pytest` (all green), then the full `uv run pytest -m e2e tests/e2e/`.
 
@@ -403,7 +408,7 @@ Tests and code written in different tasks rely on these names.
   - how to run the tests;
   - a link to `specs/001-register-target/quickstart.md`.
 - [ ] T053 [P] Write `targets/hs_code/README.md`: what the sacrificial target is for, how to start it, its environment variables and how to register it in Kestrel (from contracts/hs-code-target.md), with a link to `PROVENANCE.md`.
-- [ ] T054 Go through the 12 manual checks in `specs/001-register-target/quickstart.md` against a running API, screen and sacrificial target. Fix any difference, in the code or in quickstart.md.
+- [ ] T054 Go through the 13 manual checks in `specs/001-register-target/quickstart.md` against a running API, screen and sacrificial target, including the hostile-reply check (SC-008). Time one first-time registration, from opening the screen to the saved target, and note the result against SC-001's 3 minutes. Fix any difference, in the code or in quickstart.md.
 - [ ] T055 Review secret hygiene in `src/kestrel/**/*.py`, `ui/app.py` and `ui/api_client.py`. Check every logging call, `print`, `st.markdown`, `st.write` and exception message that could carry a header value or target text against the rules in research R9, and fix any that break them.
 - [ ] T056 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --project targets/hs_code --directory targets/hs_code pytest` for `targets/hs_code/tests/`.
 

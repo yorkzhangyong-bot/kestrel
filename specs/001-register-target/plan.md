@@ -24,7 +24,7 @@ The end-to-end tests drive the real screen with Streamlit's AppTest against a sa
 - Kestrel: FastAPI with uvicorn (API), Streamlit (screen), httpx (test requests and the screen's API calls), cryptography (Fernet).
 - Sacrificial target, in its own project: FastAPI and uvicorn, plus what the copied CargoLint files need (langchain-core, langchain-openai, rank-bm25, lxml, python-dotenv), pinned to CargoLint's versions.
 
-**Storage**: One SQLite file through the standard-library `sqlite3` module, with no ORM; default `data/kestrel.db`, override with `KESTREL_DB_PATH`. The encryption key comes from `KESTREL_SECRET_KEY`, or else a generated key file (default `~/.kestrel/secret.key`, override with `KESTREL_KEY_FILE`).
+**Storage**: One SQLite file through the standard-library `sqlite3` module, with no ORM; default `data/kestrel.db` under the repo root, override with `KESTREL_DB_PATH` (a relative path resolves against the repo root). The encryption key comes from `KESTREL_SECRET_KEY`, or else a generated key file (default `~/.kestrel/secret.key`, override with `KESTREL_KEY_FILE`).
 
 **Testing**: pytest.
 - Unit tests for the pure modules.
@@ -42,7 +42,7 @@ The end-to-end tests drive the real screen with Streamlit's AppTest against a sa
 - Timing: 60-second deadline per test, 10-second connect limit.
 - Size: responses capped at 1 MB; replies shown up to 2,000 characters.
 - One test in flight per form, and redirects never followed.
-- Header values never logged or returned.
+- Header values never logged or returned; URLs that carry credentials refused; logs never include a URL's query string.
 - The API runs as one process, because form sessions live in memory.
 
 **Scale/Scope**: One user and tens of targets; 3 user stories and 29 functional requirements.
@@ -58,7 +58,7 @@ No unknowns remain: the planning input and [research.md](./research.md) settle e
 | I. Scope is security, not quality | Builds only target registration and a connection test. A target holds endpoint settings only, so quality evaluations can reuse it later. | Pass |
 | II. Hard evidence over opinion | No findings in this feature. | N/A |
 | III. Every report states the attacker model | No reports in this feature. | N/A |
-| IV. Secrets never leave the vault | Header values are Fernet-encrypted at rest and never returned by the API. Each test writes one log line with a fixed set of fields, validation errors never echo input, and values are masked in replies. Values go only to the target, with redirects off. SC-004 is tested with a known value ([research.md](./research.md) R9). | Pass |
+| IV. Secrets never leave the vault | Header values are Fernet-encrypted at rest and never returned by the API. URLs that carry credentials are refused, so keys can't end up stored unencrypted. Each test writes one log line with a fixed set of fields and no query string, validation errors never echo input, and values are masked in replies. Values go only to the target, with redirects off. SC-004 is tested with a known value ([research.md](./research.md) R9). | Pass |
 | V. Learn from every run | A connection test is not a scan run (spec Assumptions); there is nothing to write back. | N/A |
 | VI. OWASP mapping, fix-ready findings | No findings in this feature. | N/A |
 | VII. Tests first, thin slices | Slice: Streamlit screen → FastAPI → connection tester → SQLite store, with the sacrificial HS-code target as the agent at the far end. Unit tests come before the code they cover; three end-to-end tests run against the sacrificial target through the real screen. | Pass |

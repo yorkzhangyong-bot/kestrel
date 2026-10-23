@@ -4,7 +4,7 @@ Phase 1 of [plan.md](./plan.md). Storage choices are explained in [research.md](
 
 ## Stored in SQLite
 
-One file, default `data/kestrel.db` (set `KESTREL_DB_PATH` to change it). The schema is created at start-up with `PRAGMA foreign_keys=ON` and `PRAGMA secure_delete=ON`.
+One file, default `data/kestrel.db` under the repo root (set `KESTREL_DB_PATH` to change it; a relative path is resolved against the repo root). The schema is created at start-up with `PRAGMA foreign_keys=ON` and `PRAGMA secure_delete=ON`.
 
 ### `targets`
 
@@ -13,7 +13,7 @@ One file, default `data/kestrel.db` (set `KESTREL_DB_PATH` to change it). The sc
 | `id` | INTEGER PRIMARY KEY | |
 | `name` | TEXT NOT NULL | Trimmed, 1 to 100 characters |
 | `name_key` | TEXT NOT NULL UNIQUE | `name.casefold()`; makes display names unique ignoring letter case (FR-013) |
-| `url` | TEXT NOT NULL | `http` or `https`; for GET, contains `{{prompt}}` exactly once in the query string (FR-003) |
+| `url` | TEXT NOT NULL | `http` or `https`; no user name or password and no credential-like query parameter (FR-004); for GET, contains `{{prompt}}` exactly once in the query string (FR-003) |
 | `method` | TEXT NOT NULL | `CHECK (method IN ('POST', 'GET'))` |
 | `body_template` | TEXT NOT NULL | POST: valid JSON with `{{prompt}}` exactly once inside a string value. GET: stored but not sent |
 | `response_path` | TEXT NOT NULL | Syntax in research R4 |
@@ -29,7 +29,7 @@ One file, default `data/kestrel.db` (set `KESTREL_DB_PATH` to change it). The sc
 | `target_id` | INTEGER NOT NULL | `REFERENCES targets(id) ON DELETE CASCADE`; deleting a target removes its headers (FR-019) |
 | `position` | INTEGER NOT NULL | Order shown in the form |
 | `name` | TEXT NOT NULL | HTTP token characters only. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are not allowed |
-| `value_encrypted` | TEXT NOT NULL | Fernet token. Never returned by the API (FR-020, FR-021) |
+| `value_encrypted` | TEXT NOT NULL | Fernet token of a value of at least 4 characters (FR-004). Never returned by the API (FR-020, FR-021) |
 
 Unique index on `(target_id, lower(name))`: a header name appears at most once per target, ignoring case.
 
@@ -82,7 +82,7 @@ saved with a header the current key can't decrypt ──re-enter the value, test
 
 | Rule | Enforced by | Requirement |
 |---|---|---|
-| Required fields, URL scheme, header names, placeholder count, valid JSON | API validation before sending | FR-003, FR-004 |
+| Required fields, URL scheme, no credentials in the URL, header names, header values of at least 4 characters, placeholder count, valid JSON | API validation before sending | FR-003, FR-004 |
 | Unique display names, ignoring case | `name_key` UNIQUE | FR-013 |
 | No save without the permission tick and the current terms version | API save rules | FR-011, FR-029 |
 | No save of untested connection settings | Form session fingerprint | FR-012 |

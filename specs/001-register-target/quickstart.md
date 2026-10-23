@@ -20,13 +20,15 @@ Kestrel treats an unset `KESTREL_MODE` as hosted and blocks localhost addresses.
 
 ```bash
 # terminal 1: the API (PowerShell: $env:KESTREL_MODE="local")
-KESTREL_MODE=local uv run uvicorn kestrel.api.main:app --host 127.0.0.1 --port 8000
+KESTREL_MODE=local uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000
 
 # terminal 2: the screen
 uv run streamlit run ui/app.py
 ```
 
 On first start, the API logs where it created the encryption key file (default `~/.kestrel/secret.key`). Back that file up. If it's lost, saved auth header values can't be recovered and have to be re-entered; everything else is kept ([research.md](./research.md) R5). To supply the key yourself instead, set `KESTREL_SECRET_KEY`.
+
+Saved targets live in `data/kestrel.db` under the repo root, whichever folder you start the API from.
 
 ## Run the sacrificial HS-code target (for manual checks)
 
@@ -52,6 +54,19 @@ HS_TARGET_API_KEY=test-key-123 OPENROUTER_API_KEY=sk-or-... \
 | 10 | Delete target, then Confirm delete | Target gone | US3.4 |
 | 11 | Restart the API without `KESTREL_MODE`, test the saved target | "This address is on a local or private network…"; nothing reaches the target | FR-028, SC-007 |
 | 12 | Stop the API, move the key file away, start it again, test a target that has a header | Start-up log reports the key mismatch; test shows "The stored auth headers can't be read…"; re-entering the value, testing and saving fixes it | R5 |
+| 13 | Hostile reply (steps below) | The reply shows as plain text with the tags and links visible as characters; nothing is requested from port 8003 | SC-008, FR-007 |
+
+### Hostile-reply check (13)
+
+1. In an empty folder, save `reply.json`:
+
+   ```json
+   {"reply": "<img src=\"http://127.0.0.1:8003/leak.png\"> ![pixel](http://127.0.0.1:8003/pixel.png) [click](http://127.0.0.1:8003/)"}
+   ```
+
+2. In that folder run `python -m http.server 8002`, and in a second terminal run `python -m http.server 8003` (the "outside address").
+3. In Kestrel: New target, method GET, URL `http://127.0.0.1:8002/reply.json?q={{prompt}}`, no headers, response path `$.reply`. Click Test connection.
+4. Check that the reply appears as plain text, that the console of the 8003 server shows no request, and that the browser's Network tab shows nothing sent to port 8003.
 
 ## Automated tests
 

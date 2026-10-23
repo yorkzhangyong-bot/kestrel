@@ -68,7 +68,7 @@ After a successful test, the user ticks "I own this agent or have written permis
 3. **Given** no successful test connection for the current settings, **When** the user tries to save, **Then** saving is blocked and the user is told to run a successful test first.
 4. **Given** a successful test, **When** the user changes the endpoint URL, HTTP method, auth headers, request body template or response path, **Then** saving is blocked until a new test succeeds.
 5. **Given** a saved target, **When** Kestrel restarts, **Then** the target is still in the list.
-6. **Given** a partly filled form, **When** the user opens the terms link next to the permission checkbox, **Then** the terms of service are shown and the form input is kept.
+6. **Given** a partly filled form, **When** the user opens the terms of service next to the permission checkbox, **Then** the terms of service are shown and the form input is kept.
 
 ---
 
@@ -93,20 +93,23 @@ The user picks a saved target from the list to see its details, test it again, e
 ### Edge Cases
 
 - A required field is empty, the URL is not a valid http or https address, or the prompt placeholder is missing or appears more than once: the form names the field at fault and nothing is sent.
+- The URL carries credentials (`user:pass@`, or a query parameter such as `api_key` or `token`): the URL field shows "put credentials in an auth header, not the URL" and nothing is sent.
 - The agent does not answer within 60 seconds: the test stops and shows the "timed out" message.
 - The endpoint answers with an error status other than an authentication refusal (for example 404 or 500): the "endpoint error" message is shown with the status code.
 - The endpoint answers with a redirect: Kestrel does not follow it, so auth header values are never sent to another address, and shows the "endpoint error" message with the redirect location so the user can update the URL.
-- Kestrel runs hosted and the URL points to localhost, a private network or a cloud-metadata address, directly or through a name that resolves to one: the test is refused before anything is sent (FR-028).
+- Kestrel runs hosted and the URL points to localhost, a private network or a cloud-metadata address, directly or through a name that resolves to one when Kestrel checks it: the test is refused before anything is sent (FR-028).
 - The secure connection fails (for example, an untrusted certificate): shown as "unreachable", naming the certificate problem.
 - The response path matches something other than text (a list, an object, a number or nothing): the "reply is not text" message is shown.
 - The reply text is empty: the test counts as successful and shows "(empty reply)".
 - The reply is very long: the first 2,000 characters are shown, with a note that it was shortened.
+- The response is larger than 1 MB: Kestrel stops reading and shows the "endpoint error" message with "Response larger than 1 MB".
 - The reply contains markdown, HTML, a script, a link or an image reference: it is shown as plain text, and nothing in it is loaded or clickable.
 - The agent's reply or an error detail contains one of the target's auth header values: the value is masked before display.
 - The user clicks "Test connection" again while a test is running: no second request is sent.
 - A display name is already used by another saved target, ignoring letter case: saving is blocked with a message.
 - Two targets share an endpoint URL but differ in other settings: allowed.
 - Kestrel restarts while the user is filling in the form: unsaved input is lost; saved targets are kept.
+- The encryption key changed or was lost: saved targets stay listed, their auth header values show as unreadable, and testing such a target stops with "stored auth headers can't be read" before anything is sent. The user re-enters the values, tests and saves, or restores the old key.
 
 ## Requirements *(mandatory)*
 
@@ -117,7 +120,16 @@ The user picks a saved target from the list to see its details, test it again, e
 - **FR-001**: Users MUST be able to enter a display name, an endpoint URL, an HTTP method (POST or GET; POST by default), zero or more auth headers (each a name and a value), a request body template and a response path.
 - **FR-002**: The form MUST start with the request body template `{"message": "{{prompt}}"}` and the response path `$.reply`, both of which the user can change.
 - **FR-003**: The prompt placeholder `{{prompt}}` MUST appear exactly once: in the request body template for POST, or in the URL's query for GET, which sends no body.
-- **FR-004**: Before sending anything, the system MUST check the form and name the field at fault when a required field (display name, URL, response path) is empty, the URL is not a valid http or https address, an auth header name is not a valid header name, the placeholder rule in FR-003 is broken, or, for POST, the request body is not valid JSON once the placeholder is filled in.
+- **FR-004**: Before sending anything, the system MUST check the form and name the field at fault when:
+  - the URL or the response path is empty;
+  - the URL is not a valid http or https address;
+  - the URL carries credentials: a user name or password before the host (`user:pass@` or `user@`), or a query parameter named like a credential (`key`, `token`, `secret`, `password`, `auth`, `api_key`, `apikey` or `access_token`, ignoring case, on its own or after `_` or `-`, so `client_secret` counts and `keyword` doesn't). The message is "put credentials in an auth header, not the URL";
+  - an auth header name is not a valid header name;
+  - an auth header value is empty or shorter than 4 characters;
+  - the placeholder rule in FR-003 is broken;
+  - for POST, the request body is not valid JSON once the placeholder is filled in.
+
+  The display name is required to save a target (FR-011 to FR-013), not to test one.
 
 **Test connection**
 
@@ -125,10 +137,12 @@ The user picks a saved target from the list to see its details, test it again, e
 - **FR-006**: Filling in the placeholder MUST produce a well-formed request even when the prompt contains quotes, backslashes, line breaks or non-ASCII characters, so that later features can send any attack text.
 - **FR-007**: On success, the system MUST show the reply text found at the response path as plain text, exactly as received: markdown, HTML, links and images in it are shown as characters and never rendered, followed or loaded. The same applies to any text from the target that appears in an error message.
 - **FR-008**: On failure, the system MUST show one message naming the step that failed:
+  - **Address not allowed**: Kestrel runs hosted and the URL points to a local or private address (FR-028); nothing is sent.
+  - **Stored auth headers can't be read**: a saved header value can't be decrypted because the encryption key changed or was lost; nothing is sent. The user re-enters the header values, tests and saves again, or restores the old key.
   - **Unreachable**: no connection could be made to the URL.
   - **Timed out**: no response arrived within 60 seconds.
   - **Authentication rejected**: the endpoint refused the request as unauthorized or forbidden (status 401 or 403).
-  - **Endpoint error**: any other error status, or a redirect, shown with its status code and, for a redirect, its location.
+  - **Endpoint error**: any other error status, a redirect, or a response larger than 1 MB, shown with its status code and, for a redirect, its location.
   - **Non-JSON response**: the endpoint answered successfully, but the body is not JSON.
   - **Response path not found**: the response path matches nothing in the response.
   - **Reply is not text**: the response path matches something other than text.
@@ -166,11 +180,11 @@ The user picks a saved target from the list to see its details, test it again, e
 
 **Running on a server**
 
-- **FR-028**: Whether Kestrel runs on the user's own machine or hosted on a server MUST be a deployment setting, and Kestrel MUST behave as hosted when the setting is missing. When hosted, Test connection MUST refuse, before sending anything, any endpoint whose address is localhost, on a private network or link-local (which covers cloud-metadata addresses), including names that resolve to such an address, and MUST say that these addresses only work when Kestrel runs on the user's own machine. On the user's own machine these addresses MUST stay allowed.
+- **FR-028**: Whether Kestrel runs on the user's own machine or hosted on a server MUST be a deployment setting, and Kestrel MUST behave as hosted when the setting is missing. When hosted, Test connection MUST refuse, before sending anything, any endpoint whose address is localhost, on a private network or link-local (which covers cloud-metadata addresses), including names that resolve to such an address when Kestrel checks them (see the accepted risk in Assumptions), and MUST say that these addresses only work when Kestrel runs on the user's own machine. On the user's own machine these addresses MUST stay allowed.
 
 **Terms of service**
 
-- **FR-029**: A link next to the permission checkbox MUST open a short terms of service without losing what the user has typed into the form. The terms MUST say that the user owns the agent or has written permission to test it, that the user is responsible for every test and scan they run against it, and that Kestrel only sends plain conversational messages within fixed limits. The terms MUST carry a version number, and the version accepted is stored with the permission confirmation.
+- **FR-029**: A short terms of service MUST be viewable next to the permission checkbox without losing what the user has typed into the form. The terms MUST say that the user owns the agent or has written permission to test it, that the user is responsible for every test and scan they run against it, and that Kestrel only sends plain conversational messages within fixed limits. The terms MUST carry a version number, and the version accepted is stored with the permission confirmation.
 
 ### Key Entities
 
@@ -188,7 +202,7 @@ The user picks a saved target from the list to see its details, test it again, e
 - **SC-004**: Across all acceptance tests, a known test value used as an auth header value appears 0 times in logs, error messages, the target list or any other output.
 - **SC-005**: Every attempt to save without the permission checkbox ticked, or without a successful test of the current connection settings, is blocked, with no exceptions.
 - **SC-006**: Three end-to-end tests pass against the sacrificial HS-code target: its reply is shown; a wrong response path shows "response path not found"; after a successful test, saving without the permission checkbox is blocked.
-- **SC-007**: When Kestrel runs hosted, every test connection to localhost, a private-network or a cloud-metadata address, including through a name that resolves to one, is refused without a request being sent.
+- **SC-007**: When Kestrel runs hosted, every test connection to localhost, a private-network or a cloud-metadata address, including through a name that resolves to one when Kestrel checks it, is refused without a request being sent. A name whose answer changes between the check and the connection is an accepted risk (Assumptions).
 - **SC-008**: A reply containing HTML, a script, a link and an image reference is displayed as plain text, and displaying it makes 0 requests to any outside address.
 
 ## Assumptions
@@ -197,9 +211,10 @@ The user picks a saved target from the list to see its details, test it again, e
 - Also out of scope for this feature: attacks, the judge, the attack-pattern store and reports.
 - A test connection is not a scan. It produces no findings and writes nothing to the attack-pattern store; the write-back rule in Principle V applies to scan runs.
 - Kestrel may run hosted, for example as a capstone demo, before login exists. FR-028 stops a hosted copy from reaching its own internal network. Login, and with it protection against strangers using a hosted copy, comes at public launch (Principle IX).
+- Accepted risk until public launch: a name that resolves to a public address when Kestrel checks it, but to an internal one when Kestrel connects (DNS rebinding), isn't caught. This must be fixed before public launch.
 - Endpoints take a JSON request and return a JSON response. Streaming replies and other formats are out of scope.
 - Only POST and GET are offered; other methods can be added later.
-- Credentials belong in auth headers. Anything typed into the URL or the request body template is not treated as a secret.
+- Credentials belong in auth headers. Kestrel refuses URLs that carry them (FR-004) and never logs a URL's query string. Text typed into the request body template is not treated as a secret.
 - The greeting is the fixed text "Hello", and a test times out after a fixed 60 seconds.
 - Auth header values are fully masked when shown; revealing part of a value is not offered.
 - The terms of service are a short plain-language text written for the MVP; they get a legal review before public launch.
