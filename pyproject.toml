@@ -1,0 +1,31 @@
+[project]
+name = "kestrel"
+version = "0.1.0"
+description = "Hosted red-teaming platform for tool-using AI agents"
+readme = "README.md"
+authors = [
+    { name = "Yong Zhang", email = "york.zhangyong@gmail.com" }
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "cryptography>=50.0.2",
+    "fastapi>=0.161.1",
+    "httpx>=0.28.1",
+    "streamlit>=1.66.1",
+    "uvicorn>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "ui"]
+markers = ["e2e: starts the sacrificial target and the API; needs OPENROUTER_API_KEY"]
+addopts = "-m 'not e2e' --import-mode=importlib"

@@ -1,0 +1,26 @@
+# Kestrel runtime data (the SQLite database)
+/data/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Local secrets
+.env
+
+# Sacrificial HS-code target
+targets/hs_code/.venv/
+targets/hs_code/.env
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
