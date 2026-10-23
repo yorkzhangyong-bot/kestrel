@@ -190,7 +190,7 @@ Tests and code written in different tasks rely on these names.
   - `finish(form_id, fingerprint)` releases the form and records the fingerprint; `finish(form_id, None)` clears an earlier one.
   - `fingerprint(settings)` is the same when header names differ only in order or case. It changes when the URL, method, a header value, the body template or the response path changes. It's a hex HMAC that contains no header value.
   - Sessions unused for 60 minutes are dropped; use a fake clock.
-- [ ] T024 [P] [US1] Write `tests/unit/test_tester.py` for `kestrel.connection.tester.run_test(...)`, using `httpx.MockTransport` (FR-005, FR-007, FR-008, FR-010, FR-023, research R1, R2, R9). Each case in research R2 must give the right `step`, the exact `message` from contracts/kestrel-api.md, and the right `detail`:
+- [ ] T024 [P] [US1] Write `tests/unit/test_tester.py` for `kestrel.connection.tester.run_test(...)`, using `httpx.MockTransport` (FR-005, FR-007, FR-008, FR-010, FR-023, research R1, R2, R9). Each case in rows 2 and 4 to 13 of research R2 must give the right `step` (rows 1 and 3, an invalid form and unreadable stored headers, come from the API and are tested in T025 and T046), the exact `message` from contracts/kestrel-api.md, and the right `detail`:
   - **Replies**: success with reply text; an empty reply gives `reply_text == ""` and `ok`.
   - **Status codes**: 401 and 403 give `auth_rejected`. 302 with `Location` gives `endpoint_error` with the location in `detail`, and no second request is sent. 500 gives `endpoint_error`.
   - **Size cap**: a body over 1,048,576 bytes, signalled by `Content-Length` or found while streaming without one, gives `endpoint_error` with "Response larger than 1 MB".
@@ -203,7 +203,7 @@ Tests and code written in different tasks rely on these names.
 - [ ] T025 [P] [US1] Write `tests/integration/test_api_connection_tests.py` for `POST /api/connection-tests` (contracts/kestrel-api.md).
   - A success and two failure steps return 200 with the result shape.
   - Invalid forms return 422 naming `settings.url`, `settings.body_template`, `settings.response_path` or `settings.headers.0.name`, and never the submitted values.
-  - `http://user:pass@h/chat`, `http://h/chat?api_key=abc123` and `http://h/chat?client_secret=abc123` each return 422 on `settings.url` with the message "put credentials in an auth header, not the URL"; `http://h/chat?keyword=x` is accepted.
+  - `http://user:pass@h/chat`, `http://h/chat?api_key=abc123`, `http://h/chat?client_secret=abc123`, `http://h/chat?code=abc123` and `http://h/chat?sig=abc123` each return 422 on `settings.url` with the message "put credentials in an auth header, not the URL"; `http://h/chat?keyword=x` is accepted.
   - A header value that is empty, or 3 characters long, returns 422 on `settings.headers.0.value`.
   - A test with an empty `display_name` runs, because the display name is only required to save (FR-004).
   - A header with `value: null` and no `target_id` gives 422.

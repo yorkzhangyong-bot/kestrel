@@ -123,7 +123,7 @@ The user picks a saved target from the list to see its details, test it again, e
 - **FR-004**: Before sending anything, the system MUST check the form and name the field at fault when:
   - the URL or the response path is empty;
   - the URL is not a valid http or https address;
-  - the URL carries credentials: a user name or password before the host (`user:pass@` or `user@`), or a query parameter named like a credential (`key`, `token`, `secret`, `password`, `auth`, `api_key`, `apikey` or `access_token`, ignoring case, on its own or after `_` or `-`, so `client_secret` counts and `keyword` doesn't). The message is "put credentials in an auth header, not the URL";
+  - the URL carries credentials: a user name or password before the host (`user:pass@` or `user@`), or a query parameter named like a credential (`key`, `token`, `secret`, `password`, `auth`, `api_key`, `apikey`, `access_token`, `code`, `sig` or `signature`, ignoring case, on its own or after `_` or `-`, so `client_secret` counts and `keyword` doesn't). The message is "put credentials in an auth header, not the URL";
   - an auth header name is not a valid header name;
   - an auth header value is empty or shorter than 4 characters;
   - the placeholder rule in FR-003 is broken;
@@ -215,6 +215,7 @@ The user picks a saved target from the list to see its details, test it again, e
 - Endpoints take a JSON request and return a JSON response. Streaming replies and other formats are out of scope.
 - Only POST and GET are offered; other methods can be added later.
 - Credentials belong in auth headers. Kestrel refuses URLs that carry them (FR-004) and never logs a URL's query string. Text typed into the request body template is not treated as a secret.
+- Accepted limitation: a secret inside the URL path, such as a webhook URL whose path contains a token, can't be recognised. Kestrel stores and shows such a URL as it is, and the path appears in the log line. Users must keep secrets out of the URL.
 - The greeting is the fixed text "Hello", and a test times out after a fixed 60 seconds.
 - Auth header values are fully masked when shown; revealing part of a value is not offered.
 - The terms of service are a short plain-language text written for the MVP; they get a legal review before public launch.
