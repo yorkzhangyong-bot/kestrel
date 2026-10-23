@@ -408,8 +408,8 @@ Tests and code written in different tasks rely on these names.
   - how to run the tests;
   - a link to `specs/001-register-target/quickstart.md`.
 - [X] T053 [P] Write `targets/hs_code/README.md`: what the sacrificial target is for, how to start it, its environment variables and how to register it in Kestrel (from contracts/hs-code-target.md), with a link to `PROVENANCE.md`.
-- [ ] T054 Go through the 13 manual checks in `specs/001-register-target/quickstart.md` against a running API, screen and sacrificial target, including the hostile-reply check (SC-008). Time one first-time registration, from opening the screen to the saved target, and note the result against SC-001's 3 minutes. Fix any difference, in the code or in quickstart.md.
-  - 2026-10-23: all 13 checks pass, after fixes to the screen, `contracts/ui-form.md` and the target's `uv run` commands. Still open: a person timing one first-time registration against SC-001.
+- [X] T054 Go through the 13 manual checks in `specs/001-register-target/quickstart.md` against a running API, screen and sacrificial target, including the hostile-reply check (SC-008). Time one first-time registration, from opening the screen to the saved target, and note the result against SC-001's 3 minutes. Fix any difference, in the code or in quickstart.md.
+  - 2026-10-23: all 13 checks pass, after fixes to the screen, `contracts/ui-form.md` and the target's `uv run` commands. A person's first-time registration took under 3 minutes, so SC-001 is met.
 - [X] T055 Review secret hygiene in `src/kestrel/**/*.py`, `ui/app.py` and `ui/api_client.py`. Check every logging call, `print`, `st.markdown`, `st.write` and exception message that could carry a header value or target text against the rules in research R9, and fix any that break them.
 - [X] T056 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --directory targets/hs_code pytest` for `targets/hs_code/tests/`.
 
