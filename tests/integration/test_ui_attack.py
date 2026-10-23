@@ -20,6 +20,10 @@ DETAIL = {"id": 1, "name": "My agent", "url": "http://127.0.0.1:8001/chat", "met
 SUMMARY = {key: DETAIL[key] for key in ("id", "name", "url", "method", "permission_confirmed_at", "terms_version")}
 FAMILIES = [{"key": "system_prompt_leak", "label": "System prompt leak",
              "owasp_category": "LLM07: System Prompt Leakage", "prompt_count": 5}]
+PROMPTS = [{"id": "spl-001", "title": "First leak prompt", "text": "<leak prompt one>",
+            "family": "system_prompt_leak", "owasp_category": "LLM07: System Prompt Leakage", "source": "Fixture"},
+           {"id": "spl-002", "title": "Second leak prompt", "text": "<leak prompt two>",
+            "family": "system_prompt_leak", "owasp_category": "LLM07: System Prompt Leakage", "source": "Fixture"}]
 HOSTILE_REPLY = '<script>alert(1)</script> [link](http://evil.test) ![img](http://evil.test/i.png)'
 
 
@@ -37,6 +41,7 @@ def api(monkeypatch):
     monkeypatch.setattr(api_client, "list_targets", lambda: [SUMMARY])
     monkeypatch.setattr(api_client, "get_target", lambda target_id: DETAIL)
     monkeypatch.setattr(api_client, "attack_families", lambda: {"library_version": "1.0.0", "families": FAMILIES})
+    monkeypatch.setattr(api_client, "attack_prompts", lambda family: {"prompts": PROMPTS})
     monkeypatch.setattr(api_client, "run_attack", run_attack)
     monkeypatch.setattr(api_client, "list_runs", lambda target_id: [])
     return stub
@@ -127,3 +132,33 @@ def test_the_judge_caption_names_the_model(api):
 def test_the_canary_rows_show_the_targets_canaries(api):
     at = loaded()
     assert at.text_input(key="canary_0").value == "KESTREL-CANARY-7Q4M2X"
+
+
+# --- US3: choosing an exact prompt (FR-007, FR-008) ---
+
+def test_the_prompt_select_defaults_to_kestrel_picks_one(api):
+    at = loaded()
+    prompt = at.selectbox(key="attack_prompt")
+    assert prompt.value is None
+    assert prompt.format_func(None) == "Kestrel picks one"
+
+
+def test_picking_a_prompt_shows_its_text_as_code(api):
+    at = loaded()
+    at.selectbox(key="attack_prompt").select("spl-002").run()
+    assert any("<leak prompt two>" in block.value for block in at.code)
+
+
+def test_the_chosen_prompt_id_reaches_the_api(api):
+    api.run_result = run_detail(prompt_id="spl-002")
+    at = loaded()
+    at.selectbox(key="attack_prompt").select("spl-002").run()
+    at.button(key="run_button").click().run()
+    assert api.runs[-1]["prompt_id"] == "spl-002"
+
+
+def test_without_a_choice_the_prompt_id_is_none(api):
+    api.run_result = run_detail()
+    at = loaded()
+    at.button(key="run_button").click().run()
+    assert api.runs[-1]["prompt_id"] is None

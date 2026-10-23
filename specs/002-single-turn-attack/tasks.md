@@ -165,13 +165,13 @@ Tests and code written in different tasks rely on these:
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T045 [P] [US3] Write `tests/integration/test_api_library.py` (FR-002, FR-003, FR-005, FR-008): `GET /api/attack-families` returns the four families with their OWASP category, prompt count and the library version; `GET /api/attack-prompts?family=` returns that family's prompts and 422s on an unknown key.
-- [ ] T046 [P] [US3] Add cases to `tests/integration/test_ui_attack.py` (FR-007, FR-008, FR-032): the prompt select defaults to "Kestrel picks one", picking a prompt shows its text through `st.code` before sending, and the chosen `prompt_id` reaches the API.
+- [X] T045 [P] [US3] Write `tests/integration/test_api_library.py` (FR-002, FR-003, FR-005, FR-008): `GET /api/attack-families` returns the four families with their OWASP category, prompt count and the library version; `GET /api/attack-prompts?family=` returns that family's prompts and 422s on an unknown key.
+- [X] T046 [P] [US3] Add cases to `tests/integration/test_ui_attack.py` (FR-007, FR-008, FR-032): the prompt select defaults to "Kestrel picks one", picking a prompt shows its text through `st.code` before sending, and the chosen `prompt_id` reaches the API.
 
 ### Implementation for User Story 3
 
-- [ ] T047 [US3] Add `GET /api/attack-families` and `GET /api/attack-prompts` to `src/kestrel/api/main.py` (FR-002, FR-003, FR-008).
-- [ ] T048 [US3] Add the prompt select and its preview to the Attack panel in `ui/app.py` (FR-007, FR-008, FR-032).
+- [X] T047 [US3] Add `GET /api/attack-families` and `GET /api/attack-prompts` to `src/kestrel/api/main.py` (FR-002, FR-003, FR-008).
+- [X] T048 [US3] Add the prompt select and its preview to the Attack panel in `ui/app.py` (FR-007, FR-008, FR-032).
 
 **Checkpoint**: all three stories work.
 

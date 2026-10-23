@@ -67,6 +67,17 @@ def load_families() -> list[dict]:
     return st.session_state["families"]
 
 
+def load_prompts(family: str) -> list[dict]:
+    """The prompts in a family, cached per family so switching families reloads (FR-008)."""
+    cache = st.session_state.setdefault("prompts", {})
+    if family not in cache:
+        try:
+            cache[family] = api_client.attack_prompts(family).get("prompts", [])
+        except api_client.ApiError:
+            cache[family] = []
+    return cache[family]
+
+
 def load_runs(target_id: int) -> list[dict]:
     """Runs for the selected target, cached until a new run or a target change clears them (FR-028)."""
     if st.session_state.get("runs") is None:
@@ -435,6 +446,17 @@ def render_attack(config: dict, families: list[dict]) -> None:
         return
     labels = {f["key"]: f"{f['label']} · {f['owasp_category']} ({f['prompt_count']} prompts)" for f in families}
     st.selectbox("Attack family", list(labels), key="attack_family", format_func=lambda key: labels[key])
+
+    # Optionally pick an exact prompt; by default Kestrel picks one from the family (FR-007, FR-008).
+    prompts = load_prompts(st.session_state.get("attack_family") or next(iter(labels)))
+    titles = {p["id"]: p["title"] for p in prompts}
+    if st.session_state.get("attack_prompt") not in titles:
+        st.session_state["attack_prompt"] = None
+    st.selectbox("Prompt", [None, *titles], key="attack_prompt",
+                 format_func=lambda pid: "Kestrel picks one" if pid is None else titles[pid])
+    chosen_prompt = next((p for p in prompts if p["id"] == st.session_state.get("attack_prompt")), None)
+    if chosen_prompt:
+        st.code(chosen_prompt["text"], language=None, wrap_lines=True)
 
     running = st.session_state.get("pending_run") is not None
     st.button("Run attack", key="run_button", type="primary", on_click=start_run,
