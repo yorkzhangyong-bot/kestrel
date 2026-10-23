@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <title>Agent Red-Teaming Lab — run view</title>
-<script src="./support.js"></script>
 </head>
 <body>
 <x-dc>
@@ -35,17 +34,18 @@ a{color:#2458b3}a:hover{color:#183d80}
 x-api-key: ••••••••</textarea>
 <label for="reqtpl" style="font-size: 12px; line-height: 16px; font-weight: 600; color: #4b5563">Request body template · response path</label>
 <div style="display: flex; gap: 8px">
-<input id="reqtpl" type="text" value='{"message": "{{prompt}}"}' style="flex: 1; height: 40px; box-sizing: border-box; padding: 0 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid #c9cdd2; border-radius: 8px; background: #ffffff; color: #1f2328">
+<input id="reqtpl" type="text" value="{&quot;message&quot;: &quot;{{prompt}}&quot;}" style="flex: 1; height: 40px; box-sizing: border-box; padding: 0 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid #c9cdd2; border-radius: 8px; background: #ffffff; color: #1f2328">
 <input id="respath" type="text" value="$.reply" style="width: 110px; height: 40px; box-sizing: border-box; padding: 0 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid #c9cdd2; border-radius: 8px; background: #ffffff; color: #1f2328">
 </div>
 <button type="button" style="align-self: flex-start; height: 32px; padding: 0 12px; font: inherit; font-size: 13px; font-weight: 600; color: #2458b3; background: #ffffff; border: 1px solid #2458b3; border-radius: 8px; cursor: pointer">Test connection</button>
+<div style="display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 18px"><input id="perm" type="checkbox" checked="" style="width: 18px; height: 18px; margin: 0"><label for="perm">I own this agent or have written permission to test it <span style="color: #b42318">*</span></label></div>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px">
 <div style="font-size: 13px; line-height: 16px; font-weight: 600; color: #4b5563">Attack families</div>
-<div style="display: flex; align-items: center; gap: 10px"><input id="f1" type="checkbox" checked style="width: 18px; height: 18px; margin: 0"><label for="f1">Direct prompt injection</label></div>
-<div style="display: flex; align-items: center; gap: 10px"><input id="f2" type="checkbox" checked style="width: 18px; height: 18px; margin: 0"><label for="f2">Indirect injection via tool output</label></div>
-<div style="display: flex; align-items: center; gap: 10px"><input id="f3" type="checkbox" checked style="width: 18px; height: 18px; margin: 0"><label for="f3">Tool-mediated exfiltration</label></div>
+<div style="display: flex; align-items: center; gap: 10px"><input id="f1" type="checkbox" checked="" style="width: 18px; height: 18px; margin: 0"><label for="f1">Direct prompt injection</label></div>
+<div style="display: flex; align-items: center; gap: 10px"><input id="f2" type="checkbox" checked="" style="width: 18px; height: 18px; margin: 0"><label for="f2">Indirect injection via tool output</label></div>
+<div style="display: flex; align-items: center; gap: 10px"><input id="f3" type="checkbox" checked="" style="width: 18px; height: 18px; margin: 0"><label for="f3">Tool-mediated exfiltration</label></div>
 <div style="display: flex; align-items: center; gap: 10px"><input id="f4" type="checkbox" style="width: 18px; height: 18px; margin: 0"><label for="f4">System prompt leak</label></div>
 </div>
 
@@ -57,7 +57,7 @@ x-api-key: ••••••••</textarea>
 </div>
 
 <button type="button" style="height: 48px; font: inherit; font-weight: 600; color: #ffffff; background: #c2611b; border: none; border-radius: 8px; cursor: pointer">Launch attack run</button>
-<div style="font-size: 13px; line-height: 18px; color: #4b5563">Endpoint ownership verified · rate limit 2 req/s</div>
+<div style="font-size: 13px; line-height: 18px; color: #4b5563">Permission confirmed · rate limit 2 req/s</div>
 </div>
 
 <div style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 28px 32px; display: flex; flex-direction: column; gap: 28px">
