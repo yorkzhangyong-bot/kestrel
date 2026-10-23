@@ -4,7 +4,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from kestrel.secrets import Vault
-from kestrel.store import NameTaken, TargetNotFound, TargetStore
+from kestrel.store import SCHEMA_VERSION, NameTaken, TargetNotFound, TargetStore
 
 SECRET = "s3cret-header-value"
 
@@ -75,7 +75,8 @@ def test_pragmas_are_on_and_the_schema_version_is_recorded(store):
     with store.connect() as db:
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert db.execute("PRAGMA secure_delete").fetchone()[0] == 1
-        assert db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "1"
+        # The constant, not a literal: the version moves with each migration (test_store_migration.py pins it).
+        assert db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_targets_are_listed_by_name(store):

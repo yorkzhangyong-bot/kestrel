@@ -33,8 +33,8 @@ Tests and code written in different tasks rely on these:
 
 **Purpose**: make room for the two new packages.
 
-- [ ] T001 Create `src/kestrel/attacks/`, `src/kestrel/attacks/data/` and `src/kestrel/judge/`, each with an `__init__.py`.
-- [ ] T002 [P] Add `KESTREL_JUDGE_MODEL`, `KESTREL_JUDGE_API_KEY`, `KESTREL_JUDGE_BASE_URL` and `HS_TARGET_CANARY` to `.env.example`, with a comment that the judge is optional and canary evidence works without it.
+- [X] T001 Create `src/kestrel/attacks/`, `src/kestrel/attacks/data/` and `src/kestrel/judge/`, each with an `__init__.py`.
+- [X] T002 [P] Add `KESTREL_JUDGE_MODEL`, `KESTREL_JUDGE_API_KEY`, `KESTREL_JUDGE_BASE_URL` and `HS_TARGET_CANARY` to `.env.example`, with a comment that the judge is optional and canary evidence works without it.
 
 ---
 
@@ -46,28 +46,28 @@ Tests and code written in different tasks rely on these:
 
 ### Settings
 
-- [ ] T003 [P] Add judge cases to `tests/unit/test_settings.py` (FR-019, FR-021): `KESTREL_JUDGE_MODEL` defaults to `google/gemini-3.8-flash`; the key reads `KESTREL_JUDGE_API_KEY` first and falls back to `OPENROUTER_API_KEY`; `KESTREL_JUDGE_BASE_URL` defaults to `https://openrouter.ai/api/v1`; a missing key is not an error.
-- [ ] T004 Add `judge_model`, `judge_api_key` and `judge_base_url` to `Settings` and `load_settings` in `src/kestrel/settings.py` (FR-019, FR-021, [contracts/judge.md](./contracts/judge.md)).
+- [X] T003 [P] Add judge cases to `tests/unit/test_settings.py` (FR-019, FR-021): `KESTREL_JUDGE_MODEL` defaults to `google/gemini-3.8-flash`; the key reads `KESTREL_JUDGE_API_KEY` first and falls back to `OPENROUTER_API_KEY`; `KESTREL_JUDGE_BASE_URL` defaults to `https://openrouter.ai/api/v1`; a missing key is not an error.
+- [X] T004 Add `judge_model`, `judge_api_key` and `judge_base_url` to `Settings` and `load_settings` in `src/kestrel/settings.py` (FR-019, FR-021, [contracts/judge.md](./contracts/judge.md)).
 
 ### Schema version 2
 
-- [ ] T005 [P] Write `tests/unit/test_store_migration.py` (FR-029): a database at `schema_version = 1` gains `target_canaries` and `runs` and moves to 2; its existing targets and encrypted header values still read back; a fresh database is created at version 2 directly.
-- [ ] T006 Add schema v2 to `src/kestrel/store.py` per [data-model.md](./data-model.md) (FR-010, FR-025, FR-027, FR-029, FR-030): `target_canaries` with `CHECK(length(value) >= 8)`, `runs` with its verdict and status `CHECK`s, index `idx_runs_target` on `(target_id, started_at DESC)`, partial unique index `uq_runs_active` on `(target_id) WHERE status = 'in_progress'`, and the additive 1 → 2 migration.
+- [X] T005 [P] Write `tests/unit/test_store_migration.py` (FR-029): a database at `schema_version = 1` gains `target_canaries` and `runs` and moves to 2; its existing targets and encrypted header values still read back; a fresh database is created at version 2 directly.
+- [X] T006 Add schema v2 to `src/kestrel/store.py` per [data-model.md](./data-model.md) (FR-010, FR-025, FR-027, FR-029, FR-030): `target_canaries` with `CHECK(length(value) >= 8)`, `runs` with its verdict and status `CHECK`s, index `idx_runs_target` on `(target_id, started_at DESC)`, partial unique index `uq_runs_active` on `(target_id) WHERE status = 'in_progress'`, and the additive 1 → 2 migration.
 
 ### Canary storage
 
-- [ ] T007 [P] Write `tests/unit/test_store_canaries.py` (FR-024, FR-025): a value under 8 characters is refused; the same value twice on one target is refused; the same value on two targets is allowed; order is kept; deleting the target deletes them.
-- [ ] T008 Add `set_canaries` and `list_canaries` to `src/kestrel/store.py` (FR-024), and include canaries in `get_target`.
+- [X] T007 [P] Write `tests/unit/test_store_canaries.py` (FR-024, FR-025): a value under 8 characters is refused; the same value twice on one target is refused; the same value on two targets is allowed; order is kept; deleting the target deletes them.
+- [X] T008 Add `set_canaries` and `list_canaries` to `src/kestrel/store.py` (FR-024), and include canaries in `get_target`.
 
 ### Run storage
 
-- [ ] T009 [P] Write `tests/unit/test_store_runs.py` (FR-005, FR-010, FR-019, FR-027, FR-028, FR-030, FR-031): `claim_run` writes an `in_progress` row and a second claim for the same target is refused while one is open; `claim_run` records `attacker_source` as `library:<version>` and `finish_run` leaves it untouched; `finish_run` sets verdict, reason, evidence, judge fields and `finished_at`; `list_runs` is newest first; deleting the target deletes its runs; `close_interrupted_runs` closes an `in_progress` row as `unclear` and returns how many it closed.
-- [ ] T010 Add `claim_run`, `finish_run`, `list_runs`, `get_run` and `close_interrupted_runs` to `src/kestrel/store.py` (FR-027 to FR-031).
+- [X] T009 [P] Write `tests/unit/test_store_runs.py` (FR-005, FR-010, FR-019, FR-027, FR-028, FR-030, FR-031): `claim_run` writes an `in_progress` row and a second claim for the same target is refused while one is open; `claim_run` records `attacker_source` as `library:<version>` and `finish_run` leaves it untouched; `finish_run` sets verdict, reason, evidence, judge fields and `finished_at`; `list_runs` is newest first; deleting the target deletes its runs; `close_interrupted_runs` closes an `in_progress` row as `unclear` and returns how many it closed.
+- [X] T010 Add `claim_run`, `finish_run`, `list_runs`, `get_run` and `close_interrupted_runs` to `src/kestrel/store.py` (FR-027 to FR-031).
 
 ### Attack library
 
-- [ ] T011 [P] Write `tests/unit/test_attack_library.py` against a fixture library (FR-001 to FR-005, FR-007, FR-008): each of the 8 validation rules in [contracts/attack-library.md](./contracts/attack-library.md) fails loudly; a prompt over 4,000 characters is refused; `pick(family)` returns a prompt of that family; `pick(family, prompt_id)` returns that prompt; an unknown family or id raises.
-- [ ] T012 Write `src/kestrel/attacks/library.py` (FR-001, FR-002, FR-005, FR-007, FR-008): load the JSON once, validate it, index by family, and expose `families()`, `prompts(family)` and `pick(family, prompt_id=None)`. A validation failure raises at start-up rather than shipping a broken library.
+- [X] T011 [P] Write `tests/unit/test_attack_library.py` against a fixture library (FR-001 to FR-005, FR-007, FR-008): each of the 8 validation rules in [contracts/attack-library.md](./contracts/attack-library.md) fails loudly; a prompt over 4,000 characters is refused; `pick(family)` returns a prompt of that family; `pick(family, prompt_id)` returns that prompt; an unknown family or id raises.
+- [X] T012 Write `src/kestrel/attacks/library.py` (FR-001, FR-002, FR-005, FR-007, FR-008): load the JSON once, validate it, index by family, and expose `families()`, `prompts(family)` and `pick(family, prompt_id=None)`. A validation failure raises at start-up rather than shipping a broken library.
 - [ ] T013 Assemble `src/kestrel/attacks/data/library.json` and `src/kestrel/attacks/data/SOURCES.md` following [research.md](./research.md) R8 (FR-001 to FR-005): 16 to 24 prompts, at least 3 per family, each carrying `source`, `source_url` and `licence`, every one taken from a published citable source. Check each licence before copying; where redistribution is not permitted, leave that prompt out and fill the family from a permissive source. Write no prompt text freehand.
 
 ### Judge
