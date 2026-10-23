@@ -47,7 +47,9 @@ The sacrificial target classifies through an OpenAI model (CargoLint defaults to
 
 ## R5. Caps on the judge
 
-**Decision**: the reply is cut to 2,000 characters before it reaches the judge, the judge's answer is capped at 200 tokens, and the call is given 30 seconds. A cut reply is recorded as cut on the run.
+**Decision**: the reply is cut to 2,000 characters before it reaches the judge, the judge's answer is capped at 200 tokens, and the call is given whichever is smaller: 30 seconds, or what is left of the run's 90-second deadline. A cut reply is recorded as cut on the run.
+
+The deadline is enforced on its own rather than inferred from the two sub-limits. 60 seconds for the send plus 30 for the judge is exactly 90, which would leave nothing for masking, canary matching and two database writes, so a worst-case run would break the ceiling SC-001 promises.
 
 **Rationale**: FR-022 requires a hard cap, and Principle VIII requires a token budget per run. 2,000 characters is the limit feature 001 already uses to display a reply, so one constant covers both and the user is judged on what they were shown. 200 tokens is ample for a verdict and one line.
 

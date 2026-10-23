@@ -20,7 +20,7 @@ The key is read from the environment, never stored in the database and never log
 |---|---|---|
 | Reply cut to | 2,000 characters | FR-022; the same cut feature 001 uses to display a reply |
 | Judge answer | 200 tokens | FR-022, Principle VIII |
-| Time | 30 seconds | FR-013; running past it is treated as the judge being unreachable |
+| Time | `min(30 s, what is left of the run's 90-second deadline)` | FR-013; running past it is treated as the judge being unreachable |
 
 ## What the judge receives
 

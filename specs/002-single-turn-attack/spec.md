@@ -32,7 +32,7 @@
 
 - Q: Judging sends the agent's reply to a third-party model, and a reply can hold real customer or internal data. What should Kestrel do? → A: Send the full reply to the judge, and say so plainly: the terms of service gain a clause about it, and the user is told before the first judged run.
 - Q: Principle VIII requires a hard cap on each run's token budget. What caps it here? → A: The reply is cut to a fixed length before it reaches the judge, and the judge's own answer is capped.
-- Q: SC-001 promises a verdict in under a minute, but the send alone may take feature 001's 60 seconds. How do the limits sit? → A: 60 seconds for the send plus 30 for the judge, so a run is capped at 90 seconds end to end, and SC-001 states 90 seconds.
+- Q: SC-001 promises a verdict in under a minute, but the send alone may take feature 001's 60 seconds. How do the limits sit? → A: a single 90-second ceiling for the whole run, with the send keeping its 60 seconds and the judge taking what is left of the deadline, up to 30. SC-001 states 90 seconds.
 - Q: What happens to a run still in progress when Kestrel stops or crashes? → A: On start-up it is closed with the verdict "unclear" and a reason saying it was interrupted, so the target is not left blocked.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -127,7 +127,7 @@ Instead of letting Kestrel pick from the family, the user picks a specific promp
 
 - **FR-011**: A run MUST send exactly one request to the target's endpoint, built from the target's stored connection settings with the prompt placeholder replaced by the attack prompt text.
 - **FR-012**: The rules that govern a connection test MUST also govern an attack send: the hosting guard, no redirects, the response size cap, and the failure steps named in feature 001's FR-008, FR-010 and FR-028.
-- **FR-013**: A run MUST be bounded in time: the send keeps feature 001's limit of 60 seconds, the judge is given 30 seconds, and no run MUST take longer than 90 seconds from start to verdict. Reaching the send limit MUST end the run with the "timed out" step; reaching the judge's limit counts as the judge being unreachable (FR-021).
+- **FR-013**: A run MUST be bounded by a single deadline of 90 seconds, measured from the moment the run starts to the moment it has a verdict. Within that deadline the send keeps feature 001's limit of 60 seconds, and the judge is given whichever is smaller: 30 seconds, or the time left before the deadline. Reaching the send limit MUST end the run with the "timed out" step; reaching the judge's limit counts as the judge being unreachable (FR-021).
 - **FR-014**: When the send fails, the run MUST be stored with the step that failed, with no verdict and no judge call, and the user MUST see the same message a connection test would show.
 - **FR-015**: The target's auth header values MUST be sent only to the target's own endpoint, as request headers, and MUST NOT appear in the run record, the judge's input, logs or any other output (Principle IV).
 
@@ -201,7 +201,7 @@ Instead of letting Kestrel pick from the family, the user picks a specific promp
 - "Indirect injection via tool output" is delivered in the same single message as every other family: the prompt carries text shaped like tool or retrieved output. Kestrel does not host content for the agent to fetch, which would need a callback the agent can reach.
 - Hard evidence that Kestrel itself can collect is limited to a canary appearing in the reply, because a black-box endpoint shows Kestrel nothing else. The sacrificial target's recorded tool calls are read directly by the end-to-end tests, not through Kestrel's normal flow.
 - A judge verdict is an opinion, and "unclear" is a real outcome rather than a failure to be retried.
-- Time budget (FR-013): the attack send keeps feature 001's 60-second limit and the judge is given 30 seconds, so a run is capped at 90 seconds end to end. Most runs finish in seconds; SC-001 states the ceiling plainly rather than promising a minute that a slow agent would break.
+- Time budget (FR-013): one 90-second deadline governs the whole run. The send keeps feature 001's 60-second limit, and the judge gets what is left of the deadline, up to 30 seconds. Adding the two sub-limits together would leave nothing for masking, matching and storing, so the deadline is enforced in its own right rather than inferred from them. Most runs finish in seconds; SC-001 states the ceiling plainly rather than promising a minute that a slow agent would break.
 - Adding the judge clause to the terms raises their version, and feature 001 already treats a newer terms version as grounds to confirm permission again. Every target saved under the old terms therefore needs one more tick before it can be attacked (FR-023). That is deliberate: the change is material, because replies now leave the machine.
 - The judge runs on a paid model chosen for strictness. Which model, and what it costs per run, is a planning decision; the requirement here is only that the model used is recorded with every run.
 - Canary strings are not credentials and are deliberately not encrypted: the user must be able to read one to paste it into their agent's system prompt. Principle IV covers auth header values, which stay encrypted.
