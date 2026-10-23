@@ -52,3 +52,15 @@ def list_targets() -> list[dict[str, Any]]:
 
 def save_target(payload: dict[str, Any]) -> dict[str, Any]:
     return _request("POST", "/api/targets", json=payload)
+
+
+def get_target(target_id: int) -> dict[str, Any]:
+    return _request("GET", f"/api/targets/{target_id}")
+
+
+def update_target(target_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    return _request("PUT", f"/api/targets/{target_id}", json=payload)
+
+
+def delete_target(target_id: int) -> None:
+    _request("DELETE", f"/api/targets/{target_id}")

@@ -83,11 +83,21 @@ async def run_test(settings: ResolvedSettings, *, mode: str, display_name: str =
         result.reply_truncated = len(reply) > max_reply_chars
         result.reply_text = reply[:max_reply_chars]
     result.duration_ms = int((time.perf_counter() - started) * 1000)
+    _log(result, settings, display_name)
+    return result
 
+
+def refused(step: str, settings: ResolvedSettings, display_name: str = "") -> TestOutcome:
+    """An outcome decided before anything is sent (for example credentials_unreadable), logged like any test."""
+    result = outcome(step)
+    _log(result, settings, display_name)
+    return result
+
+
+def _log(result: TestOutcome, settings: ResolvedSettings, display_name: str) -> None:
     log.info("connection test target=%r url=%r method=%s step=%s status=%s duration_ms=%d",
              display_name or "(unsaved)", _loggable_url(settings.url), settings.method, result.step,
              result.status_code if result.status_code is not None else "-", result.duration_ms)
-    return result
 
 
 async def _run(settings: ResolvedSettings, mode: str, transport: httpx.AsyncBaseTransport | None, resolver: Resolver,

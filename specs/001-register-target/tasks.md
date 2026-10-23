@@ -349,12 +349,12 @@ Tests and code written in different tasks rely on these names.
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T045 [P] [US3] Write `tests/unit/test_store_edit.py` for `TargetStore`. Cases:
+- [X] T045 [P] [US3] Write `tests/unit/test_store_edit.py` for `TargetStore`. Cases:
   - In `update_target`, a header `value` of `None` keeps the stored encrypted value, a new string replaces it, and an omitted header is removed (FR-017).
   - `update_target` renews `permission_confirmed_at` when the URL or the terms version changes, and keeps it otherwise (FR-018).
   - `delete_target` removes the target and its `target_headers` rows (FR-019).
   - With a `Vault` on a different key, `get_target` reports the header as `readable=False`, and `resolve_headers` reports it as unreadable instead of raising.
-- [ ] T046 [P] [US3] Write `tests/integration/test_api_manage.py` for `GET`, `PUT` and `DELETE /api/targets/{id}`, and for `target_id` in tests (contracts/kestrel-api.md). Cases:
+- [X] T046 [P] [US3] Write `tests/integration/test_api_manage.py` for `GET`, `PUT` and `DELETE /api/targets/{id}`, and for `target_id` in tests (contracts/kestrel-api.md). Cases:
   - `GET /api/targets/{id}` returns headers as names with `has_value` and `readable`, and no values (FR-021).
   - A `PUT` with only a new name saves without a test (FR-012).
   - A `PUT` with changed settings and no matching successful test gives 409 `not_tested`.
@@ -367,7 +367,7 @@ Tests and code written in different tasks rely on these names.
     - `GET` shows `readable: false`.
     - A test of the target returns `credentials_unreadable`, and the MockTransport receives no request.
     - Re-entering the value, testing and saving makes it readable again.
-- [ ] T047 [P] [US3] Write `tests/integration/test_ui_manage.py` with `AppTest` and a stubbed `api_client`. Cases:
+- [X] T047 [P] [US3] Write `tests/integration/test_ui_manage.py` with `AppTest` and a stubbed `api_client`. Cases:
   - Selecting a saved target in `target_select` loads its fields. Each stored header shows an empty value input with the placeholder "Stored · leave empty to keep" and is sent as `value: null` (US3.1, FR-017).
   - Changing `url` clears `permission` (US3.3, FR-018).
   - A name-only change saves (US3.2).
@@ -376,14 +376,14 @@ Tests and code written in different tasks rely on these names.
 
 ### Implementation for User Story 3
 
-- [ ] T048 [US3] Add `update_target` and `delete_target` to `src/kestrel/store.py`, and have `get_target` and `resolve_headers` report unreadable headers instead of raising. Pass T045.
-- [ ] T049 [US3] Extend `src/kestrel/api/main.py`. Pass T046.
+- [X] T048 [US3] Add `update_target` and `delete_target` to `src/kestrel/store.py`, and have `get_target` and `resolve_headers` report unreadable headers instead of raising. Pass T045.
+- [X] T049 [US3] Extend `src/kestrel/api/main.py`. Pass T046.
   - **`GET /api/targets/{id}`**.
   - **`PUT /api/targets/{id}`**: no test is needed when the resolved connection settings equal the stored ones; otherwise the `not_tested` rule applies. Renew `permission_confirmed_at` on a URL or terms-version change.
   - **`DELETE /api/targets/{id}`**.
   - **`POST /api/connection-tests`**: resolve `target_id` and `value: null` headers from the store. Return `credentials_unreadable` without sending when a needed value can't be decrypted.
   - **Start-up**: try to decrypt one stored header value, and log an ERROR that the key doesn't match if that fails (research R5).
-- [ ] T050 [US3] Add `get_target`, `update_target` and `delete_target` to `ui/api_client.py`, and the US3 parts of `ui/app.py`: contracts/ui-form.md rows 1, 4 and 10. Pass T047.
+- [X] T050 [US3] Add `get_target`, `update_target` and `delete_target` to `ui/api_client.py`, and the US3 parts of `ui/app.py`: contracts/ui-form.md rows 1, 4 and 10. Pass T047.
   - **`target_select`**: "New target", then saved targets as "name · URL".
   - **Loading a target**: stored headers become empty password inputs with the placeholder "Stored · leave empty to keep".
   - **Permission**: clear `permission` when the URL differs from the loaded one.
@@ -391,7 +391,7 @@ Tests and code written in different tasks rely on these names.
   - **Delete**: the two-step delete.
   - **Re-testing**: Test connection on a loaded target sends `target_id`, so kept header values are used (FR-016).
   - **`form_id`**: start a new one whenever the selection changes, and after a save or delete.
-- [ ] T051 [US3] Run `uv run pytest` (all green), then the full `uv run pytest -m e2e tests/e2e/`.
+- [X] T051 [US3] Run `uv run pytest` (all green), then the full `uv run pytest -m e2e tests/e2e/`.
 
 **Checkpoint**: All three user stories work on their own.
 

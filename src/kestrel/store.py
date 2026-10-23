@@ -52,6 +52,10 @@ class TargetNotFound(LookupError):
     pass
 
 
+class MissingStoredValue(LookupError):
+    """A header asked to keep its stored value, but the target has no stored header with that name."""
+
+
 @dataclass(frozen=True)
 class StoredHeader:
     name: str
@@ -125,6 +129,55 @@ class TargetStore:
                 raise NameTaken(name) from None
             raise
         return self.get_target(target_id)
+
+    def update_target(self, target_id: int, *, name: str, url: str, method: str,
+                      headers: list[tuple[str, str | None]], body_template: str, response_path: str,
+                      terms_version: str) -> Target:
+        """A value of None keeps the stored value of that header (FR-017); headers left out are removed.
+
+        The permission date is renewed when the URL changes or newer terms are accepted (FR-018).
+        """
+        now = utc_now()
+        try:
+            with self.connect() as db:
+                row = db.execute("SELECT url, terms_version, permission_confirmed_at FROM targets WHERE id = ?",
+                                 (target_id,)).fetchone()
+                if row is None:
+                    raise TargetNotFound(target_id)
+                stored = {h["name"].lower(): h["value_encrypted"] for h in self._header_rows(db, target_id)}
+                encrypted = []
+                for header_name, value in headers:
+                    if value is None:
+                        if header_name.lower() not in stored:
+                            raise MissingStoredValue(header_name)
+                        encrypted.append((header_name, stored[header_name.lower()]))
+                    else:
+                        encrypted.append((header_name, self._vault.encrypt(value)))
+                renewed = url != row["url"] or terms_version != row["terms_version"]
+                db.execute(
+                    "UPDATE targets SET name = ?, name_key = ?, url = ?, method = ?, body_template = ?,"
+                    " response_path = ?, permission_confirmed_at = ?, terms_version = ?, updated_at = ? WHERE id = ?",
+                    (name, name.casefold(), url, method, body_template, response_path,
+                     now if renewed else row["permission_confirmed_at"], terms_version, now, target_id))
+                db.execute("DELETE FROM target_headers WHERE target_id = ?", (target_id,))
+                self._insert_headers(db, target_id, encrypted)
+        except sqlite3.IntegrityError as error:
+            if "name_key" in str(error):
+                raise NameTaken(name) from None
+            raise
+        return self.get_target(target_id)
+
+    def delete_target(self, target_id: int) -> None:
+        """Remove the target; its header rows go with it (ON DELETE CASCADE, overwritten by secure_delete)."""
+        with self.connect() as db:
+            if db.execute("DELETE FROM targets WHERE id = ?", (target_id,)).rowcount == 0:
+                raise TargetNotFound(target_id)
+
+    def key_matches(self) -> bool:
+        """False when the current key can't decrypt a stored header value (research R5)."""
+        with self.connect() as db:
+            row = db.execute("SELECT value_encrypted FROM target_headers LIMIT 1").fetchone()
+        return row is None or self._vault.decrypt(row["value_encrypted"]) is not None
 
     def list_targets(self) -> list[Target]:
         with self.connect() as db:

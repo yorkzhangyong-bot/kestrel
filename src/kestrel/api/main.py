@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -16,10 +16,10 @@ from kestrel.api.schemas import (ConfigOut, ConnectionSettingsIn, ConnectionTest
                                  validate_save, validate_settings)
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
-from kestrel.connection.tester import ResolvedSettings, run_test
+from kestrel.connection.tester import ResolvedSettings, refused, run_test
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
-from kestrel.store import NameTaken, Target, TargetStore
+from kestrel.store import NameTaken, Target, TargetNotFound, TargetStore
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
@@ -37,6 +37,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     vault = Vault(key)
     terms = load_terms()
     store = TargetStore(settings.db_path, vault)
+    if not store.key_matches():
+        logger.error("The encryption key doesn't match the one used to save targets, so saved auth header values "
+                     "can't be read. Restore the old key, or re-enter the values.")
 
     app = FastAPI(title="Kestrel API", version="0.1.0")
     app.state.settings = settings
@@ -56,18 +59,27 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         errors = validate_settings(body.settings, has_target=body.target_id is not None)
         if errors:
             return form_errors(errors)
+        stored: dict[str, str | None] | None = None
         if body.target_id is not None:
-            # No saved target can be re-tested until User Story 3 resolves kept header values here.
-            return api_error(404, "not_found", f"No target with id {body.target_id}.")
+            try:
+                stored = stored_values(store, body.target_id)
+            except TargetNotFound:
+                return not_found(body.target_id)
+            errors = kept_value_errors(body.settings, stored)
+            if errors:
+                return form_errors(errors)
 
-        resolved = resolve(body.settings)
+        resolved = resolve(body.settings, stored)
+        display_name = body.display_name.strip()
         form_id = str(body.form_id)
         sessions: FormSessions = request.app.state.sessions
         if not sessions.start(form_id):
             return api_error(409, "test_in_progress", "A test for this form is already running.")
         fingerprint = None
         try:
-            result = await run_test(resolved, mode=settings.mode, display_name=body.display_name.strip(),
+            if stored is not None and needs_unreadable_value(body.settings, stored):
+                return refused("credentials_unreadable", resolved, display_name).as_dict()  # nothing is sent
+            result = await run_test(resolved, mode=settings.mode, display_name=display_name,
                                     transport=request.app.state.transport, resolver=request.app.state.resolver)
             if result.ok:
                 fingerprint = sessions.fingerprint(resolved)
@@ -96,7 +108,71 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
         return detail(target)
 
+    @app.get("/api/targets/{target_id}", response_model=TargetDetail)
+    def get_target(target_id: int) -> Any:
+        try:
+            return detail(store.get_target(target_id))
+        except TargetNotFound:
+            return not_found(target_id)
+
+    @app.put("/api/targets/{target_id}", response_model=TargetDetail)
+    def update_target(target_id: int, body: SaveTargetRequest, request: Request) -> Any:
+        try:
+            existing = store.get_target(target_id)
+            stored = stored_values(store, target_id)
+        except TargetNotFound:
+            return not_found(target_id)
+        errors = (validate_settings(body.settings, has_target=True) + kept_value_errors(body.settings, stored)
+                  + validate_save(body, terms.version))
+        if errors:
+            return form_errors(errors)
+
+        resolved = resolve(body.settings, stored)
+        current = ResolvedSettings(url=existing.url, method=existing.method,
+                                   headers=tuple((h.name, stored[h.name.lower()] or "") for h in existing.headers),
+                                   body_template=existing.body_template, response_path=existing.response_path)
+        sessions: FormSessions = request.app.state.sessions
+        changed = sessions.fingerprint(resolved) != sessions.fingerprint(current)  # a name-only edit needs no test
+        if changed and sessions.last_success(str(body.form_id)) != sessions.fingerprint(resolved):
+            return api_error(409, "not_tested", NOT_TESTED)
+        try:
+            target = store.update_target(target_id, name=body.name.strip(), url=resolved.url, method=resolved.method,
+                                         headers=[(h.name.strip(), h.value) for h in body.settings.headers],
+                                         body_template=resolved.body_template, response_path=resolved.response_path,
+                                         terms_version=terms.version)
+        except NameTaken:
+            return api_error(409, "name_taken", NAME_TAKEN, field="name")
+        return detail(target)
+
+    @app.delete("/api/targets/{target_id}", status_code=204)
+    def delete_target(target_id: int) -> Response:
+        try:
+            store.delete_target(target_id)
+        except TargetNotFound:
+            return not_found(target_id)
+        return Response(status_code=204)
+
     return app
+
+
+def stored_values(store: TargetStore, target_id: int) -> dict[str, str | None]:
+    """Stored header values by lower-cased name; None for a value the current key can't decrypt."""
+    return {h.name.lower(): h.value for h in store.resolve_headers(target_id)}
+
+
+def kept_value_errors(settings: ConnectionSettingsIn, stored: dict[str, str | None]) -> list[dict[str, str]]:
+    """`value: null` only works for a header the target has stored."""
+    return [{"field": f"settings.headers.{i}.value", "message": "Enter a value for this header."}
+            for i, header in enumerate(settings.headers)
+            if header.value is None and header.name.strip().lower() not in stored]
+
+
+def needs_unreadable_value(settings: ConnectionSettingsIn, stored: dict[str, str | None]) -> bool:
+    return any(h.value is None and stored.get(h.name.strip().lower()) is None for h in settings.headers)
+
+
+def not_found(target_id: int) -> JSONResponse:
+    return api_error(404, "not_found", f"No target with id {target_id}.")
 
 
 def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None = None) -> ResolvedSettings:
