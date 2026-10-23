@@ -4,9 +4,11 @@ import uuid
 import httpx
 import pytest
 
+from kestrel.api.main import load_terms
 from kestrel.settings import Settings
 
 SECRET = "s3cret-header-value"
+CURRENT_TERMS = load_terms().version
 
 
 def connection(**changes):
@@ -22,7 +24,7 @@ def check(client, form_id, target_id=None, **changes):
 
 def save_body(form_id, name="HS Agent", **changes):
     return {"form_id": form_id, "name": name, "settings": connection(**changes), "permission_confirmed": True,
-            "terms_version": "1"}
+            "terms_version": CURRENT_TERMS}
 
 
 class Recorder:

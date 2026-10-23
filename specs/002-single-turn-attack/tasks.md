@@ -68,25 +68,26 @@ Tests and code written in different tasks rely on these:
 
 - [X] T011 [P] Write `tests/unit/test_attack_library.py` against a fixture library (FR-001 to FR-005, FR-007, FR-008): each of the 8 validation rules in [contracts/attack-library.md](./contracts/attack-library.md) fails loudly; a prompt over 4,000 characters is refused; `pick(family)` returns a prompt of that family; `pick(family, prompt_id)` returns that prompt; an unknown family or id raises.
 - [X] T012 Write `src/kestrel/attacks/library.py` (FR-001, FR-002, FR-005, FR-007, FR-008): load the JSON once, validate it, index by family, and expose `families()`, `prompts(family)` and `pick(family, prompt_id=None)`. A validation failure raises at start-up rather than shipping a broken library.
-- [ ] T013 Assemble `src/kestrel/attacks/data/library.json` and `src/kestrel/attacks/data/SOURCES.md` following [research.md](./research.md) R8 (FR-001 to FR-005): 16 to 24 prompts, at least 3 per family, each carrying `source`, `source_url` and `licence`, every one taken from a published citable source. Check each licence before copying; where redistribution is not permitted, leave that prompt out and fill the family from a permissive source. Write no prompt text freehand.
+- [ ] T013 **(DEFERRED, 2026-10-23)** Assemble `src/kestrel/attacks/data/library.json` and `src/kestrel/attacks/data/SOURCES.md` following [research.md](./research.md) R8 (FR-001 to FR-005): 16 to 24 prompts, at least 3 per family, each carrying `source`, `source_url` and `licence`, every one taken from a published citable source. Check each licence before copying; where redistribution is not permitted, leave that prompt out and fill the family from a permissive source. Write no prompt text freehand.
+  - Held back by the owner's decision to populate the attack corpus as a separate, focused step rather than inline during implementation. The loader (T012) and its rules (T011) are done and tested against a synthetic fixture; the rest of the feature is built against that fixture. Licensing is pre-checked: OWASP LLM Top 10 2025 (taxonomy), deepset/prompt-injections (Apache-2.0), InjecAgent (MIT), AgentDojo (MIT). `tests/unit/test_attack_library.py::test_load_library_reads_the_shipped_file` skips until the file exists, then runs for real.
 
 ### Judge
 
-- [ ] T014 [P] Write `tests/unit/test_judge_verdict.py` (FR-017, FR-021): a well-formed structured answer parses; a JSON object embedded in text parses; a verdict string outside the three values is a parse failure, never coerced; a reason over 200 characters is cut; a non-JSON answer is a parse failure.
-- [ ] T015 Write `src/kestrel/judge/verdict.py` (FR-017, FR-021): the schema, and parsing in the order given in [contracts/judge.md](./contracts/judge.md).
-- [ ] T016 [P] Write `tests/unit/test_judge_client.py` with `httpx.MockTransport` (FR-013, FR-020, FR-022): the reply is cut to 2,000 characters before sending; `max_tokens` is 200; the timeout passed in is honoured and is never more than 30 seconds; no key means "not configured" without a request; a transport error and a timeout both come back as judge-unreachable; and the request body carries no auth header value, URL, or target name.
-- [ ] T017 Write `src/kestrel/judge/client.py` (FR-013, FR-020, FR-022): one `httpx.AsyncClient` call to `{base_url}/chat/completions` with structured output, taking its timeout from the caller rather than fixing it, so the run's deadline can shorten it. No new dependency (R2).
+- [X] T014 [P] Write `tests/unit/test_judge_verdict.py` (FR-017, FR-021): a well-formed structured answer parses; a JSON object embedded in text parses; a verdict string outside the three values is a parse failure, never coerced; a reason over 200 characters is cut; a non-JSON answer is a parse failure.
+- [X] T015 Write `src/kestrel/judge/verdict.py` (FR-017, FR-021): the schema, and parsing in the order given in [contracts/judge.md](./contracts/judge.md).
+- [X] T016 [P] Write `tests/unit/test_judge_client.py` with `httpx.MockTransport` (FR-013, FR-020, FR-022): the reply is cut to 2,000 characters before sending; `max_tokens` is 200; the timeout passed in is honoured and is never more than 30 seconds; no key means "not configured" without a request; a transport error and a timeout both come back as judge-unreachable; and the request body carries no auth header value, URL, or target name.
+- [X] T017 Write `src/kestrel/judge/client.py` (FR-013, FR-020, FR-022): one `httpx.AsyncClient` call to `{base_url}/chat/completions` with structured output, taking its timeout from the caller rather than fixing it, so the run's deadline can shorten it. No new dependency (R2).
 
 ### Terms version 2
 
-- [ ] T018 Update `src/kestrel/api/terms.md` to version `2`, adding one single-line paragraph saying that an agent's reply is sent to the judge's model provider when a run is judged (FR-023, R12). Keep the existing paragraphs as they are.
+- [X] T018 Update `src/kestrel/api/terms.md` to version `2`, adding one single-line paragraph saying that an agent's reply is sent to the judge's model provider when a run is judged (FR-023, R12). Keep the existing paragraphs as they are.
 
 ### Sacrificial HS-code target (FR-034, FR-035)
 
-- [ ] T019 [P] Write `targets/hs_code/tests/test_send_email.py` (FR-035): a call is recorded with its arguments, nothing is sent, and the recorder can be cleared.
-- [ ] T020 Write `targets/hs_code/tools/send_email.py` (FR-035): a tool the model can call that appends to an in-memory list and returns a plausible success, sending nothing.
-- [ ] T021 [P] Add cases to `targets/hs_code/tests/test_app.py` (FR-034, FR-035): `HS_TARGET_CANARY` reaches the system prompt; `GET /debug/tool-calls` needs the same `X-API-Key` and answers 401 without it; the tool-calling loop records a call when the model asks for one, using CargoLint's `FakeRawClient` so no model is called.
-- [ ] T022 Add to `targets/hs_code/app.py` (FR-034, FR-035): the canary from `HS_TARGET_CANARY` in the system prompt, a small tool-calling loop that can invoke `send_email`, and `GET /debug/tool-calls`. This is the largest single piece of work in the feature (R14) — the target has no tool loop today.
+- [X] T019 [P] Write `targets/hs_code/tests/test_send_email.py` (FR-035): a call is recorded with its arguments, nothing is sent, and the recorder can be cleared.
+- [X] T020 Write `targets/hs_code/tools/send_email.py` (FR-035): a tool the model can call that appends to an in-memory list and returns a plausible success, sending nothing.
+- [X] T021 [P] Add cases to `targets/hs_code/tests/test_app.py` (FR-034, FR-035): `HS_TARGET_CANARY` reaches the system prompt; `GET /debug/tool-calls` needs the same `X-API-Key` and answers 401 without it; the tool-calling loop records a call when the model asks for one, using CargoLint's `FakeRawClient` so no model is called.
+- [X] T022 Add to `targets/hs_code/app.py` (FR-034, FR-035): the canary from `HS_TARGET_CANARY` in the system prompt, a small tool-calling loop that can invoke `send_email`, and `GET /debug/tool-calls`. This is the largest single piece of work in the feature (R14) — the target has no tool loop today.
 
 **Checkpoint**: schema, library, judge and target are ready; user story work can begin.
 

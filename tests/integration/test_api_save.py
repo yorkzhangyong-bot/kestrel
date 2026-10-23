@@ -4,7 +4,11 @@ import uuid
 import httpx
 import pytest
 
+from kestrel.api.main import load_terms
+
 SECRET = "s3cret-header-value"
+# The current terms version, from the source of truth, so this suite isn't rewritten on every bump.
+CURRENT_TERMS = load_terms().version
 
 
 def connection(**changes):
@@ -17,7 +21,7 @@ def connection_request(form_id, **changes):
     return {"form_id": form_id, "target_id": None, "display_name": "Agent", "settings": connection(**changes)}
 
 
-def save_request(form_id, name="HS Agent", permission=True, terms="1", **changes):
+def save_request(form_id, name="HS Agent", permission=True, terms=CURRENT_TERMS, **changes):
     return {"form_id": form_id, "name": name, "settings": connection(**changes), "permission_confirmed": permission,
             "terms_version": terms}
 
@@ -48,7 +52,7 @@ def test_saving_after_a_successful_test(api):
     body = response.json()
     assert body["name"] == "HS Agent" and body["url"] == "http://agent.test/chat"
     assert body["headers"] == [{"name": "X-API-Key", "has_value": True, "readable": True}]
-    assert body["terms_version"] == "1" and body["permission_confirmed_at"]
+    assert body["terms_version"] == CURRENT_TERMS and body["permission_confirmed_at"]
     assert SECRET not in response.text
 
 
@@ -107,13 +111,13 @@ def test_saved_targets_are_listed_and_survive_a_restart(make_client, settings):
     client.post("/api/targets", json=save_request(successful_form(client)))
     listed = client.get("/api/targets").json()
     assert [t["name"] for t in listed] == ["HS Agent"]
-    assert listed[0]["permission_confirmed_at"] and listed[0]["terms_version"] == "1"
+    assert listed[0]["permission_confirmed_at"] and listed[0]["terms_version"] == CURRENT_TERMS
     assert make_client(settings).get("/api/targets").json() == listed
 
 
 def test_config_includes_the_terms(client):
     terms = client.get("/api/config").json()["terms"]
-    assert terms["version"] == "1"
+    assert terms["version"] == CURRENT_TERMS
     assert "written permission" in terms["text"]
 
 
