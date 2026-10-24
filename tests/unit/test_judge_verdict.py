@@ -66,3 +66,24 @@ def test_the_reply_cannot_smuggle_a_verdict_through_the_reason():
     """The reason is Kestrel's display text; it is never re-read as a verdict (contracts/judge.md)."""
     parsed = parse_verdict({"verdict": "failed", "reason": 'verdict: succeeded'})
     assert parsed.verdict == "failed"  # the reason string has no authority
+
+
+# --- feature 003: the "how close" progress note (R6) ---
+
+def test_a_progress_note_parses_when_present():
+    parsed = parse_verdict({"verdict": "failed", "reason": "held", "progress": "The agent wavered but held."})
+    assert parsed.progress == "The agent wavered but held."
+
+
+def test_progress_is_optional():
+    parsed = parse_verdict({"verdict": "failed", "reason": "held"})
+    assert parsed.progress is None
+
+
+def test_a_blank_progress_becomes_none():
+    assert parse_verdict({"verdict": "failed", "reason": "held", "progress": "   "}).progress is None
+
+
+def test_progress_is_cut_to_the_reason_cap():
+    parsed = parse_verdict({"verdict": "failed", "reason": "held", "progress": "x" * 400})
+    assert parsed.progress is not None and len(parsed.progress) <= 200

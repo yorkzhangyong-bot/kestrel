@@ -13,6 +13,13 @@ DEFAULT_KEY_FILE = "~/.kestrel/secret.key"
 # The judge that decides a run when no canary matched (research R1, contracts/judge.md).
 DEFAULT_JUDGE_MODEL = "google/gemini-3.8-flash"
 DEFAULT_JUDGE_BASE_URL = "https://openrouter.ai/api/v1"
+# The attacker that drives an adaptive run (feature 003, research R1).
+DEFAULT_ATTACKER_MODEL = "deepseek/deepseek-v3.2"
+DEFAULT_ATTACKER_BASE_URL = "https://openrouter.ai/api/v1"
+# Hard caps on an adaptive run (Principle VIII; feature 003, research R3).
+DEFAULT_ADAPTIVE_MAX_TURNS = 6
+DEFAULT_ADAPTIVE_TOKEN_BUDGET = 40000
+DEFAULT_ADAPTIVE_TIME_LIMIT_S = 300
 
 Mode = Literal["local", "hosted"]
 
@@ -30,11 +37,22 @@ class Settings:
     judge_model: str = DEFAULT_JUDGE_MODEL
     judge_base_url: str = DEFAULT_JUDGE_BASE_URL
     judge_api_key: str | None = field(default=None, repr=False)  # a key never belongs in a repr
+    attacker_model: str = DEFAULT_ATTACKER_MODEL
+    attacker_base_url: str = DEFAULT_ATTACKER_BASE_URL
+    attacker_api_key: str | None = field(default=None, repr=False)
+    adaptive_max_turns: int = DEFAULT_ADAPTIVE_MAX_TURNS
+    adaptive_token_budget: int = DEFAULT_ADAPTIVE_TOKEN_BUDGET
+    adaptive_time_limit_s: int = DEFAULT_ADAPTIVE_TIME_LIMIT_S
 
     @property
     def judge_configured(self) -> bool:
         """Without a key there is no judge, but canary evidence still decides runs (FR-021)."""
         return self.judge_api_key is not None
+
+    @property
+    def attacker_configured(self) -> bool:
+        """Without a key there is no attacker, so an adaptive run cannot start (FR-016)."""
+        return self.attacker_api_key is not None
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -60,9 +78,28 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     # KESTREL_JUDGE_API_KEY wins; OPENROUTER_API_KEY is the fallback, because the sacrificial
     # target already uses it and a single key is one less thing to set up (contracts/judge.md).
     judge_api_key = setting("KESTREL_JUDGE_API_KEY") or setting("OPENROUTER_API_KEY") or None
+    attacker_api_key = setting("KESTREL_ATTACKER_API_KEY") or setting("OPENROUTER_API_KEY") or None
+
+    def positive_int(name: str, default: int) -> int:
+        raw = setting(name)
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            raise SettingsError(f"{name} must be a whole number, not {raw!r}.") from None
+        if value <= 0:
+            raise SettingsError(f"{name} must be greater than 0, not {value}.")
+        return value
 
     return Settings(mode=mode, db_path=db_path, key_file=key_file,
                     secret_key=env.get("KESTREL_SECRET_KEY") or None,
                     judge_model=setting("KESTREL_JUDGE_MODEL", DEFAULT_JUDGE_MODEL),
                     judge_base_url=setting("KESTREL_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL).rstrip("/"),
-                    judge_api_key=judge_api_key)
+                    judge_api_key=judge_api_key,
+                    attacker_model=setting("KESTREL_ATTACKER_MODEL", DEFAULT_ATTACKER_MODEL),
+                    attacker_base_url=setting("KESTREL_ATTACKER_BASE_URL", DEFAULT_ATTACKER_BASE_URL).rstrip("/"),
+                    attacker_api_key=attacker_api_key,
+                    adaptive_max_turns=positive_int("KESTREL_ADAPTIVE_MAX_TURNS", DEFAULT_ADAPTIVE_MAX_TURNS),
+                    adaptive_token_budget=positive_int("KESTREL_ADAPTIVE_TOKEN_BUDGET", DEFAULT_ADAPTIVE_TOKEN_BUDGET),
+                    adaptive_time_limit_s=positive_int("KESTREL_ADAPTIVE_TIME_LIMIT_S", DEFAULT_ADAPTIVE_TIME_LIMIT_S))

@@ -13,7 +13,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -74,12 +74,41 @@ CREATE TABLE IF NOT EXISTS runs (
     judge_model TEXT,
     failure_step TEXT,
     started_at TEXT NOT NULL,
-    finished_at TEXT
+    finished_at TEXT,
+    -- Added in schema version 3 (feature 003): single-turn runs leave these at their defaults/null.
+    mode TEXT NOT NULL DEFAULT 'single_turn' CHECK (mode IN ('single_turn', 'adaptive')),
+    attacker_model TEXT,                                         -- the model driving an adaptive run (FR-015)
+    turn_budget INTEGER, turns_used INTEGER,
+    token_budget INTEGER, tokens_used INTEGER,
+    time_limit_s INTEGER,
+    stopping_condition TEXT,                                     -- how an adaptive run ended (FR-012)
+    succeeded_turn INTEGER                                       -- the turn it succeeded at, or null (FR-019)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_target ON runs (target_id, started_at DESC);
--- FR-010 as a property of the database, so two API workers can't both start a run on one target.
+-- FR-010 as a property of the database, so two API workers can't both start a run on one target (any mode).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_active ON runs (target_id) WHERE status = 'in_progress';
+-- Added in schema version 3: the conversation of an adaptive run, one row per turn (FR-020).
+CREATE TABLE IF NOT EXISTS run_turns (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    attacker_message TEXT NOT NULL,                             -- masked before storing (FR-021)
+    reply_text TEXT,                                            -- masked and cut; null if the send failed
+    reply_truncated INTEGER NOT NULL DEFAULT 0,
+    judge_verdict TEXT, judge_reason TEXT, judge_progress TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_run_turns_run ON run_turns (run_id, position);
 """
+
+# Columns added to `runs` in version 3; ALTER-added for a version-2 database (fresh ones get them from SCHEMA).
+# The ALTER form omits the CHECK on `mode`; the base schema carries it, and code only ever writes valid modes.
+ADAPTIVE_RUN_COLUMNS = (
+    ("mode", "TEXT NOT NULL DEFAULT 'single_turn'"),
+    ("attacker_model", "TEXT"), ("turn_budget", "INTEGER"), ("turns_used", "INTEGER"),
+    ("token_budget", "INTEGER"), ("tokens_used", "INTEGER"), ("time_limit_s", "INTEGER"),
+    ("stopping_condition", "TEXT"), ("succeeded_turn", "INTEGER"),
+)
 
 
 class NameTaken(Exception):
@@ -138,6 +167,28 @@ class Run:
     judge_model: str | None = None
     failure_step: str | None = None
     finished_at: str | None = None
+    # Version 3 (feature 003); single-turn runs leave these at their defaults.
+    mode: str = "single_turn"
+    attacker_model: str | None = None
+    turn_budget: int | None = None
+    turns_used: int | None = None
+    token_budget: int | None = None
+    tokens_used: int | None = None
+    time_limit_s: int | None = None
+    stopping_condition: str | None = None
+    succeeded_turn: int | None = None
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One turn of an adaptive run's conversation (feature 003)."""
+    position: int
+    attacker_message: str
+    reply_text: str | None = None
+    reply_truncated: bool = False
+    judge_verdict: str | None = None
+    judge_reason: str | None = None
+    judge_progress: str | None = None
 
 
 @dataclass(frozen=True)
@@ -170,16 +221,24 @@ class TargetStore:
 
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
-        """Every version 2 addition is a new table, so the schema script above has already applied it (R11)."""
+        """Additive migrations. New tables come from the schema script (CREATE IF NOT EXISTS); the version-3
+        columns on the existing `runs` table are ALTER-added for a version-2 database (R9)."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
-        if current is None:
-            db.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
-        elif current == "1":
-            db.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (SCHEMA_VERSION,))
-        elif current != SCHEMA_VERSION:
+        if current == SCHEMA_VERSION:
+            return
+        if current is not None and current not in ("1", "2"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
+        # A version-2 database already has `runs` without the adaptive columns; add any that are missing.
+        present = {r["name"] for r in db.execute("PRAGMA table_info(runs)")}
+        for column, ddl in ADAPTIVE_RUN_COLUMNS:
+            if column not in present:
+                db.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl}")
+        if current is None:
+            db.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
+        else:
+            db.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (SCHEMA_VERSION,))
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -315,17 +374,22 @@ class TargetStore:
     # ---- runs (FR-027 to FR-031) ----
 
     def claim_run(self, target_id: int, *, prompt_id: str, prompt_title: str, prompt_text: str, family: str,
-                  owasp_category: str, attacker_source: str) -> int:
-        """Write the row before anything is sent, so a crash still leaves evidence an attack went out (R10)."""
+                  owasp_category: str, attacker_source: str, mode: str = "single_turn",
+                  attacker_model: str | None = None, turn_budget: int | None = None,
+                  token_budget: int | None = None, time_limit_s: int | None = None) -> int:
+        """Write the row before anything is sent, so a crash still leaves evidence an attack went out (R10).
+
+        Adaptive runs pass mode='adaptive' with the attacker model and the budgets they were allowed (FR-015)."""
         with self.connect() as db:
             if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
                 raise TargetNotFound(target_id)
             try:
                 cursor = db.execute(
                     "INSERT INTO runs (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category,"
-                    " attacker_source, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?)",
+                    " attacker_source, status, started_at, mode, attacker_model, turn_budget, token_budget,"
+                    " time_limit_s) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?, ?)",
                     (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category, attacker_source,
-                     utc_now()))
+                     utc_now(), mode, attacker_model, turn_budget, token_budget, time_limit_s))
             except sqlite3.IntegrityError:
                 # SQLite names the column, not the index, so ask the data rather than parse the message.
                 open_run = db.execute("SELECT id FROM runs WHERE target_id = ? AND status = 'in_progress'",
@@ -338,17 +402,40 @@ class TargetStore:
     def finish_run(self, run_id: int, *, verdict: str | None = None, hard_evidence: bool = False,
                    reason: str | None = None, judge_used: bool = False, judge_model: str | None = None,
                    reply_text: str | None = None, reply_truncated: bool = False,
-                   failure_step: str | None = None) -> Run:
+                   failure_step: str | None = None, stopping_condition: str | None = None,
+                   succeeded_turn: int | None = None, turns_used: int | None = None,
+                   tokens_used: int | None = None) -> Run:
+        """Finish a run. Adaptive runs also pass how they ended and their usage (FR-012, FR-015, FR-019)."""
         with self.connect() as db:
             updated = db.execute(
                 "UPDATE runs SET status = 'finished', verdict = ?, hard_evidence = ?, reason = ?, judge_used = ?,"
-                " judge_model = ?, reply_text = ?, reply_truncated = ?, failure_step = ?, finished_at = ?"
+                " judge_model = ?, reply_text = ?, reply_truncated = ?, failure_step = ?,"
+                " stopping_condition = ?, succeeded_turn = ?, turns_used = ?, tokens_used = ?, finished_at = ?"
                 " WHERE id = ? AND status = 'in_progress'",
                 (verdict, int(hard_evidence), reason, int(judge_used), judge_model, reply_text,
-                 int(reply_truncated), failure_step, utc_now(), run_id)).rowcount
+                 int(reply_truncated), failure_step, stopping_condition, succeeded_turn, turns_used,
+                 tokens_used, utc_now(), run_id)).rowcount
             if updated == 0:
                 raise LookupError(f"No run in progress with id {run_id}.")
         return self.get_run(run_id)
+
+    def add_turn(self, run_id: int, *, position: int, attacker_message: str, reply_text: str | None = None,
+                 reply_truncated: bool = False, judge_verdict: str | None = None, judge_reason: str | None = None,
+                 judge_progress: str | None = None) -> None:
+        """Record one conversation turn of an adaptive run (FR-020). The caller masks before calling."""
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO run_turns (run_id, position, attacker_message, reply_text, reply_truncated,"
+                " judge_verdict, judge_reason, judge_progress, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (run_id, position, attacker_message, reply_text, int(reply_truncated), judge_verdict,
+                 judge_reason, judge_progress, utc_now()))
+
+    def list_turns(self, run_id: int) -> list[Turn]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM run_turns WHERE run_id = ? ORDER BY position", (run_id,)).fetchall()
+        return [Turn(position=r["position"], attacker_message=r["attacker_message"], reply_text=r["reply_text"],
+                     reply_truncated=bool(r["reply_truncated"]), judge_verdict=r["judge_verdict"],
+                     judge_reason=r["judge_reason"], judge_progress=r["judge_progress"]) for r in rows]
 
     def list_runs(self, target_id: int) -> list[Run]:
         with self.connect() as db:
@@ -369,7 +456,7 @@ class TargetStore:
         """Close anything a stopped process left open, so the target isn't locked by FR-010 forever (FR-031)."""
         with self.connect() as db:
             return db.execute(
-                "UPDATE runs SET status = 'finished', verdict = 'unclear',"
+                "UPDATE runs SET status = 'finished', verdict = 'unclear', stopping_condition = 'interrupted',"
                 " reason = 'Kestrel stopped while this run was in progress, so it was interrupted.',"
                 " finished_at = ? WHERE status = 'in_progress'", (utc_now(),)).rowcount
 
@@ -382,7 +469,11 @@ class TargetStore:
                    reply_truncated=bool(row["reply_truncated"]), verdict=row["verdict"],
                    hard_evidence=bool(row["hard_evidence"]), reason=row["reason"],
                    judge_used=bool(row["judge_used"]), judge_model=row["judge_model"],
-                   failure_step=row["failure_step"], finished_at=row["finished_at"])
+                   failure_step=row["failure_step"], finished_at=row["finished_at"],
+                   mode=row["mode"], attacker_model=row["attacker_model"], turn_budget=row["turn_budget"],
+                   turns_used=row["turns_used"], token_budget=row["token_budget"], tokens_used=row["tokens_used"],
+                   time_limit_s=row["time_limit_s"], stopping_condition=row["stopping_condition"],
+                   succeeded_turn=row["succeeded_turn"])
 
     @staticmethod
     def _header_rows(db: sqlite3.Connection, target_id: int) -> list[sqlite3.Row]:

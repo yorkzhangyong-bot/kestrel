@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from kestrel.settings import (DEFAULT_JUDGE_BASE_URL, DEFAULT_JUDGE_MODEL, SettingsError,
-                              load_settings)
+from kestrel.settings import (DEFAULT_ATTACKER_BASE_URL, DEFAULT_ATTACKER_MODEL, DEFAULT_JUDGE_BASE_URL,
+                              DEFAULT_JUDGE_MODEL, SettingsError, load_settings)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -78,3 +78,55 @@ def test_blank_judge_values_count_as_unset():
     settings = load_settings({"KESTREL_JUDGE_API_KEY": "   ", "KESTREL_JUDGE_MODEL": ""})
     assert settings.judge_api_key is None
     assert settings.judge_model == DEFAULT_JUDGE_MODEL
+
+
+# --- feature 003: the attacker model and the adaptive caps ---
+
+def test_attacker_model_and_base_url_have_defaults():
+    s = load_settings({})
+    assert s.attacker_model == DEFAULT_ATTACKER_MODEL == "deepseek/deepseek-v3.2"
+    assert s.attacker_base_url == DEFAULT_ATTACKER_BASE_URL
+
+
+def test_attacker_model_and_base_url_can_be_set():
+    s = load_settings({"KESTREL_ATTACKER_MODEL": "deepseek/other", "KESTREL_ATTACKER_BASE_URL": "https://h/v1/"})
+    assert s.attacker_model == "deepseek/other"
+    assert s.attacker_base_url == "https://h/v1"  # trailing slash trimmed
+
+
+def test_attacker_key_prefers_its_own_variable_then_falls_back_to_openrouter():
+    assert load_settings({"KESTREL_ATTACKER_API_KEY": "a", "OPENROUTER_API_KEY": "b"}).attacker_api_key == "a"
+    assert load_settings({"OPENROUTER_API_KEY": "b"}).attacker_api_key == "b"
+
+
+def test_a_missing_attacker_key_leaves_it_unconfigured():
+    """An adaptive run needs the attacker; single-turn and canary evidence do not (FR-016)."""
+    s = load_settings({})
+    assert s.attacker_api_key is None and s.attacker_configured is False
+
+
+def test_the_attacker_key_stays_out_of_the_repr():
+    assert "sk-secret" not in repr(load_settings({"OPENROUTER_API_KEY": "sk-secret"}))
+
+
+def test_the_adaptive_caps_default():
+    s = load_settings({})
+    assert s.adaptive_max_turns == 6
+    assert s.adaptive_token_budget == 40000
+    assert s.adaptive_time_limit_s == 300
+
+
+def test_the_adaptive_caps_can_be_set():
+    s = load_settings({"KESTREL_ADAPTIVE_MAX_TURNS": "2", "KESTREL_ADAPTIVE_TOKEN_BUDGET": "500",
+                       "KESTREL_ADAPTIVE_TIME_LIMIT_S": "30"})
+    assert (s.adaptive_max_turns, s.adaptive_token_budget, s.adaptive_time_limit_s) == (2, 500, 30)
+
+
+def test_a_non_numeric_cap_is_refused():
+    with pytest.raises(SettingsError, match="KESTREL_ADAPTIVE_MAX_TURNS"):
+        load_settings({"KESTREL_ADAPTIVE_MAX_TURNS": "lots"})
+
+
+def test_a_non_positive_cap_is_refused():
+    with pytest.raises(SettingsError, match="KESTREL_ADAPTIVE_MAX_TURNS"):
+        load_settings({"KESTREL_ADAPTIVE_MAX_TURNS": "0"})
