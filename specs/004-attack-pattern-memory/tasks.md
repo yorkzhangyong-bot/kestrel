@@ -105,13 +105,13 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T025 [P] [US3] Write `tests/integration/test_target_description.py` (FR-020): a target saves/updates with a `description` (trimmed, max 200 chars, 422 when longer); it is returned in the summary/detail; editing it alone needs no fresh connection test.
-- [ ] T026 [P] [US3] Write `tests/integration/test_description_to_attacker.py` (FR-021): with a spy attacker, the purpose reaches the attacker as background on both a warm and a cold run, consuming no conversation turn.
+- [X] T025 [P] [US3] Write `tests/integration/test_target_description.py` (FR-020): a target saves/updates with a `description` (trimmed, max 200 chars, 422 when longer); it is returned in the summary/detail; editing it alone needs no fresh connection test.
+- [X] T026 [P] [US3] Write `tests/integration/test_description_to_attacker.py` (FR-021): with a spy attacker, the purpose reaches the attacker as background on both a warm and a cold run, consuming no conversation turn.
 
 ### Implementation
 
-- [ ] T027 [US3] Add `description` to `SaveTargetRequest`, `TargetSummary` and `TargetDetail` in `src/kestrel/api/schemas.py` (validate ≤200 chars) and wire it through `save_target`/`update_target`/`get_target`/`summary`/`detail` in `src/kestrel/api/main.py`, keeping it out of the connection fingerprint. (makes T025 pass)
-- [ ] T028 [US3] Include the purpose in the `hint_provider` (warm and cold) in `src/kestrel/api/main.py`, so `format_hints` receives it; confirm no-purpose cold runs stay byte-identical to feature 003. (makes T026 pass)
+- [X] T027 [US3] Add `description` to `SaveTargetRequest`, `TargetSummary` and `TargetDetail` in `src/kestrel/api/schemas.py` (validate ≤200 chars) and wire it through `save_target`/`update_target`/`get_target`/`summary`/`detail` in `src/kestrel/api/main.py`, keeping it out of the connection fingerprint. (makes T025 pass)
+- [X] T028 [US3] Include the purpose in the `hint_provider` (warm and cold) in `src/kestrel/api/main.py`, so `format_hints` receives it; confirm no-purpose cold runs stay byte-identical to feature 003. (makes T026 pass)
 
 **Checkpoint**: the attacker knows what it is attacking from turn one.
 

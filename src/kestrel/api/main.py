@@ -154,7 +154,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         try:
             target = store.create_target(name=body.name.strip(), url=resolved.url, method=resolved.method,
                                          headers=list(resolved.headers), body_template=resolved.body_template,
-                                         response_path=resolved.response_path, terms_version=terms.version)
+                                         response_path=resolved.response_path, terms_version=terms.version,
+                                         description=_clean_description(body.description))
             if body.canaries:
                 store.set_canaries(target.id, body.canaries)
         except NameTaken:
@@ -192,7 +193,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             target = store.update_target(target_id, name=body.name.strip(), url=resolved.url, method=resolved.method,
                                          headers=[(h.name.strip(), h.value) for h in body.settings.headers],
                                          body_template=resolved.body_template, response_path=resolved.response_path,
-                                         terms_version=terms.version)
+                                         terms_version=terms.version, description=_clean_description(body.description))
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
         if body.canaries is not None:  # None keeps the stored canaries; [] clears them (contracts/kestrel-api.md)
@@ -348,7 +349,8 @@ def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None
 
 def summary(target: Target) -> TargetSummary:
     return TargetSummary(id=target.id, name=target.name, url=target.url, method=target.method,
-                         permission_confirmed_at=target.permission_confirmed_at, terms_version=target.terms_version)
+                         permission_confirmed_at=target.permission_confirmed_at, terms_version=target.terms_version,
+                         description=target.description)
 
 
 def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
@@ -356,6 +358,12 @@ def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
                         response_path=target.response_path,
                         headers=[HeaderOut(name=h.name, has_value=True, readable=h.readable) for h in target.headers],
                         canaries=canaries if canaries is not None else [])
+
+
+def _clean_description(description: str | None) -> str | None:
+    """Trim the optional purpose description; an empty one is stored as nothing (FR-020)."""
+    cleaned = (description or "").strip()
+    return cleaned or None
 
 
 def _recent_conversation(conversation: list[tuple[str, str]], turns: int = 2) -> str:

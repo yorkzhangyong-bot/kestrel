@@ -101,6 +101,7 @@ class SaveTargetRequest(BaseModel):
     terms_version: str = ""
     # None means "not provided" (on PUT, keep the stored canaries); [] clears them (contracts/kestrel-api.md).
     canaries: list[str] | None = None
+    description: str | None = None  # feature 004: optional one-line purpose, non-secret (FR-020)
 
 
 class RunRequest(BaseModel):
@@ -190,6 +191,7 @@ class TargetSummary(BaseModel):
     method: str
     permission_confirmed_at: str
     terms_version: str
+    description: str | None = None  # feature 004 (FR-020)
 
 
 class TargetDetail(TargetSummary):
@@ -210,6 +212,8 @@ def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[s
     if request.terms_version != terms_version:
         errors.append({"field": "terms_version",
                        "message": "The terms of service have changed; read them and tick the box again."})
+    if request.description is not None and len(request.description.strip()) > 200:
+        errors.append({"field": "description", "message": "Keep the description to 200 characters or fewer."})
     return errors
 
 
