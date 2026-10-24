@@ -2,7 +2,7 @@
 
 Kestrel is a hosted red-teaming platform for tool-using AI agents. A user registers an agent endpoint (a URL plus optional headers), Kestrel runs adaptive attacks against it, judges the outcomes with hard evidence where possible, and produces a report mapped to the OWASP LLM Top 10 with a risk score. It's built for people who made an agent with Cursor, Claude Code or Lovable and haven't done any security testing.
 
-**Status**: features 001 and 002 are done. You can register an agent, test the connection, save, edit and delete targets, then run a single-turn attack from a built-in library and get a verdict. Multi-turn attacks, the attack-pattern store and reports come in later features. The project's rules are in the [constitution](.specify/memory/constitution.md).
+**Status**: features 001–003 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. The ChromaDB attack-pattern store and per-target memory (004), the OWASP report with risk score (005) and the A/B harness (006) come next. The project's rules are in the [constitution](.specify/memory/constitution.md).
 
 > The built-in attack-prompt library (`src/kestrel/attacks/data/library.json`) is not yet populated; until it is, the attack routes report that no library is available and the end-to-end attack tests skip. See `specs/002-single-turn-attack/tasks.md` (T013).
 
@@ -57,9 +57,11 @@ uv run pytest -m e2e             # end-to-end tests against the sacrificial HS-c
 uv run --directory targets/hs_code pytest   # the target's own smoke tests
 ```
 
-The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code target](targets/hs_code/README.md) makes real model calls. A run costs a fraction of a cent. Without the key, the tests are skipped.
+The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code target](targets/hs_code/README.md), the judge (feature 002) and the attacker model (feature 003) all make real model calls through OpenRouter. A run costs a fraction of a cent. Without the key, the tests are skipped.
 
 ## More
 
 - [Quickstart and manual checks](specs/001-register-target/quickstart.md)
 - [Feature 001 spec, plan and tasks](specs/001-register-target/)
+- [Feature 002 spec, plan and tasks](specs/002-single-turn-attack/)
+- [Feature 003 spec, plan and tasks](specs/003-adaptive-attack/)
