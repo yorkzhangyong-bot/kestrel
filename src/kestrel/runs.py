@@ -116,3 +116,17 @@ def _duration_ms(run: Run) -> int | str:
     except ValueError:
         return "-"
     return int((end - start).total_seconds() * 1000)
+
+
+async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,
+                               attacker, judge, max_turns, token_budget, time_limit_s, sender=run_test,
+                               transport=None, resolver=default_resolver):
+    """Run an adaptive (multi-turn) attack via the LangGraph loop (feature 003). Single-turn keeps execute_run.
+
+    Imported lazily so runs.py (which owns match_canary) and attack.graph (which uses it) have no import cycle."""
+    from kestrel.attack.graph import run_adaptive
+
+    return await run_adaptive(store, target_id=target_id, seed_prompt=seed_prompt, attacker_source=attacker_source,
+                              canaries=canaries, resolved=resolved, attacker=attacker, judge=judge, sender=sender,
+                              mode=mode, transport=transport, resolver=resolver, max_turns=max_turns,
+                              token_budget=token_budget, time_limit_s=time_limit_s)

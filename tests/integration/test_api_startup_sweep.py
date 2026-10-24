@@ -3,9 +3,12 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 
+from kestrel.api.main import load_terms
 from kestrel.secrets import Vault
 from kestrel.store import TargetStore
 from tests.support import StubJudge, fixture_library
+
+CURRENT_TERMS = load_terms().version
 
 SECRET = "s3cret-header-value"
 
@@ -21,7 +24,7 @@ def seed_interrupted_run(settings):
     store = TargetStore(settings.db_path, _vault(settings))
     target = store.create_target(name="HS Agent", url="http://agent.test/chat", method="POST",
                                  headers=[("X-API-Key", SECRET)], body_template='{"message": "{{prompt}}"}',
-                                 response_path="$.reply", terms_version="2")
+                                 response_path="$.reply", terms_version=CURRENT_TERMS)
     store.claim_run(target.id, prompt_id="spl-001", prompt_title="t", prompt_text="x", family="system_prompt_leak",
                     owasp_category="LLM07: System Prompt Leakage", attacker_source="library:1.0.0")
     return target.id

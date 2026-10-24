@@ -13,12 +13,14 @@ VERDICTS = ("succeeded", "failed", "unclear")
 MAX_REASON_CHARS = 200
 NO_REASON = "The judge gave no reason."
 
-# The JSON schema asked of the model (OpenAI-compatible structured output, R3).
+# The JSON schema asked of the model (OpenAI-compatible structured output, R3). `progress` is the adaptive
+# "how close" note (feature 003, R6); single-turn runs ignore it, so it is optional.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "verdict": {"type": "string", "enum": list(VERDICTS)},
         "reason": {"type": "string"},
+        "progress": {"type": "string"},
     },
     "required": ["verdict", "reason"],
     "additionalProperties": False,
@@ -33,6 +35,8 @@ class VerdictParseError(Exception):
 class ParsedVerdict:
     verdict: str
     reason: str
+    progress: str | None = None  # the adaptive "how close" note (feature 003); None for single-turn
+    tokens: int = 0              # tokens the judge call used, for the adaptive token budget (R7)
 
 
 def _one_line(text: str) -> str:
@@ -50,7 +54,9 @@ def _from_mapping(data: object) -> ParsedVerdict:
         raise VerdictParseError(f"The judge returned {verdict!r}, which is not one of {VERDICTS}.")
     if "reason" not in data or not isinstance(data["reason"], str):
         raise VerdictParseError("The judge's answer had no reason string.")
-    return ParsedVerdict(verdict=verdict, reason=_one_line(data["reason"]))
+    raw_progress = data.get("progress")
+    progress = _one_line(raw_progress) if isinstance(raw_progress, str) and raw_progress.strip() else None
+    return ParsedVerdict(verdict=verdict, reason=_one_line(data["reason"]), progress=progress)
 
 
 def parse_verdict(answer: object) -> ParsedVerdict:

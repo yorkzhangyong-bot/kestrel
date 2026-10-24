@@ -80,14 +80,14 @@ def tables(path) -> set[str]:
 def test_a_fresh_database_is_created_at_version_2(tmp_path, vault):
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "2"
+    assert version(path) == SCHEMA_VERSION
     assert {"targets", "target_headers", "target_canaries", "runs", "meta"} <= tables(path)
 
 
 def test_a_version_1_database_gains_the_new_tables_and_moves_to_2(v1_db, vault):
     assert version(v1_db) == "1"
     TargetStore(v1_db, vault)
-    assert version(v1_db) == "2"
+    assert version(v1_db) == SCHEMA_VERSION
     assert {"target_canaries", "runs"} <= tables(v1_db)
 
 
@@ -109,7 +109,7 @@ def test_migration_adds_no_canaries_or_runs_to_an_existing_target(v1_db, vault):
 def test_opening_twice_is_harmless(v1_db, vault):
     TargetStore(v1_db, vault)
     TargetStore(v1_db, vault)
-    assert version(v1_db) == "2"
+    assert version(v1_db) == SCHEMA_VERSION
     assert len(TargetStore(v1_db, vault).list_targets()) == 1
 
 

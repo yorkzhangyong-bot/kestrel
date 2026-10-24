@@ -11,16 +11,19 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, ConfigOut, ConnectionSettingsIn,
+from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
                                  ConnectionTestRequest, ConnectionTestResult, FormDefaults, HeaderOut, JudgeOut,
                                  RunDetail, RunRequest, RunSummary, SaveTargetRequest, TargetDetail, TargetSummary,
-                                 TermsOut, validate_canaries, validate_save, validate_settings)
+                                 TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries, validate_save,
+                                 validate_settings)
+from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
-from kestrel.runs import execute_run
+from kestrel.runs import execute_run, execute_adaptive_run
+from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
 from kestrel.store import NameTaken, Run, RunInProgress, Target, TargetNotFound, TargetStore
@@ -33,8 +36,9 @@ NAME_TAKEN = "Another saved target already has this name."
 
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
-               resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None) -> FastAPI:
-    """Build the app. Tests pass settings, an httpx transport for targets, a fake resolver, a library and a judge."""
+               resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
+               attacker: Any = None) -> FastAPI:
+    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge and an attacker."""
     settings = settings or load_settings()
     logger = _configure_logging()
     key, _source = load_or_create_key(settings, logger)
@@ -55,6 +59,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             logger.warning("The attack library could not be loaded, so attacks are unavailable: %s", error)
     judge = judge or JudgeClient(model=settings.judge_model, api_key=settings.judge_api_key,
                                  base_url=settings.judge_base_url)
+    attacker = attacker or AttackerClient(model=settings.attacker_model, api_key=settings.attacker_api_key,
+                                          base_url=settings.attacker_base_url)
 
     app = FastAPI(title="Kestrel API", version="0.1.0")
     app.state.settings = settings
@@ -65,12 +71,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.sessions = FormSessions()
     app.state.library = library
     app.state.judge = judge
+    app.state.attacker = attacker
     app.add_exception_handler(RequestValidationError, _validation_error)
 
     @app.get("/api/config", response_model=ConfigOut)
     def get_config() -> ConfigOut:
         return ConfigOut(mode=settings.mode, defaults=DEFAULTS, terms=terms,
-                         judge=JudgeOut(model=settings.judge_model, configured=app.state.judge.configured))
+                         judge=JudgeOut(model=settings.judge_model, configured=app.state.judge.configured),
+                         attacker=AttackerOut(model=settings.attacker_model,
+                                              configured=app.state.attacker.configured),
+                         adaptive=AdaptiveCapsOut(max_turns=settings.adaptive_max_turns,
+                                                  token_budget=settings.adaptive_token_budget,
+                                                  time_limit_s=settings.adaptive_time_limit_s))
 
     @app.post("/api/connection-tests", response_model=ConnectionTestResult)
     async def connection_test(body: ConnectionTestRequest, request: Request) -> Any:
@@ -203,7 +215,19 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
                           for h in target.headers),
             body_template=target.body_template, response_path=target.response_path)
+        if body.mode == "adaptive" and not request.app.state.attacker.configured:
+            return api_error(409, "attacker_unavailable",
+                             "No attacker model is configured, so an adaptive attack can't run.")
         try:
+            if body.mode == "adaptive":
+                run = await execute_adaptive_run(
+                    store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
+                    canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
+                    attacker=request.app.state.attacker, judge=request.app.state.judge,
+                    max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
+                    time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
+                    resolver=request.app.state.resolver)
+                return run_detail(run, store.list_turns(run.id))
             run = await execute_run(store, target_id=target.id, prompt=prompt,
                                     attacker_source=library.attacker_source, canaries=store.list_canaries(target.id),
                                     resolved=resolved, mode=settings.mode, judge=request.app.state.judge,
@@ -222,7 +246,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     @app.get("/api/runs/{run_id}", response_model=RunDetail)
     def get_run(run_id: int) -> Any:
         try:
-            return run_detail(store.get_run(run_id))
+            return run_detail(store.get_run(run_id), store.list_turns(run_id))
         except LookupError:
             return api_error(404, "not_found", f"No run with id {run_id}.")
 
@@ -295,16 +319,24 @@ def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
 
 
 def run_summary(run: Run) -> RunSummary:
-    return RunSummary(id=run.id, target_id=run.target_id, prompt_id=run.prompt_id, prompt_title=run.prompt_title,
-                      family=run.family, owasp_category=run.owasp_category, verdict=run.verdict,
-                      hard_evidence=run.hard_evidence, judge_used=run.judge_used, judge_model=run.judge_model,
-                      failure_step=run.failure_step, started_at=run.started_at, finished_at=run.finished_at)
+    return RunSummary(id=run.id, target_id=run.target_id, mode=run.mode, prompt_id=run.prompt_id,
+                      prompt_title=run.prompt_title, family=run.family, owasp_category=run.owasp_category,
+                      verdict=run.verdict, hard_evidence=run.hard_evidence, judge_used=run.judge_used,
+                      judge_model=run.judge_model, failure_step=run.failure_step, started_at=run.started_at,
+                      finished_at=run.finished_at)
 
 
-def run_detail(run: Run) -> RunDetail:
+def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
     return RunDetail(**run_summary(run).model_dump(), status=run.status, prompt_text=run.prompt_text,
                      reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
-                     attacker_source=run.attacker_source)
+                     attacker_source=run.attacker_source, attacker_model=run.attacker_model,
+                     turn_budget=run.turn_budget, turns_used=run.turns_used, token_budget=run.token_budget,
+                     tokens_used=run.tokens_used, time_limit_s=run.time_limit_s,
+                     stopping_condition=run.stopping_condition, succeeded_turn=run.succeeded_turn,
+                     turns=[TurnOut(position=t.position, attacker_message=t.attacker_message, reply_text=t.reply_text,
+                                    reply_truncated=t.reply_truncated, judge_verdict=t.judge_verdict,
+                                    judge_reason=t.judge_reason, judge_progress=t.judge_progress)
+                            for t in (turns or [])])
 
 
 def load_terms(path: Path = TERMS_PATH) -> TermsOut:

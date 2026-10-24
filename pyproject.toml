@@ -11,6 +11,8 @@ dependencies = [
     "cryptography>=50.0.2",
     "fastapi>=0.161.1",
     "httpx>=0.28.1",
+    # LangGraph drives the adaptive attacker/judge loop (feature 003); in the fixed MVP stack (Principle X).
+    "langgraph>=0.2",
     "streamlit>=1.66.1",
     "uvicorn>=0.54.0",
 ]

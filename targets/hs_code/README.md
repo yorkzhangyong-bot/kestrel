@@ -6,6 +6,8 @@ Retrieval is keyword-only (BM25) instead of CargoLint's vector search, so its HS
 
 **Deliberately vulnerable parts** (feature 002): when a chat model is configured (an `OPENROUTER_API_KEY` is present), `/chat` runs a small conversational agent whose system prompt carries a canary and which can call a fake `send_email` tool. This lets the end-to-end tests detect a system-prompt leak or tool-mediated exfiltration with hard evidence. Without a chat model, `/chat` falls back to classifying directly, exactly as feature 001 shipped it.
 
+Feature 003's adaptive-attack end-to-end test reuses this target **unchanged** — a multi-turn attacker holds a conversation with the same `/chat` endpoint; no target changes were needed.
+
 ## Start it
 
 From the repo root:
