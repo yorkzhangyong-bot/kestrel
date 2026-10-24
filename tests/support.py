@@ -1,6 +1,8 @@
 """Shared test helpers. A synthetic attack library and a stub judge, so integration tests need no real content."""
 from __future__ import annotations
 
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
 from kestrel.attacks.library import FAMILIES, build_library
 from kestrel.judge.verdict import ParsedVerdict
 
@@ -51,9 +53,46 @@ class StubAttacker:
         self.configured, self.model, self._tokens, self._error = configured, model, tokens, error
         self.calls: list[dict] = []
 
-    async def next_message(self, *, conversation, family, progress=None, timeout=None):
+    async def next_message(self, *, conversation, family, progress=None, hints=None, timeout=None):
         from kestrel.attack.attacker import AttackerReply
-        self.calls.append({"conversation": conversation, "family": family, "progress": progress})
+        self.calls.append({"conversation": conversation, "family": family, "progress": progress, "hints": hints})
         if self._error is not None:
             raise self._error
         return AttackerReply(message=f"<attacker turn {len(conversation) // 2 + 1}>", tokens=self._tokens)
+
+    @property
+    def last_hints(self) -> str | None:
+        """The hints block passed to the most recent next_message call (for warm/cold tests)."""
+        return self.calls[-1]["hints"] if self.calls else None
+
+
+class StubEmbeddingFunction(EmbeddingFunction):
+    """A deterministic, offline embedding function for ExperienceStore tests (research R2).
+
+    Keeps `uv run pytest` free of model downloads and network. Similarity is crude but stable: it is
+    enough to exercise retrieval filtering and selection, not embedding quality (that is the e2e's job).
+    Inherits the chromadb EmbeddingFunction surface so the collection persists and reopens cleanly.
+    """
+
+    def __init__(self, dim: int = 32) -> None:
+        self._dim = dim
+
+    def __call__(self, input: Documents) -> Embeddings:  # noqa: A002 - chromadb's parameter name is `input`
+        vectors = []
+        for document in input:
+            vector = [0.0] * self._dim
+            for index, char in enumerate(document):
+                vector[index % self._dim] += (ord(char) % 17) / 17.0
+            vectors.append(vector)
+        return vectors
+
+    @staticmethod
+    def name() -> str:
+        return "kestrel_stub"
+
+    def get_config(self) -> dict:
+        return {"dim": self._dim}
+
+    @classmethod
+    def build_from_config(cls, config: dict) -> "StubEmbeddingFunction":
+        return cls(dim=config.get("dim", 32))

@@ -24,8 +24,8 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `chromadb` to `[project].dependencies` in `pyproject.toml` (one-line note: fixed MVP stack, Principle X) and run `uv sync`; create the package `src/kestrel/experience/__init__.py`.
-- [ ] T002 [P] Add a deterministic, offline stub embedding function (`StubEmbeddingFunction`, hash-based vectors) to `tests/support.py`, so every `ExperienceStore` test runs without a model download or network (research R2).
+- [X] T001 Add `chromadb` to `[project].dependencies` in `pyproject.toml` (one-line note: fixed MVP stack, Principle X) and run `uv sync`; create the package `src/kestrel/experience/__init__.py`.
+- [X] T002 [P] Add a deterministic, offline stub embedding function (`StubEmbeddingFunction`, hash-based vectors) to `tests/support.py`, so every `ExperienceStore` test runs without a model download or network (research R2).
 
 ---
 
@@ -35,15 +35,15 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T003 [P] Write `tests/unit/test_store_migration_v4.py` (FR-003 storage side): a fresh database reports schema version `4`; a version-3 database is migrated by ALTER adding `targets.description`, `runs.use_prior_experience` (default 1) and `runs.memory_written`, with existing targets and runs preserved; an unknown version still raises `UnknownSchemaVersion`.
-- [ ] T004 [P] Write `tests/unit/test_settings_experience.py`: `KESTREL_CHROMA_PATH` (default `data/chroma` under the repo root), `KESTREL_EXPERIENCE_PATTERN_K` (default 5) and `KESTREL_EXPERIENCE_MEMORY_CAP` (default 10) are parsed, with the same positive-integer validation as the adaptive caps.
-- [ ] T005 [P] Write `tests/unit/test_experience_store_core.py` (FR-001, FR-002, FR-003): with the stub embedder and a temp path, `ExperienceStore` opens one `kestrel_experience` collection, records `kestrel_store_version` in the collection metadata, reads it back on reopen, and logs a warning on a version mismatch.
+- [X] T003 [P] Write `tests/unit/test_store_migration_v4.py` (FR-003 storage side): a fresh database reports schema version `4`; a version-3 database is migrated by ALTER adding `targets.description`, `runs.use_prior_experience` (default 1) and `runs.memory_written`, with existing targets and runs preserved; an unknown version still raises `UnknownSchemaVersion`.
+- [X] T004 [P] Write `tests/unit/test_settings_experience.py`: `KESTREL_CHROMA_PATH` (default `data/chroma` under the repo root), `KESTREL_EXPERIENCE_PATTERN_K` (default 5) and `KESTREL_EXPERIENCE_MEMORY_CAP` (default 10) are parsed, with the same positive-integer validation as the adaptive caps.
+- [X] T005 [P] Write `tests/unit/test_experience_store_core.py` (FR-001, FR-002, FR-003): with the stub embedder and a temp path, `ExperienceStore` opens one `kestrel_experience` collection, records `kestrel_store_version` in the collection metadata, reads it back on reopen, and logs a warning on a version mismatch.
 
 ### Implementation
 
-- [ ] T006 Extend `src/kestrel/store.py` to schema v4: add `targets.description TEXT`, `runs.use_prior_experience INTEGER NOT NULL DEFAULT 1`, `runs.memory_written INTEGER`; add `EXPERIENCE_RUN_COLUMNS`; allow migration from `1`/`2`/`3` → `4`; add `description` to `Target`, `use_prior_experience` and `memory_written` to `Run` (and `_run`); accept `description` in `create_target`/`update_target`; accept `use_prior_experience` in `claim_run`; add `set_memory_written(run_id, written)`. (makes T003 pass)
-- [ ] T007 Extend `src/kestrel/settings.py`: add `chroma_path`, `experience_pattern_k`, `experience_memory_cap` (env `KESTREL_CHROMA_PATH`, `KESTREL_EXPERIENCE_PATTERN_K`, `KESTREL_EXPERIENCE_MEMORY_CAP`) with defaults from research R12. (makes T004 pass)
-- [ ] T008 Implement `src/kestrel/experience/store.py` `ExperienceStore.__init__` + collection/version handling + a `count(...)` helper, per [contracts/experience-store.md](./contracts/experience-store.md). (makes T005 pass)
+- [X] T006 Extend `src/kestrel/store.py` to schema v4: add `targets.description TEXT`, `runs.use_prior_experience INTEGER NOT NULL DEFAULT 1`, `runs.memory_written INTEGER`; add `EXPERIENCE_RUN_COLUMNS`; allow migration from `1`/`2`/`3` → `4`; add `description` to `Target`, `use_prior_experience` and `memory_written` to `Run` (and `_run`); accept `description` in `create_target`/`update_target`; accept `use_prior_experience` in `claim_run`; add `set_memory_written(run_id, written)`. (makes T003 pass)
+- [X] T007 Extend `src/kestrel/settings.py`: add `chroma_path`, `experience_pattern_k`, `experience_memory_cap` (env `KESTREL_CHROMA_PATH`, `KESTREL_EXPERIENCE_PATTERN_K`, `KESTREL_EXPERIENCE_MEMORY_CAP`) with defaults from research R12. (makes T004 pass)
+- [X] T008 Implement `src/kestrel/experience/store.py` `ExperienceStore.__init__` + collection/version handling + a `count(...)` helper, per [contracts/experience-store.md](./contracts/experience-store.md). (makes T005 pass)
 
 **Checkpoint**: the store opens, the schema migrates, settings load. User stories can begin.
 

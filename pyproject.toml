@@ -8,6 +8,8 @@ authors = [
 ]
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    # ChromaDB is the attack-pattern/memory store (feature 004); in the fixed MVP stack (Principle X).
+    "chromadb>=1.5.9",
     "cryptography>=50.0.2",
     "fastapi>=0.161.1",
     "httpx>=0.28.1",
