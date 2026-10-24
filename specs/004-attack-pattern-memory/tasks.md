@@ -57,16 +57,16 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T009 [P] [US1] Write `tests/unit/test_experience_summary.py` (FR-008, FR-013, SC-009): the summary joins the run's per-turn judge progress notes into one line with no model call; falls back to the fixed metadata template when there are none; and every result is single-line, control-char-free and within the length cap.
-- [ ] T010 [P] [US1] Write `tests/integration/test_experience_seeding.py` (FR-004, FR-005, SC-002): seeding from a fixture library writes one pattern per prompt carrying family, OWASP category and a source reference and no target identity; re-seeding adds 0 duplicates.
-- [ ] T011 [P] [US1] Write `tests/integration/test_writeback.py` (FR-006, FR-007, FR-009, FR-010, FR-011, FR-012, SC-001, SC-003, SC-004, SC-008, SC-011): after a run exactly one memory record exists with the required metadata and no raw reply text; a success also writes exactly one pattern (the winning attacker message(s)); a non-success writes none; a forced store failure keeps the run, sets `memory_written=false`, logs an error and reports the flag.
+- [X] T009 [P] [US1] Write `tests/unit/test_experience_summary.py` (FR-008, FR-013, SC-009): the summary joins the run's per-turn judge progress notes into one line with no model call; falls back to the fixed metadata template when there are none; and every result is single-line, control-char-free and within the length cap.
+- [X] T010 [P] [US1] Write `tests/integration/test_experience_seeding.py` (FR-004, FR-005, SC-002): seeding from a fixture library writes one pattern per prompt carrying family, OWASP category and a source reference and no target identity; re-seeding adds 0 duplicates.
+- [X] T011 [P] [US1] Write `tests/integration/test_writeback.py` (FR-006, FR-007, FR-009, FR-010, FR-011, FR-012, SC-001, SC-003, SC-004, SC-008, SC-011): after a run exactly one memory record exists with the required metadata and no raw reply text; a success also writes exactly one pattern (the winning attacker message(s)); a non-success writes none; a forced store failure keeps the run, sets `memory_written=false`, logs an error and reports the flag.
 
 ### Implementation
 
-- [ ] T012 [US1] Implement `seed_patterns`, `write_memory`, `write_pattern` in `src/kestrel/experience/store.py` (deterministic ids + `upsert`), per the contract. (makes T010 pass; part of T011)
-- [ ] T013 [US1] Implement `src/kestrel/experience/summary.py`: build-from-judge-notes, metadata fallback, and the fixed-shape sanitiser. (makes T009 pass)
-- [ ] T014 [US1] Implement `src/kestrel/experience/writeback.py` `write_back(experience, store, run, turns)` per [contracts/writeback.md](./contracts/writeback.md): summary → write_memory → write_pattern on success → `set_memory_written(True)`; on any failure keep the run, `set_memory_written(False)`, log loudly, return False. (makes T011 pass)
-- [ ] T015 [US1] Wire write-back into `src/kestrel/api/main.py`: build the `ExperienceStore` in `create_app`, `seed_patterns(library)` on start-up (idempotent; skip+warn if no library), and call `write_back` after both run paths in `start_run`; add `memory_written` to `RunSummary`/`RunDetail` in `src/kestrel/api/schemas.py` and populate it in `run_summary`/`run_detail`.
+- [X] T012 [US1] Implement `seed_patterns`, `write_memory`, `write_pattern` in `src/kestrel/experience/store.py` (deterministic ids + `upsert`), per the contract. (makes T010 pass; part of T011)
+- [X] T013 [US1] Implement `src/kestrel/experience/summary.py`: build-from-judge-notes, metadata fallback, and the fixed-shape sanitiser. (makes T009 pass)
+- [X] T014 [US1] Implement `src/kestrel/experience/writeback.py` `write_back(experience, store, run, turns)` per [contracts/writeback.md](./contracts/writeback.md): summary → write_memory → write_pattern on success → `set_memory_written(True)`; on any failure keep the run, `set_memory_written(False)`, log loudly, return False. (makes T011 pass)
+- [X] T015 [US1] Wire write-back into `src/kestrel/api/main.py`: build the `ExperienceStore` in `create_app`, `seed_patterns(library)` on start-up (idempotent; skip+warn if no library), and call `write_back` after both run paths in `start_run`; add `memory_written` to `RunSummary`/`RunDetail` in `src/kestrel/api/schemas.py` and populate it in `run_summary`/`run_detail`.
 
 **Checkpoint**: Principle V is closed — every run is recorded, and failures are loud.
 

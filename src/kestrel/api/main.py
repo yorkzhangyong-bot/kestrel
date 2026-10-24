@@ -18,6 +18,8 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  validate_settings)
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
+from kestrel.experience.store import ExperienceStore
+from kestrel.experience.writeback import write_back
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import ResolvedSettings, refused, run_test
@@ -37,8 +39,9 @@ NAME_TAKEN = "Another saved target already has this name."
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
                resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
-               attacker: Any = None) -> FastAPI:
-    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge and an attacker."""
+               attacker: Any = None, experience: Any = None) -> FastAPI:
+    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker
+    and an experience store (a stub-backed one keeps tests offline)."""
     settings = settings or load_settings()
     logger = _configure_logging()
     key, _source = load_or_create_key(settings, logger)
@@ -61,6 +64,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                  base_url=settings.judge_base_url)
     attacker = attacker or AttackerClient(model=settings.attacker_model, api_key=settings.attacker_api_key,
                                           base_url=settings.attacker_base_url)
+    if experience is None:  # production: the local ChromaDB store with its default embeddings (feature 004)
+        try:
+            experience = ExperienceStore(settings.chroma_path)
+        except Exception:
+            logger.exception("The experience store could not be opened; runs will record loudly as not written back.")
+            experience = None
+    if experience is not None and library is not None:
+        try:
+            seeded = experience.seed_patterns(library)  # idempotent (FR-004)
+            logger.info("Seeded %d attack pattern(s) into the experience store.", seeded)
+        except Exception:
+            logger.exception("Seeding the experience store failed.")
 
     app = FastAPI(title="Kestrel API", version="0.1.0")
     app.state.settings = settings
@@ -72,6 +87,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.library = library
     app.state.judge = judge
     app.state.attacker = attacker
+    app.state.experience = experience
     app.add_exception_handler(RequestValidationError, _validation_error)
 
     @app.get("/api/config", response_model=ConfigOut)
@@ -227,14 +243,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                     max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                     time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                     resolver=request.app.state.resolver)
-                return run_detail(run, store.list_turns(run.id))
-            run = await execute_run(store, target_id=target.id, prompt=prompt,
-                                    attacker_source=library.attacker_source, canaries=store.list_canaries(target.id),
-                                    resolved=resolved, mode=settings.mode, judge=request.app.state.judge,
-                                    transport=request.app.state.transport, resolver=request.app.state.resolver)
+            else:
+                run = await execute_run(store, target_id=target.id, prompt=prompt,
+                                        attacker_source=library.attacker_source,
+                                        canaries=store.list_canaries(target.id), resolved=resolved,
+                                        mode=settings.mode, judge=request.app.state.judge,
+                                        transport=request.app.state.transport, resolver=request.app.state.resolver)
         except RunInProgress:
             return api_error(409, "run_in_progress", "A run against this target is already in progress.")
-        return run_detail(run)
+        # Write back to the experience store after every run; a failure is loud, never discards the run (FR-006/10).
+        turns = store.list_turns(run.id)
+        write_back(request.app.state.experience, store, run, turns)
+        return run_detail(store.get_run(run.id), turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
     def list_runs(target_id: int) -> Any:
@@ -323,7 +343,7 @@ def run_summary(run: Run) -> RunSummary:
                       prompt_title=run.prompt_title, family=run.family, owasp_category=run.owasp_category,
                       verdict=run.verdict, hard_evidence=run.hard_evidence, judge_used=run.judge_used,
                       judge_model=run.judge_model, failure_step=run.failure_step, started_at=run.started_at,
-                      finished_at=run.finished_at)
+                      finished_at=run.finished_at, memory_written=run.memory_written)
 
 
 def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:

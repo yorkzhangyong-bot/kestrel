@@ -129,6 +129,7 @@ class RunSummary(BaseModel):
     failure_step: str | None
     started_at: str
     finished_at: str | None
+    memory_written: bool | None = None  # feature 004: null not attempted, false failed (warning), true written
 
 
 class RunDetail(RunSummary):

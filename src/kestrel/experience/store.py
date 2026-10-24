@@ -12,6 +12,8 @@ from typing import Any
 
 import chromadb
 
+from kestrel.store import utc_now
+
 log = logging.getLogger("kestrel")
 
 COLLECTION = "kestrel_experience"
@@ -51,3 +53,37 @@ class ExperienceStore:
                      *([{"family": family}] if family else []),
                      *([{"target_id": target_id}] if target_id is not None else []))
         return len(self._collection.get(where=where, include=[])["ids"])
+
+    # ---- seeding and writes (FR-004, FR-006, FR-009) ----
+
+    def seed_patterns(self, library) -> int:
+        """Idempotently seed one pattern per library prompt (FR-004, SC-002). Deterministic ids → re-seed is a no-op."""
+        if not library.prompts:
+            return 0
+        self._collection.upsert(
+            ids=[f"pattern:lib:{p.id}" for p in library.prompts],
+            documents=[p.text for p in library.prompts],
+            metadatas=[{"type": "pattern", "family": p.family, "owasp_category": p.owasp_category,
+                        "source": f"library:{library.version}", "prompt_id": p.id} for p in library.prompts])
+        return len(library.prompts)
+
+    def write_memory(self, *, run_id: int, target_id: int, summary: str, family: str, owasp_category: str,
+                     verdict: str, hard_evidence: bool, turns_used: int | None, stopping_condition: str | None,
+                     attacker_model: str | None) -> None:
+        """One memory record per run (FR-006/7). The caller passes an already-sanitised summary; metadata is scalar."""
+        self._collection.upsert(
+            ids=[f"memory:run:{run_id}"],
+            documents=[summary],
+            metadatas=[{"type": "memory", "target_id": int(target_id), "run_id": int(run_id), "family": family,
+                        "owasp_category": owasp_category, "verdict": verdict,
+                        "hard_evidence": bool(hard_evidence), "succeeded": verdict == "succeeded",
+                        "turns_used": int(turns_used or 0), "stopping_condition": stopping_condition or "",
+                        "attacker_model": attacker_model or "", "created_at": utc_now()}])
+
+    def write_pattern(self, *, run_id: int, document: str, family: str, owasp_category: str) -> None:
+        """A success becomes a shared pattern; its searchable text is the winning attacker message(s) (FR-009)."""
+        self._collection.upsert(
+            ids=[f"pattern:run:{run_id}"],
+            documents=[document],
+            metadatas=[{"type": "pattern", "family": family, "owasp_category": owasp_category,
+                        "source": f"run:{run_id}", "origin_run_id": int(run_id)}])
