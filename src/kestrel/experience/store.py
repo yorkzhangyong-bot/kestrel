@@ -7,6 +7,7 @@ module holds no attack text — patterns/memory are data the store holds at run 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,17 @@ import chromadb
 from kestrel.store import utc_now
 
 log = logging.getLogger("kestrel")
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    """A per-target memory record as retrieved for the attacker (contracts/experience-store.md)."""
+    summary: str
+    family: str
+    verdict: str
+    succeeded: bool
+    run_id: int
+    created_at: str = ""
 
 COLLECTION = "kestrel_experience"
 STORE_VERSION = "1"
@@ -87,3 +99,36 @@ class ExperienceStore:
             documents=[document],
             metadatas=[{"type": "pattern", "family": family, "owasp_category": owasp_category,
                         "source": f"run:{run_id}", "origin_run_id": int(run_id)}])
+
+    # ---- retrieval (FR-016, FR-017, FR-018) ----
+
+    def retrieve_patterns(self, *, family: str, query_text: str, k: int) -> list[str]:
+        """Up to k patterns of this family, by semantic similarity to query_text (FR-016/17, SC-014)."""
+        if k <= 0:
+            return []
+        result = self._collection.query(query_texts=[query_text or ""], n_results=k,
+                                        where=_and({"type": "pattern"}, {"family": family}))
+        documents = (result.get("documents") or [[]])[0]
+        return list(documents)
+
+    def retrieve_memory(self, *, target_id: int, family: str, cap: int) -> list[MemoryRecord]:
+        """This target's memory, by exact id (never semantic): recent-first to cap, keeping same-family successes."""
+        got = self._collection.get(where=_and({"type": "memory"}, {"target_id": int(target_id)}))
+        records = [MemoryRecord(summary=document, family=meta.get("family", ""), verdict=meta.get("verdict", ""),
+                                succeeded=bool(meta.get("succeeded")), run_id=int(meta.get("run_id", 0)),
+                                created_at=meta.get("created_at", ""))
+                   for document, meta in zip(got["documents"], got["metadatas"])]
+        records.sort(key=lambda r: r.run_id, reverse=True)
+        selected = records[:cap]
+        chosen = {r.run_id for r in selected}
+        for record in records:  # keep an older same-family success past the recency cap (FR-016)
+            if record.succeeded and record.family == family and record.run_id not in chosen:
+                selected.append(record)
+                chosen.add(record.run_id)
+        return selected
+
+    def delete_target_memory(self, target_id: int) -> int:
+        """Delete all of a target's memory; patterns (no target identity) are untouched (FR-024/25, SC-010)."""
+        before = self.count("memory", target_id=target_id)
+        self._collection.delete(where=_and({"type": "memory"}, {"target_id": int(target_id)}))
+        return before

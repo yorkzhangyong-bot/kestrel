@@ -50,15 +50,17 @@ def match_canary(reply: str, canaries: Sequence[str]) -> str | None:
 async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPrompt, attacker_source: str,
                       canaries: list[str], resolved: ResolvedSettings, mode: str, judge: Judge,
                       sender: Sender = run_test, transport=None, resolver=default_resolver,
+                      use_prior_experience: bool = True,
                       clock: Callable[[], float] = time.monotonic, total_s: float = TOTAL_DEADLINE_S,
                       send_s: float = SEND_LIMIT_S, judge_s: float = JUDGE_LIMIT_S) -> Run:
     """Claim a run row, carry it to a verdict (or a failure step), and return the finished Run.
 
     May raise RunInProgress from the claim (the API turns that into 409); any other failure still closes the row.
+    `use_prior_experience` is recorded on the run; a single-turn run has no attacker to hint, so it has no effect (C1).
     """
     run_id = store.claim_run(target_id, prompt_id=prompt.id, prompt_title=prompt.title, prompt_text=prompt.text,
                              family=prompt.family, owasp_category=prompt.owasp_category,
-                             attacker_source=attacker_source)
+                             attacker_source=attacker_source, use_prior_experience=use_prior_experience)
     deadline = clock() + total_s
     try:
         send_budget = max(0.1, min(send_s, deadline - clock()))
@@ -120,13 +122,16 @@ def _duration_ms(run: Run) -> int | str:
 
 async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,
                                attacker, judge, max_turns, token_budget, time_limit_s, sender=run_test,
-                               transport=None, resolver=default_resolver):
+                               transport=None, resolver=default_resolver, use_prior_experience=True,
+                               hint_provider=None):
     """Run an adaptive (multi-turn) attack via the LangGraph loop (feature 003). Single-turn keeps execute_run.
 
-    Imported lazily so runs.py (which owns match_canary) and attack.graph (which uses it) have no import cycle."""
+    `hint_provider` (feature 004) supplies the attacker's background each turn. Imported lazily so runs.py
+    (which owns match_canary) and attack.graph (which uses it) have no import cycle."""
     from kestrel.attack.graph import run_adaptive
 
     return await run_adaptive(store, target_id=target_id, seed_prompt=seed_prompt, attacker_source=attacker_source,
                               canaries=canaries, resolved=resolved, attacker=attacker, judge=judge, sender=sender,
                               mode=mode, transport=transport, resolver=resolver, max_turns=max_turns,
-                              token_budget=token_budget, time_limit_s=time_limit_s)
+                              token_budget=token_budget, time_limit_s=time_limit_s,
+                              use_prior_experience=use_prior_experience, hint_provider=hint_provider)

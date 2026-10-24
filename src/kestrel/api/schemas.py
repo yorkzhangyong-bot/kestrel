@@ -46,6 +46,12 @@ class AdaptiveCapsOut(BaseModel):
     time_limit_s: int
 
 
+class ExperienceOut(BaseModel):
+    pattern_k: int
+    memory_cap: int
+    use_prior_experience_default: bool  # the screen defaults the toggle to this (feature 004, FR-014)
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -53,6 +59,7 @@ class ConfigOut(BaseModel):
     judge: JudgeOut
     attacker: AttackerOut
     adaptive: AdaptiveCapsOut
+    experience: ExperienceOut
 
 
 class HeaderIn(BaseModel):
@@ -101,6 +108,7 @@ class RunRequest(BaseModel):
     family: str
     prompt_id: str | None = None  # None lets Kestrel pick one from the family (FR-007)
     mode: Literal["single_turn", "adaptive"] = "single_turn"  # adaptive = the multi-turn loop (feature 003)
+    use_prior_experience: bool = True  # feature 004: warm (default) retrieves patterns/memory; cold is feature 003
 
 
 class TurnOut(BaseModel):
@@ -130,6 +138,7 @@ class RunSummary(BaseModel):
     started_at: str
     finished_at: str | None
     memory_written: bool | None = None  # feature 004: null not attempted, false failed (warning), true written
+    use_prior_experience: bool = True   # feature 004: warm or cold, recorded on the run (FR-014)
 
 
 class RunDetail(RunSummary):

@@ -58,9 +58,13 @@ class AttackerClient:
     def model(self) -> str:
         return self._model
 
-    def _payload(self, conversation: list[tuple[str, str]], progress: str | None, family: str) -> dict:
+    def _payload(self, conversation: list[tuple[str, str]], progress: str | None, family: str,
+                 hints: str | None = None) -> dict:
         goal = GOALS.get(family, "get the agent to misbehave")
-        messages = [{"role": "system", "content": SYSTEM_PROMPT.format(goal=goal)}]
+        system = SYSTEM_PROMPT.format(goal=goal)
+        if hints:  # feature 004: retrieved patterns/memory/purpose as background, not commands (FR-019)
+            system = f"{system}\n\n{hints}"
+        messages = [{"role": "system", "content": system}]
         # The attacker's own prior messages are 'assistant'; the agent's replies are 'user' to the attacker.
         for role, text in conversation:
             messages.append({"role": "assistant" if role == "attacker" else "user",
@@ -70,8 +74,11 @@ class AttackerClient:
         return {"model": self._model, "max_tokens": 400, "temperature": 0.7, "messages": messages}
 
     async def next_message(self, *, conversation: list[tuple[str, str]], family: str,
-                           progress: str | None = None, timeout: float | None = None) -> AttackerReply:
-        """Return the attacker's next message and the tokens it used, or raise AttackerError (FR-005, FR-016)."""
+                           progress: str | None = None, hints: str | None = None,
+                           timeout: float | None = None) -> AttackerReply:
+        """Return the attacker's next message and the tokens it used, or raise AttackerError (FR-005, FR-016).
+
+        `hints` is an optional background block (feature 004); None keeps feature-003 behaviour exactly."""
         if not self.configured:
             raise AttackerError("No attacker is configured; set KESTREL_ATTACKER_API_KEY or OPENROUTER_API_KEY.")
 
@@ -80,7 +87,7 @@ class AttackerClient:
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=limit) as http:
                 response = await http.post(f"{self._base_url}/chat/completions",
-                                           json=self._payload(conversation, progress, family), headers=headers)
+                                           json=self._payload(conversation, progress, family, hints), headers=headers)
         except httpx.HTTPError as error:
             raise AttackerError(f"The attacker model could not be reached: {type(error).__name__}.") from error
 

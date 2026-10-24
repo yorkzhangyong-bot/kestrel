@@ -12,12 +12,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
-                                 ConnectionTestRequest, ConnectionTestResult, FormDefaults, HeaderOut, JudgeOut,
-                                 RunDetail, RunRequest, RunSummary, SaveTargetRequest, TargetDetail, TargetSummary,
-                                 TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries, validate_save,
+                                 ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
+                                 JudgeOut, RunDetail, RunRequest, RunSummary, SaveTargetRequest, TargetDetail,
+                                 TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries, validate_save,
                                  validate_settings)
-from kestrel.attack.attacker import AttackerClient
+from kestrel.attack.attacker import GOALS, AttackerClient
 from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
+from kestrel.experience.hints import format_hints
 from kestrel.experience.store import ExperienceStore
 from kestrel.experience.writeback import write_back
 from kestrel.connection.address_guard import default_resolver
@@ -98,7 +99,10 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                               configured=app.state.attacker.configured),
                          adaptive=AdaptiveCapsOut(max_turns=settings.adaptive_max_turns,
                                                   token_budget=settings.adaptive_token_budget,
-                                                  time_limit_s=settings.adaptive_time_limit_s))
+                                                  time_limit_s=settings.adaptive_time_limit_s),
+                         experience=ExperienceOut(pattern_k=settings.experience_pattern_k,
+                                                  memory_cap=settings.experience_memory_cap,
+                                                  use_prior_experience_default=True))
 
     @app.post("/api/connection-tests", response_model=ConnectionTestResult)
     async def connection_test(body: ConnectionTestRequest, request: Request) -> Any:
@@ -234,6 +238,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
+        experience = request.app.state.experience
+
+        def hint_provider(conversation: list[tuple[str, str]]) -> str | None:
+            """The attacker's background each turn: purpose always; patterns + memory only on a warm run (FR-021)."""
+            purpose = target.description
+            if not body.use_prior_experience or experience is None:
+                return format_hints(purpose=purpose, patterns=[], memory=[])  # cold: purpose only (FR-015)
+            memory = experience.retrieve_memory(target_id=target.id, family=prompt.family,
+                                                 cap=settings.experience_memory_cap)
+            query = f"{GOALS.get(prompt.family, '')} {_recent_conversation(conversation)}".strip()
+            patterns = experience.retrieve_patterns(family=prompt.family, query_text=query,
+                                                    k=settings.experience_pattern_k)
+            return format_hints(purpose=purpose, patterns=patterns, memory=memory)
+
         try:
             if body.mode == "adaptive":
                 run = await execute_adaptive_run(
@@ -242,13 +260,15 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                     attacker=request.app.state.attacker, judge=request.app.state.judge,
                     max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                     time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
-                    resolver=request.app.state.resolver)
+                    resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
+                    hint_provider=hint_provider)
             else:
                 run = await execute_run(store, target_id=target.id, prompt=prompt,
                                         attacker_source=library.attacker_source,
                                         canaries=store.list_canaries(target.id), resolved=resolved,
                                         mode=settings.mode, judge=request.app.state.judge,
-                                        transport=request.app.state.transport, resolver=request.app.state.resolver)
+                                        transport=request.app.state.transport, resolver=request.app.state.resolver,
+                                        use_prior_experience=body.use_prior_experience)
         except RunInProgress:
             return api_error(409, "run_in_progress", "A run against this target is already in progress.")
         # Write back to the experience store after every run; a failure is loud, never discards the run (FR-006/10).
@@ -338,12 +358,18 @@ def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
                         canaries=canaries if canaries is not None else [])
 
 
+def _recent_conversation(conversation: list[tuple[str, str]], turns: int = 2) -> str:
+    """The text of the last `turns` turns (up to 2*turns messages), for the pattern-retrieval query (U1)."""
+    return " ".join(text for _, text in conversation[-2 * turns:])
+
+
 def run_summary(run: Run) -> RunSummary:
     return RunSummary(id=run.id, target_id=run.target_id, mode=run.mode, prompt_id=run.prompt_id,
                       prompt_title=run.prompt_title, family=run.family, owasp_category=run.owasp_category,
                       verdict=run.verdict, hard_evidence=run.hard_evidence, judge_used=run.judge_used,
                       judge_model=run.judge_model, failure_step=run.failure_step, started_at=run.started_at,
-                      finished_at=run.finished_at, memory_written=run.memory_written)
+                      finished_at=run.finished_at, memory_written=run.memory_written,
+                      use_prior_experience=run.use_prior_experience)
 
 
 def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
