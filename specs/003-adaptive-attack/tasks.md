@@ -89,14 +89,14 @@ Tests and code in different tasks rely on these ([research.md](./research.md), [
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T025 [P] [US2] Write `tests/integration/test_api_run_history_adaptive.py` (FR-020, FR-022): `GET /api/runs/{id}` returns the ordered `turns`; `GET /api/targets/{id}/runs` lists adaptive and single-turn runs together with each run's `mode`, newest first; deleting the target removes the adaptive runs and their turns.
-- [ ] T026 [P] [US2] Write `tests/integration/test_api_startup_sweep_adaptive.py` (FR-022, SC-010): a database holding an `in_progress` adaptive run is swept on start-up to `unclear` with `stopping_condition = interrupted`, its already-stored turns kept, and the target can start a new run.
-- [ ] T027 [P] [US2] Write `tests/integration/test_ui_runs_adaptive.py` (FR-022, FR-023): the Runs table shows a Mode column; opening an adaptive run shows the conversation turn by turn; opening a single-turn run still shows its one prompt and reply.
+- [X] T025 [P] [US2] Write `tests/integration/test_api_run_history_adaptive.py` (FR-020, FR-022): `GET /api/runs/{id}` returns the ordered `turns`; `GET /api/targets/{id}/runs` lists adaptive and single-turn runs together with each run's `mode`, newest first; deleting the target removes the adaptive runs and their turns.
+- [X] T026 [P] [US2] Write `tests/integration/test_api_startup_sweep_adaptive.py` (FR-022, SC-010): a database holding an `in_progress` adaptive run is swept on start-up to `unclear` with `stopping_condition = interrupted`, its already-stored turns kept, and the target can start a new run.
+- [X] T027 [P] [US2] Write `tests/integration/test_ui_runs_adaptive.py` (FR-022, FR-023): the Runs table shows a Mode column; opening an adaptive run shows the conversation turn by turn; opening a single-turn run still shows its one prompt and reply.
 
 ### Implementation for User Story 2
 
-- [ ] T028 [US2] Carry `mode` and the conversation through the API in `src/kestrel/api/schemas.py` and `src/kestrel/api/main.py` (FR-020, FR-022): `RunSummary` gains `mode`; `RunDetail` gains `turns` populated from `list_turns`; listing and single-run endpoints keep their shape.
-- [ ] T029 [US2] Add the Mode column to the Runs table and wire opening an adaptive run to the conversation view in `ui/app.py` (FR-022, FR-023), reusing the T023 renderer; single-turn runs render as in feature 002.
+- [X] T028 [US2] Carry `mode` and the conversation through the API in `src/kestrel/api/schemas.py` and `src/kestrel/api/main.py` (FR-020, FR-022): `RunSummary` gains `mode`; `RunDetail` gains `turns` populated from `list_turns`; listing and single-run endpoints keep their shape.
+- [X] T029 [US2] Add the Mode column to the Runs table and wire opening an adaptive run to the conversation view in `ui/app.py` (FR-022, FR-023), reusing the T023 renderer; single-turn runs render as in feature 002.
 
 **Checkpoint**: run history and the conversation view work across both modes and survive restarts.
 
@@ -110,13 +110,13 @@ Tests and code in different tasks rely on these ([research.md](./research.md), [
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T030 [P] [US3] Write `tests/integration/test_api_config_adaptive.py` (FR-014, FR-015): `GET /api/config` returns an `attacker` block (`model`, `configured`), the `adaptive` caps, and `terms.version` = 3.
-- [ ] T031 [P] [US3] Add cases to `tests/integration/test_api_runs_adaptive.py` or a new file (FR-015, SC-004): a finished adaptive run records and returns `attacker_model`, `judge_model`, `turn_budget`/`turns_used`, `token_budget`/`tokens_used`, `time_limit_s`; two runs made after changing the configured attacker model each name their own model.
+- [X] T030 [P] [US3] Write `tests/integration/test_api_config_adaptive.py` (FR-014, FR-015): `GET /api/config` returns an `attacker` block (`model`, `configured`), the `adaptive` caps, and `terms.version` = 3.
+- [X] T031 [P] [US3] Add cases to `tests/integration/test_api_runs_adaptive.py` or a new file (FR-015, SC-004): a finished adaptive run records and returns `attacker_model`, `judge_model`, `turn_budget`/`turns_used`, `token_budget`/`tokens_used`, `time_limit_s`; two runs made after changing the configured attacker model each name their own model.
 
 ### Implementation for User Story 3
 
-- [ ] T032 [US3] Add the `attacker` block and the `adaptive` caps to `GET /api/config` in `src/kestrel/api/main.py` and `src/kestrel/api/schemas.py` (FR-014, FR-015), and surface terms version 3.
-- [ ] T033 [US3] Show the attacker provenance in `ui/app.py` (FR-015, FR-023): a footer on an adaptive run naming the attacker model, the judge model and the budgets allowed/used, and a caption on the panel naming the attacker and caps when Adaptive is selected.
+- [X] T032 [US3] Add the `attacker` block and the `adaptive` caps to `GET /api/config` in `src/kestrel/api/main.py` and `src/kestrel/api/schemas.py` (FR-014, FR-015), and surface terms version 3.
+- [X] T033 [US3] Show the attacker provenance in `ui/app.py` (FR-015, FR-023): a footer on an adaptive run naming the attacker model, the judge model and the budgets allowed/used, and a caption on the panel naming the attacker and caps when Adaptive is selected.
 
 **Checkpoint**: all three stories work; every adaptive run is self-describing (Principle III).
 

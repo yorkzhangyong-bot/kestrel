@@ -567,7 +567,8 @@ def render_runs(config: dict) -> None:
     if not runs:
         st.caption("No runs yet for this target.")
         return
-    st.dataframe([{"When": r["started_at"][:19].replace("T", " "), "Family": r["family"],
+    st.dataframe([{"When": r["started_at"][:19].replace("T", " "),
+                   "Mode": "adaptive" if r.get("mode") == "adaptive" else "single-turn", "Family": r["family"],
                    "Prompt": r["prompt_title"], "Verdict": r["verdict"] or r["failure_step"] or "—",
                    "Evidence": _evidence(r)} for r in runs], hide_index=True)
 
