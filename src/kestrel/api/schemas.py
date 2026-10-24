@@ -201,6 +201,32 @@ class TargetDetail(TargetSummary):
     canaries: list[str]
 
 
+class FamilyCount(BaseModel):
+    family: str
+    count: int
+
+
+class VerdictCount(BaseModel):
+    verdict: str
+    count: int
+
+
+class RecentMemory(BaseModel):
+    summary: str
+    family: str
+    verdict: str
+    created_at: str
+
+
+class ProfileOut(BaseModel):
+    """A per-target summary from its memory records — summaries and non-secret metadata only (FR-023)."""
+    target_id: int
+    total_runs: int
+    by_family: list[FamilyCount]
+    by_verdict: list[VerdictCount]
+    recent: list[RecentMemory]
+
+
 def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[str, str]]:
     """The save-only rules (FR-004, FR-011, FR-029); the connection settings are checked by validate_settings."""
     errors = []

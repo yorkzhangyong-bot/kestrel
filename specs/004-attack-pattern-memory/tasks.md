@@ -125,11 +125,11 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T029 [P] [US4] Write `tests/integration/test_profile.py` (FR-022, FR-023, SC-013): `GET /api/targets/{id}/profile` returns total runs, counts by family and by verdict, and recent one-line summaries newest first; an unused target returns zeros and an empty list, not an error; a missing target returns 404; no auth value, URL or name appears.
+- [X] T029 [P] [US4] Write `tests/integration/test_profile.py` (FR-022, FR-023, SC-013): `GET /api/targets/{id}/profile` returns total runs, counts by family and by verdict, and recent one-line summaries newest first; an unused target returns zeros and an empty list, not an error; a missing target returns 404; no auth value, URL or name appears.
 
 ### Implementation
 
-- [ ] T030 [US4] Add a `profile(target_id)` aggregation to `src/kestrel/experience/store.py` (read memory via `get(where type=memory, target_id)`; the `recent` list capped at **10** summaries, newest first; U1), a `ProfileOut` schema in `src/kestrel/api/schemas.py`, and `GET /api/targets/{id}/profile` in `src/kestrel/api/main.py`. (makes T029 pass)
+- [X] T030 [US4] Add a `profile(target_id)` aggregation to `src/kestrel/experience/store.py` (read memory via `get(where type=memory, target_id)`; the `recent` list capped at **10** summaries, newest first; U1), a `ProfileOut` schema in `src/kestrel/api/schemas.py`, and `GET /api/targets/{id}/profile` in `src/kestrel/api/main.py`. (makes T029 pass)
 
 **Checkpoint**: a user can read a target's history.
 
@@ -143,11 +143,11 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T031 [P] [US5] Write `tests/integration/test_delete_clears_memory.py` (FR-024, FR-025, SC-010): deleting a target removes all of its memory records and leaves shared patterns intact; a later warm attack on another target retrieves none of the deleted target's memory.
+- [X] T031 [P] [US5] Write `tests/integration/test_delete_clears_memory.py` (FR-024, FR-025, SC-010): deleting a target removes all of its memory records and leaves shared patterns intact; a later warm attack on another target retrieves none of the deleted target's memory.
 
 ### Implementation
 
-- [ ] T032 [US5] Add `delete_target_memory(target_id)` to `src/kestrel/experience/store.py` (`delete(where type=memory, target_id)`) and call it from the `DELETE /api/targets/{id}` handler in `src/kestrel/api/main.py` after `store.delete_target`. (makes T031 pass)
+- [X] T032 [US5] Add `delete_target_memory(target_id)` to `src/kestrel/experience/store.py` (`delete(where type=memory, target_id)`) and call it from the `DELETE /api/targets/{id}` handler in `src/kestrel/api/main.py` after `store.delete_target`. (makes T031 pass)
 
 **Checkpoint**: deletion is complete across both stores.
 
@@ -159,11 +159,11 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T033 [P] Write `tests/integration/test_ui_experience.py` (FR-010, FR-014, FR-020, FR-022, SC-007/SC-013 screen side): the Attack panel shows a "Use prior experience" toggle defaulting to on; the target form has the one-line purpose field marked "no sensitive info"; a finished run with `memory_written=false` shows a visible warning; the profile section renders counts by family and verdict and recent summaries; secrets never appear.
+- [X] T033 [P] Write `tests/integration/test_ui_experience.py` (FR-010, FR-014, FR-020, FR-022, SC-007/SC-013 screen side): the Attack panel shows a "Use prior experience" toggle defaulting to on; the target form has the one-line purpose field marked "no sensitive info"; a finished run with `memory_written=false` shows a visible warning; the profile section renders counts by family and verdict and recent summaries; secrets never appear.
 
 ### Implementation
 
-- [ ] T034 Implement the screen in `ui/app.py` and `ui/api_client.py`: the experience toggle (sends `use_prior_experience`), the purpose field (sends `description`), the profile section (`get_profile`), and the write-back warning; add `get_profile` and pass `description`/`use_prior_experience` in `ui/api_client.py`. (makes T033 pass)
+- [X] T034 Implement the screen in `ui/app.py` and `ui/api_client.py`: the experience toggle (sends `use_prior_experience`), the purpose field (sends `description`), the profile section (`get_profile`), and the write-back warning; add `get_profile` and pass `description`/`use_prior_experience` in `ui/api_client.py`. (makes T033 pass)
 
 **Checkpoint**: the whole feature is usable from the screen.
 

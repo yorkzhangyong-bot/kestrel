@@ -85,3 +85,7 @@ def list_runs(target_id: int) -> list[dict[str, Any]]:
 
 def get_run(run_id: int) -> dict[str, Any]:
     return _request("GET", f"/api/runs/{run_id}")
+
+
+def get_profile(target_id: int) -> dict[str, Any]:
+    return _request("GET", f"/api/targets/{target_id}/profile")

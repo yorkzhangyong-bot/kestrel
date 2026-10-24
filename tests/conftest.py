@@ -61,3 +61,14 @@ def all_logs(caplog):
     """Return a function giving every log line captured so far as one string."""
     caplog.set_level(logging.DEBUG)
     return lambda: caplog.text
+
+
+@pytest.fixture(autouse=True)
+def _release_chroma():
+    """Each test opens its own ChromaDB store under tmp; release the cached clients so file handles don't pile up."""
+    yield
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+        SharedSystemClient.clear_system_cache()
+    except Exception:
+        pass

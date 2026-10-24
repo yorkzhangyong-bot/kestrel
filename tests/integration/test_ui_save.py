@@ -33,6 +33,7 @@ def api(monkeypatch):
 
     monkeypatch.setattr(api_client, "get_config", lambda: CONFIG)
     monkeypatch.setattr(api_client, "list_targets", lambda: stub.targets)
+    monkeypatch.setattr(api_client, "get_profile", lambda target_id: {"target_id": 1, "total_runs": 0, "by_family": [], "by_verdict": [], "recent": []})
     monkeypatch.setattr(api_client, "test_connection", lambda payload: {
         "ok": True, "step": "success", "message": "Connection works.", "detail": None, "status_code": 200,
         "reply_text": "Hi", "reply_truncated": False, "duration_ms": 10})

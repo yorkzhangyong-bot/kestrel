@@ -33,6 +33,7 @@ def api(monkeypatch):
     monkeypatch.setattr(api_client, "get_config", lambda: CONFIG)
     monkeypatch.setattr(api_client, "test_connection", test_connection)
     monkeypatch.setattr(api_client, "list_targets", lambda: [])
+    monkeypatch.setattr(api_client, "get_profile", lambda target_id: {"target_id": 1, "total_runs": 0, "by_family": [], "by_verdict": [], "recent": []})
     return stub
 
 

@@ -56,6 +56,7 @@ def api(monkeypatch, request):
     monkeypatch.setattr(api_client, "run_attack", run_attack)
     monkeypatch.setattr(api_client, "list_runs", lambda target_id: [ADAPTIVE_RUN])
     monkeypatch.setattr(api_client, "get_run", lambda run_id: ADAPTIVE_RUN)
+    monkeypatch.setattr(api_client, "get_profile", lambda target_id: {"target_id": 1, "total_runs": 0, "by_family": [], "by_verdict": [], "recent": []})
     return stub
 
 

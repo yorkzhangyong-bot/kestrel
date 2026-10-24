@@ -7,6 +7,7 @@ module holds no attack text — patterns/memory are data the store holds at run 
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -132,3 +133,20 @@ class ExperienceStore:
         before = self.count("memory", target_id=target_id)
         self._collection.delete(where=_and({"type": "memory"}, {"target_id": int(target_id)}))
         return before
+
+    # ---- profile (FR-022, FR-023) ----
+
+    def profile(self, target_id: int, *, recent_limit: int = 10) -> dict:
+        """Summarise a target's memory: counts by family and verdict, plus the most recent summaries (secrets-free)."""
+        got = self._collection.get(where=_and({"type": "memory"}, {"target_id": int(target_id)}))
+        rows = list(zip(got["documents"], got["metadatas"]))
+        families = Counter(meta.get("family", "") for _, meta in rows)
+        verdicts = Counter(meta.get("verdict", "") for _, meta in rows)
+        recent = [{"summary": document, "family": meta.get("family", ""), "verdict": meta.get("verdict", ""),
+                   "created_at": meta.get("created_at", "")}
+                  for document, meta in sorted(rows, key=lambda dm: int(dm[1].get("run_id", 0)), reverse=True)
+                  ][:recent_limit]
+        return {"target_id": int(target_id), "total_runs": len(rows),
+                "by_family": [{"family": f, "count": c} for f, c in sorted(families.items())],
+                "by_verdict": [{"verdict": v, "count": c} for v, c in sorted(verdicts.items())],
+                "recent": recent}

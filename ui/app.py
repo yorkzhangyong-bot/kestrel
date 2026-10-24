@@ -107,7 +107,7 @@ def init_form(defaults: dict) -> None:
     state = st.session_state
     for key, value in (("display_name", ""), ("url", ""), ("method", defaults["method"]),
                        ("body_template", defaults["body_template"]), ("response_path", defaults["response_path"]),
-                       ("permission", False)):
+                       ("permission", False), ("description", "")):
         state.setdefault(key, value)
 
 
@@ -119,12 +119,12 @@ def fill_form(target: dict | None) -> None:
     reset_canary_widgets()
     if target is None:
         state.update(display_name="", url="", method=defaults["method"], body_template=defaults["body_template"],
-                     response_path=defaults["response_path"], permission=False, headers=[], canaries=[],
-                     loaded_target=None)
+                     response_path=defaults["response_path"], permission=False, description="", headers=[],
+                     canaries=[], loaded_target=None)
     else:
         state.update(display_name=target["name"], url=target["url"], method=target["method"],
                      body_template=target["body_template"], response_path=target["response_path"], permission=True,
-                     loaded_target=target,
+                     description=target.get("description") or "", loaded_target=target,
                      headers=[{"name": h["name"], "value": "", "stored": True, "readable": h["readable"]}
                               for h in target["headers"]],
                      canaries=[{"value": c} for c in target.get("canaries", [])])
@@ -281,6 +281,7 @@ def start_run() -> None:
         "family": st.session_state.get("attack_family"),
         "prompt_id": st.session_state.get("attack_prompt") or None,
         "mode": "adaptive" if st.session_state.get("attack_mode") == "Adaptive" else "single_turn",
+        "use_prior_experience": bool(st.session_state.get("use_prior_experience", True)),
     }
 
 
@@ -312,6 +313,7 @@ def save() -> None:
         "permission_confirmed": bool(state.get("permission")),
         "terms_version": state["config"]["terms"]["version"],
         "canaries": current_canaries(),
+        "description": (state.get("description") or "").strip() or None,
     }
     target_id = loaded_id()
     try:
@@ -372,6 +374,10 @@ def render_form(config: dict, targets: list[dict]) -> None:
     render_picker(targets)
     st.text_input("Display name", key="display_name", placeholder="My agent")
     show_error("name")
+
+    st.text_input("What is this agent for?", key="description", placeholder="e.g. a customs-classification assistant")
+    st.caption("Optional, one line. No sensitive info — it is stored in plain and shown to the attacker.")
+    show_error("description")
 
     method_col, url_col = st.columns([3, 5])
     method_col.selectbox("Method", METHODS, key="method")
@@ -450,6 +456,11 @@ def render_attack(config: dict, families: list[dict]) -> None:
     adaptive = config.get("adaptive") or {}
     st.radio("Mode", ["Single-turn", "Adaptive"], key="attack_mode", horizontal=True)
     is_adaptive = st.session_state.get("attack_mode") == "Adaptive"
+    experience = config.get("experience") or {}
+    st.session_state.setdefault("use_prior_experience", experience.get("use_prior_experience_default", True))
+    st.toggle("Use prior experience", key="use_prior_experience")
+    st.caption("On: the attacker is primed with similar past patterns and this target's memory, as hints. "
+               "Off: a cold run, like before.")
     if is_adaptive:
         if attacker.get("configured"):
             st.caption(f"Adaptive: attacker {attacker.get('model')}, up to {adaptive.get('max_turns')} turns")
@@ -522,6 +533,8 @@ def render_run_result(run: dict | None, judge: dict) -> None:
     if source:
         owasp = run.get("owasp_category")
         st.caption(f"Attacker: {source}" + (f" · {owasp}" if owasp else ""))
+    if run.get("memory_written") is False:  # FR-010: a loud, visible warning that write-back failed
+        st.warning("This run's result was saved, but it could not be written to the experience store.")
 
 
 def _render_conversation(run: dict) -> None:
@@ -581,6 +594,30 @@ def render_runs(config: dict) -> None:
             render_run_result(api_client.get_run(chosen), config.get("judge") or {})
         except api_client.ApiError as error:
             st.error(api_message(error))
+
+
+def render_profile() -> None:
+    """A per-target summary of its memory records, secrets-free (FR-022, FR-023)."""
+    st.subheader("Profile")
+    target_id = loaded_id()
+    if target_id is None:
+        st.caption("Select a saved target to see its profile.")
+        return
+    try:
+        profile = api_client.get_profile(target_id)
+    except api_client.ApiError as error:
+        st.error(api_message(error))
+        return
+    if not profile.get("total_runs"):
+        st.caption("No runs recorded yet.")
+        return
+    st.caption(f"{profile['total_runs']} run(s) recorded")
+    for family_count in profile.get("by_family", []):
+        st.text(f"{family_count['family']}: {family_count['count']}")
+    for verdict_count in profile.get("by_verdict", []):
+        st.text(f"{verdict_count['verdict']}: {verdict_count['count']}")
+    for record in profile.get("recent", []):
+        st.code(record["summary"], language=None, wrap_lines=True)
 
 
 def render_result() -> None:
@@ -645,6 +682,7 @@ def main() -> None:
     run_pending_run()
     render_attack(config, families)
     render_runs(config)
+    render_profile()
     render_result()
     render_targets(targets)
 

@@ -13,9 +13,9 @@ from fastapi.responses import JSONResponse
 
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
                                  ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
-                                 JudgeOut, RunDetail, RunRequest, RunSummary, SaveTargetRequest, TargetDetail,
-                                 TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries, validate_save,
-                                 validate_settings)
+                                 JudgeOut, ProfileOut, RunDetail, RunRequest, RunSummary, SaveTargetRequest,
+                                 TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries,
+                                 validate_save, validate_settings)
 from kestrel.attack.attacker import GOALS, AttackerClient
 from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
 from kestrel.experience.hints import format_hints
@@ -206,6 +206,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             store.delete_target(target_id)
         except TargetNotFound:
             return not_found(target_id)
+        if app.state.experience is not None:  # forget this target's memory too; shared patterns stay (FR-024/25)
+            try:
+                app.state.experience.delete_target_memory(target_id)
+            except Exception:
+                logger.exception("could not delete experience memory for target %s", target_id)
         return Response(status_code=204)
 
     @app.post("/api/runs", status_code=201, response_model=RunDetail)
@@ -283,6 +288,17 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return [run_summary(run) for run in store.list_runs(target_id)]
         except TargetNotFound:
             return not_found(target_id)
+
+    @app.get("/api/targets/{target_id}/profile", response_model=ProfileOut)
+    def target_profile(target_id: int) -> Any:
+        try:
+            store.get_target(target_id)
+        except TargetNotFound:
+            return not_found(target_id)
+        experience = app.state.experience
+        if experience is None:  # store unavailable: an empty profile, not an error
+            return ProfileOut(target_id=target_id, total_runs=0, by_family=[], by_verdict=[], recent=[])
+        return ProfileOut(**experience.profile(target_id))
 
     @app.get("/api/runs/{run_id}", response_model=RunDetail)
     def get_run(run_id: int) -> Any:
