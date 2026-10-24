@@ -121,6 +121,8 @@ def kestrel_api(tmp_path_factory):
     log_path = data / "kestrel_api.log"
     env = {**os.environ, "KESTREL_MODE": "local", "KESTREL_DB_PATH": str(data / "kestrel.db"),
            "KESTREL_KEY_FILE": str(data / "secret.key"), "PYTHONUNBUFFERED": "1",
+           # Isolate the ChromaDB store under the temp dir so the e2e never writes to the repo's data/chroma (feature 004).
+           "KESTREL_CHROMA_PATH": str(data / "chroma"),
            # Keep the adaptive e2e quick and cheap: a low turn cap and time limit (feature 003).
            "KESTREL_ADAPTIVE_MAX_TURNS": "2", "KESTREL_ADAPTIVE_TIME_LIMIT_S": "120"}
     env.pop("KESTREL_SECRET_KEY", None)
