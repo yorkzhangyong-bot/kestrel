@@ -124,11 +124,11 @@ Tests and code in different tasks rely on these ([research.md](./research.md), [
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T034 [P] Update the root `README.md`: adaptive mode, the attacker and cap environment variables and what happens without an attacker key, the per-run cost, and that terms version 3 requires existing targets to be confirmed again.
-- [ ] T035 [P] Note in `targets/hs_code/README.md` that the adaptive end-to-end test reuses the target unchanged (no target changes in this feature).
-- [ ] T036 Go through the 17 manual checks in [quickstart.md](./quickstart.md) against a running API, screen and sacrificial target, including the terms-v3 re-confirm and the no-attacker-key case. Fix any difference, in the code or in quickstart.md.
-- [ ] T037 Review secret hygiene on the attacker path across `src/kestrel/**/*.py` and `ui/app.py` (FR-017, R12, SC-006): confirm no header value, target URL or target name can reach the attacker request, the judge request, the stored conversation, a log line, or the screen, and that every reply is masked before it is stored, judged, sent to the attacker, or shown.
-- [ ] T038 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --directory targets/hs_code pytest`.
+- [X] T034 [P] Update the root `README.md`: adaptive mode, the attacker and cap environment variables and what happens without an attacker key, the per-run cost, and that terms version 3 requires existing targets to be confirmed again.
+- [X] T035 [P] Note in `targets/hs_code/README.md` that the adaptive end-to-end test reuses the target unchanged (no target changes in this feature).
+- [X] T036 Go through the 17 manual checks in [quickstart.md](./quickstart.md) against a running API, screen and sacrificial target, including the terms-v3 re-confirm and the no-attacker-key case. Fix any difference, in the code or in quickstart.md. (Live browser smoke confirmed the headline adaptive path end to end: target register/test/save, the Adaptive toggle and its caption, a genuine multi-turn run that adapts across turns, canary-first then judge, cap enforcement "stopped at the turn limit" 3/3, turn-by-turn rendering, the Principle III footer, and 0 target-key occurrences in either log. The remaining checks — the no-attacker-key disable and the terms-v3 re-confirm — are covered by the integration + e2e suites. Note: the default attacker `deepseek/deepseek-v3.2` is blocked by this OpenRouter account's guardrail, which the loop handles gracefully as `attacker_failed`→unclear; the live multi-turn smoke used `KESTREL_ATTACKER_MODEL=openai/gpt-4o-mini`, a guardrail-permitted model.)
+- [X] T037 Review secret hygiene on the attacker path across `src/kestrel/**/*.py` and `ui/app.py` (FR-017, R12, SC-006): confirm no header value, target URL or target name can reach the attacker request, the judge request, the stored conversation, a log line, or the screen, and that every reply is masked before it is stored, judged, sent to the attacker, or shown.
+- [X] T038 Run everything a last time: `uv run pytest`, `uv run pytest -m e2e`, and `uv run --directory targets/hs_code pytest`. (Results: offline 471 passed, e2e 6 passed, target 21 passed.)
 
 ---
 

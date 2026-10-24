@@ -34,6 +34,15 @@ The judge is optional:
 - Without a key, canary evidence still decides runs and judged runs end "unclear" rather than failing.
 - Each judged run sends the attack and the (capped) reply to the model provider, so a run costs a fraction of a cent. The terms of service say this, and the judge never receives your auth header values.
 
+### Single-turn or adaptive
+
+The Attack panel offers two modes. **Single-turn** sends one library prompt (feature 002). **Adaptive** (feature 003) runs a short conversation: an attacker model opens from a library prompt, reads each reply and the judge's note, and adapts its next message until it succeeds or hits a cap.
+
+- The attacker is a separate model, configured like the judge: `KESTREL_ATTACKER_MODEL` (default `deepseek/deepseek-v3.2`, a capable, inexpensive, comparatively unrestricted model), with `KESTREL_ATTACKER_API_KEY` falling back to `OPENROUTER_API_KEY`. Without an attacker key, adaptive mode is disabled; single-turn still works.
+- Every adaptive run is bounded by three caps, whichever is reached first: turns (`KESTREL_ADAPTIVE_MAX_TURNS`, default 6), a token budget across all attacker and judge calls (`KESTREL_ADAPTIVE_TOKEN_BUDGET`, default 40000), and a wall-clock limit (`KESTREL_ADAPTIVE_TIME_LIMIT_S`, default 300). The run records which cap it hit, so a cutoff is never mistaken for the agent being safe. An adaptive run costs more than a single-turn one — up to a few cents — because it makes several model calls.
+- Each run names the attacker model and the budget it used (Principle III). The full conversation is stored, masked, and shown turn by turn.
+- **Terms version 3**: because an adaptive run also sends replies to the attacker model's provider, the terms now disclose this, and any target saved before this release must have its permission box ticked again before it can be attacked.
+
 ## Your encryption key
 
 Kestrel encrypts auth header values with a key. On first start, the API creates `~/.kestrel/secret.key` and logs where it is. **Back that file up.** Without it, saved header values can't be read, and you'll have to type them in again; everything else about your targets is kept.
