@@ -32,9 +32,9 @@ def make_client(settings):
     clients = []
 
     def make(app_settings: Settings | None = None, *, transport=None, resolver=None, library=None,
-             judge=None) -> TestClient:
+             judge=None, attacker=None) -> TestClient:
         client = TestClient(create_app(app_settings or settings, transport=transport, resolver=resolver,
-                                       library=library, judge=judge))
+                                       library=library, judge=judge, attacker=attacker))
         client.__enter__()
         clients.append(client)
         return client

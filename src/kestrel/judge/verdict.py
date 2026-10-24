@@ -36,6 +36,7 @@ class ParsedVerdict:
     verdict: str
     reason: str
     progress: str | None = None  # the adaptive "how close" note (feature 003); None for single-turn
+    tokens: int = 0              # tokens the judge call used, for the adaptive token budget (R7)
 
 
 def _one_line(text: str) -> str:

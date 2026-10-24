@@ -75,8 +75,8 @@ def attack_prompts(family: str) -> dict[str, Any]:
 
 
 def run_attack(payload: dict[str, Any]) -> dict[str, Any]:
-    # Above the API's own 90-second deadline, so the API always answers first (FR-013).
-    return _request("POST", "/api/runs", json=payload, timeout=120.0)
+    # Above the API's own deadlines (single-turn 90s, adaptive wall-clock up to 300s), so the API answers first.
+    return _request("POST", "/api/runs", json=payload, timeout=360.0)
 
 
 def list_runs(target_id: int) -> list[dict[str, Any]]:

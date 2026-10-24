@@ -35,11 +35,24 @@ class JudgeOut(BaseModel):
     configured: bool  # False when no judge key is set; canary evidence still works (FR-021)
 
 
+class AttackerOut(BaseModel):
+    model: str
+    configured: bool  # False when no attacker key is set; an adaptive run then cannot start (FR-016)
+
+
+class AdaptiveCapsOut(BaseModel):
+    max_turns: int
+    token_budget: int
+    time_limit_s: int
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
     terms: TermsOut
     judge: JudgeOut
+    attacker: AttackerOut
+    adaptive: AdaptiveCapsOut
 
 
 class HeaderIn(BaseModel):
@@ -87,11 +100,24 @@ class RunRequest(BaseModel):
     target_id: int
     family: str
     prompt_id: str | None = None  # None lets Kestrel pick one from the family (FR-007)
+    mode: Literal["single_turn", "adaptive"] = "single_turn"  # adaptive = the multi-turn loop (feature 003)
+
+
+class TurnOut(BaseModel):
+    """One turn of an adaptive run's conversation, masked (feature 003, FR-020)."""
+    position: int
+    attacker_message: str
+    reply_text: str | None
+    reply_truncated: bool
+    judge_verdict: str | None
+    judge_reason: str | None
+    judge_progress: str | None
 
 
 class RunSummary(BaseModel):
     id: int
     target_id: int
+    mode: str
     prompt_id: str
     prompt_title: str
     family: str
@@ -112,6 +138,16 @@ class RunDetail(RunSummary):
     reply_truncated: bool
     reason: str | None
     attacker_source: str
+    # Adaptive runs (feature 003); null/empty for single-turn.
+    attacker_model: str | None = None
+    turn_budget: int | None = None
+    turns_used: int | None = None
+    token_budget: int | None = None
+    tokens_used: int | None = None
+    time_limit_s: int | None = None
+    stopping_condition: str | None = None
+    succeeded_turn: int | None = None
+    turns: list[TurnOut] = Field(default_factory=list)
 
 
 class AttackPromptOut(BaseModel):

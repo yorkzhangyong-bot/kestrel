@@ -5,6 +5,8 @@ never an auth header value, the target URL, or the target name (FR-020).
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import httpx
 
 from kestrel.judge.verdict import RESPONSE_SCHEMA, ParsedVerdict, VerdictParseError, parse_verdict
@@ -88,10 +90,16 @@ class JudgeClient:
         if response.status_code != 200:
             raise JudgeError(f"The judge answered with status {response.status_code}.")
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            body = response.json()
+            content = body["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise JudgeError("The judge's response had an unexpected shape.") from error
         try:
-            return parse_verdict(content)
+            parsed = parse_verdict(content)
         except VerdictParseError as error:
             raise JudgeError(str(error)) from error
+        try:
+            tokens = int((body.get("usage") or {}).get("total_tokens", 0))
+        except (TypeError, ValueError):
+            tokens = 0
+        return replace(parsed, tokens=tokens)

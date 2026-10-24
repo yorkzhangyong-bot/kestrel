@@ -120,7 +120,9 @@ def kestrel_api(tmp_path_factory):
     port = _free_port()
     log_path = data / "kestrel_api.log"
     env = {**os.environ, "KESTREL_MODE": "local", "KESTREL_DB_PATH": str(data / "kestrel.db"),
-           "KESTREL_KEY_FILE": str(data / "secret.key"), "PYTHONUNBUFFERED": "1"}
+           "KESTREL_KEY_FILE": str(data / "secret.key"), "PYTHONUNBUFFERED": "1",
+           # Keep the adaptive e2e quick and cheap: a low turn cap and time limit (feature 003).
+           "KESTREL_ADAPTIVE_MAX_TURNS": "2", "KESTREL_ADAPTIVE_TIME_LIMIT_S": "120"}
     env.pop("KESTREL_SECRET_KEY", None)
     server = _Server("Kestrel API",
                      [sys.executable, "-m", "uvicorn", "--factory", "kestrel.api.main:create_app",

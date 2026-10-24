@@ -280,6 +280,7 @@ def start_run() -> None:
         "target_id": loaded_id(),
         "family": st.session_state.get("attack_family"),
         "prompt_id": st.session_state.get("attack_prompt") or None,
+        "mode": "adaptive" if st.session_state.get("attack_mode") == "Adaptive" else "single_turn",
     }
 
 
@@ -290,7 +291,7 @@ def run_pending_run() -> None:
     # Claim before calling, so a rerun while the API works can't send the attack twice (mirrors run_pending_test).
     st.session_state["pending_run"] = None
     try:
-        with st.spinner("Running the attack… (up to 90 seconds)"):
+        with st.spinner("Running the attack… (an adaptive attack can take a few minutes)"):
             st.session_state["run_result"] = api_client.run_attack(payload)
         st.session_state["runs"] = None  # reload the runs list for this target
     except api_client.ApiError as error:
@@ -444,6 +445,17 @@ def render_attack(config: dict, families: list[dict]) -> None:
     if not families:
         st.caption("The attack library isn't available, so no attacks can be run.")
         return
+    # Single-turn (feature 002) or Adaptive multi-turn (feature 003), reusing the same family/prompt controls.
+    attacker = config.get("attacker") or {}
+    adaptive = config.get("adaptive") or {}
+    st.radio("Mode", ["Single-turn", "Adaptive"], key="attack_mode", horizontal=True)
+    is_adaptive = st.session_state.get("attack_mode") == "Adaptive"
+    if is_adaptive:
+        if attacker.get("configured"):
+            st.caption(f"Adaptive: attacker {attacker.get('model')}, up to {adaptive.get('max_turns')} turns")
+        else:
+            st.caption("No attacker model is configured, so an adaptive attack can't run.")
+
     labels = {f["key"]: f"{f['label']} · {f['owasp_category']} ({f['prompt_count']} prompts)" for f in families}
     st.selectbox("Attack family", list(labels), key="attack_family", format_func=lambda key: labels[key])
 
@@ -459,14 +471,19 @@ def render_attack(config: dict, families: list[dict]) -> None:
         st.code(chosen_prompt["text"], language=None, wrap_lines=True)
 
     running = st.session_state.get("pending_run") is not None
+    adaptive_blocked = is_adaptive and not attacker.get("configured")
     st.button("Run attack", key="run_button", type="primary", on_click=start_run,
-              disabled=running or not have_target)
+              disabled=running or not have_target or adaptive_blocked)
     if not have_target:
         st.caption("Pick a saved target, choose an attack family, and click Run attack.")
 
     if st.session_state.get("run_notice"):
         st.error(st.session_state["run_notice"])
     render_run_result(st.session_state.get("run_result"), judge)
+
+
+STOPPED = {"turn_cap": "stopped at the turn limit", "token_budget": "stopped at the token budget",
+           "time_limit": "stopped at the time limit"}
 
 
 def render_run_result(run: dict | None, judge: dict) -> None:
@@ -477,26 +494,59 @@ def render_run_result(run: dict | None, judge: dict) -> None:
         return
     verdict, by_judge = run["verdict"], run["judge_used"]
     model = run.get("judge_model") or judge.get("model") or "the judge"
+    # For an adaptive run, say how it ended (e.g. stopped at the turn limit) after the verdict.
+    ended = STOPPED.get(run.get("stopping_condition") or "")
+    tail = f" · {ended}" if ended else ""
     if verdict == "succeeded" and run["hard_evidence"]:
-        st.error("Attack succeeded · confirmed by canary")
+        at = f" at turn {run['succeeded_turn']}" if run.get("succeeded_turn") else ""
+        st.error(f"Attack succeeded · confirmed by canary{at}")
     elif verdict == "succeeded":
         st.error(f"Attack succeeded · suspected, judged by {model}")
     elif verdict == "failed":
-        st.success(f"Attack failed · the agent held · judged by {model}")
+        st.success(f"Attack failed · the agent held · judged by {model}{tail}")
     else:
-        st.warning(f"Unclear · judged by {model}" if by_judge else "Unclear")
-    st.code(run["prompt_text"], language=None, wrap_lines=True)
-    if run.get("reply_text"):
-        st.code(run["reply_text"], language=None, wrap_lines=True)
+        st.warning((f"Unclear · judged by {model}" if by_judge else "Unclear") + tail)
+
+    if run.get("mode") == "adaptive" or run.get("turns"):
+        _render_conversation(run)
     else:
-        st.caption("(empty reply)")
-    if run.get("reason"):
-        st.text(run["reason"])
+        st.code(run["prompt_text"], language=None, wrap_lines=True)
+        if run.get("reply_text"):
+            st.code(run["reply_text"], language=None, wrap_lines=True)
+        else:
+            st.caption("(empty reply)")
+        if run.get("reason"):
+            st.text(run["reason"])
     # Name the attacker and the OWASP category the run maps to (Principle III, Principle VI).
     source = run.get("attacker_source")
     if source:
         owasp = run.get("owasp_category")
         st.caption(f"Attacker: {source}" + (f" · {owasp}" if owasp else ""))
+
+
+def _render_conversation(run: dict) -> None:
+    """Show an adaptive run turn by turn, plain text only (FR-023, FR-024)."""
+    for turn in run.get("turns", []):
+        st.caption(f"Turn {turn['position']} · attacker")
+        st.code(turn["attacker_message"], language=None, wrap_lines=True)
+        st.caption("agent")
+        st.code(turn["reply_text"] if turn.get("reply_text") else "(no reply)", language=None, wrap_lines=True)
+        if turn.get("judge_progress"):
+            st.text(turn["judge_progress"])
+    if run.get("reason"):
+        st.text(run["reason"])
+    # Principle III: name the attacker model, the judge, and the budget used.
+    bits = []
+    if run.get("attacker_model"):
+        bits.append(f"attacker {run['attacker_model']}")
+    if run.get("judge_used") and run.get("judge_model"):
+        bits.append(f"judge {run['judge_model']}")
+    if run.get("turns_used") is not None:
+        bits.append(f"{run['turns_used']}/{run.get('turn_budget')} turns")
+    if run.get("tokens_used") is not None:
+        bits.append(f"{run['tokens_used']} tokens")
+    if bits:
+        st.caption(" · ".join(bits))
 
 
 def _evidence(run: dict) -> str:
