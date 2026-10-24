@@ -11,7 +11,7 @@ Only the deltas from features 001–003 are listed. All existing endpoints and e
 
 ## Run: use prior experience + write-back flag (FR-014, FR-010)
 
-- `POST /api/runs` request body gains `use_prior_experience: boolean` (default **`true`**, FR-014). Recorded on the run. For a single-turn run it is recorded but has no retrieval effect (no attacker turn to hint); for an adaptive run it selects warm vs cold.
+- `POST /api/runs` request body gains `use_prior_experience: boolean` (default **`true`**, FR-014). Recorded on the run on both run paths. For a single-turn run the value is stored but has **no behavioural effect** — a single-turn run has no attacker and no hints; the field is recorded only so runs group consistently in the feature-006 A/B harness. For an adaptive run it selects warm vs cold.
 - `RunSummary` / `RunDetail` gain:
   - `use_prior_experience: boolean`
   - `memory_written: boolean | null` — `null` not yet attempted, `true` written, `false` failed (drives the screen's warning, FR-010).
