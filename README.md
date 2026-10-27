@@ -76,3 +76,9 @@ The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code
 - [Feature 002 spec, plan and tasks](specs/002-single-turn-attack/)
 - [Feature 003 spec, plan and tasks](specs/003-adaptive-attack/)
 - [Feature 004 spec, plan and tasks](specs/004-attack-pattern-memory/)
+
+## License
+
+Kestrel is released under the MIT License. See [LICENSE](LICENSE).
+
+**Third-party content**: the built-in attack-prompt library includes prompts from [Agentic Prompt-Injection Boundary Pairs](https://github.com/3nesdeniz/agentic-prompt-injection-boundary-pairs), licensed CC-BY-4.0.
