@@ -70,6 +70,7 @@ The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code
 
 ## More
 
+- [Technical design](docs/technical-design.md)
 - [Quickstart and manual checks](specs/001-register-target/quickstart.md)
 - [Feature 001 spec, plan and tasks](specs/001-register-target/)
 - [Feature 002 spec, plan and tasks](specs/002-single-turn-attack/)
