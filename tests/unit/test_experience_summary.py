@@ -29,3 +29,25 @@ def test_summary_is_sanitised_to_one_bounded_line():
                       turns_used=1, stopping_condition="turn_cap")
     assert "\n" not in s and "\t" not in s and "\x07" not in s
     assert len(s) <= MAX_SUMMARY_CHARS
+
+
+def test_summary_truncates_at_a_word_boundary():
+    long = " ".join(f"token{i:03d}" for i in range(80))  # ~640 chars of whole words
+    s = build_summary([long], family="direct_injection", verdict="failed", hard_evidence=False,
+                      turns_used=2, stopping_condition="turn_cap")
+    assert len(s) <= MAX_SUMMARY_CHARS and s.endswith("…")
+    body = s[:-1]
+    assert long.startswith(body) and long[len(body)] == " "  # cut on a whole word, not mid-word
+
+
+def test_fallback_omits_the_stopping_clause_when_there_is_none():
+    s = build_summary([], family="system_prompt_leak", verdict="failed", hard_evidence=False,
+                      turns_used=1, stopping_condition=None)
+    assert "n/a" not in s and "stopped at" not in s
+    assert "system_prompt_leak" in s and "failed" in s
+
+
+def test_fallback_keeps_the_stopping_clause_when_present():
+    s = build_summary([], family="direct_injection", verdict="unclear", hard_evidence=False,
+                      turns_used=2, stopping_condition="time_limit")
+    assert "stopped at time_limit" in s
