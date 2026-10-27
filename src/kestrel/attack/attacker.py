@@ -6,11 +6,18 @@ run time; this module contains no attack text, only the behavioural goal of each
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import httpx
 
+log = logging.getLogger("kestrel")
+
 MAX_MESSAGE_CHARS = 2_000   # one plain message per turn, cut before sending (FR-009)
+# Completion-token ceiling per attacker call. A reasoning model (e.g. DeepSeek v4) spends completion tokens on
+# reasoning before the message, so a low ceiling can be used up entirely by reasoning and return empty content;
+# this leaves room for reasoning plus a short message. The per-run token budget still bounds the whole run.
+MAX_COMPLETION_TOKENS = 2_000
 DEFAULT_TIMEOUT_S = 30.0
 
 # A neutral, behavioural description of what success looks like for each family — the objective, not a payload.
@@ -71,7 +78,7 @@ class AttackerClient:
                              "content": text[:MAX_MESSAGE_CHARS]})
         if progress:
             messages.append({"role": "user", "content": f"(assessment of the last reply: {progress})"})
-        return {"model": self._model, "max_tokens": 400, "temperature": 0.7, "messages": messages}
+        return {"model": self._model, "max_tokens": MAX_COMPLETION_TOKENS, "temperature": 0.7, "messages": messages}
 
     async def next_message(self, *, conversation: list[tuple[str, str]], family: str,
                            progress: str | None = None, hints: str | None = None,
@@ -84,24 +91,54 @@ class AttackerClient:
 
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
         limit = self._timeout if timeout is None else min(self._timeout, timeout)
+        payload = self._payload(conversation, progress, family, hints)
+        tokens = 0
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=limit) as http:
-                response = await http.post(f"{self._base_url}/chat/completions",
-                                           json=self._payload(conversation, progress, family, hints), headers=headers)
+                # One retry: an empty message is often a reasoning model spending the whole response on reasoning;
+                # a second attempt usually returns content. Both attempts' tokens count toward the run budget.
+                for attempt in (1, 2):
+                    response = await http.post(f"{self._base_url}/chat/completions", json=payload, headers=headers)
+                    if response.status_code != 200:
+                        raise AttackerError(f"The attacker model answered with status {response.status_code}.")
+                    try:
+                        body = response.json()
+                    except ValueError as error:
+                        raise AttackerError("The attacker model's response had an unexpected shape.") from error
+                    tokens += _usage_tokens(body)
+                    message = _message_content(body)
+                    if message is None:
+                        raise AttackerError("The attacker model's response had an unexpected shape.")
+                    if message.strip():
+                        return AttackerReply(message=message.strip()[:MAX_MESSAGE_CHARS], tokens=tokens)
+                    self._log_empty_response(body, attempt)
         except httpx.HTTPError as error:
             raise AttackerError(f"The attacker model could not be reached: {type(error).__name__}.") from error
+        # Both attempts returned empty content; stop the run the same way as before (FR-016).
+        raise AttackerError("The attacker model returned an empty message.")
 
-        if response.status_code != 200:
-            raise AttackerError(f"The attacker model answered with status {response.status_code}.")
-        try:
-            body = response.json()
-            message = body["choices"][0]["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise AttackerError("The attacker model's response had an unexpected shape.") from error
-        if not isinstance(message, str) or not message.strip():
-            raise AttackerError("The attacker model returned an empty message.")
-        tokens = _usage_tokens(body)
-        return AttackerReply(message=message.strip()[:MAX_MESSAGE_CHARS], tokens=tokens)
+    def _log_empty_response(self, body: dict, attempt: int) -> None:
+        """Record why the content was empty — reasoning exhaustion vs a refusal — without logging any content."""
+        choice = (body.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        usage = body.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
+        log.warning("attacker %s returned empty content (attempt %d/2): finish_reason=%s completion_tokens=%s "
+                    "reasoning_tokens=%s total_tokens=%s reasoning_chars=%s", self._model, attempt,
+                    choice.get("finish_reason"), usage.get("completion_tokens"), details.get("reasoning_tokens"),
+                    usage.get("total_tokens"), len(reasoning) if isinstance(reasoning, str) else 0)
+
+
+def _message_content(body: dict) -> str | None:
+    """The assistant message text, "" when it is empty/missing (an empty reasoning turn), or None when the
+    response has no usable shape at all (no choices/message)."""
+    try:
+        message = body["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
 
 
 def _usage_tokens(body: dict) -> int:
