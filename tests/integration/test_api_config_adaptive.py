@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from kestrel.api.main import load_terms
+from kestrel.settings import DEFAULT_ATTACKER_MODEL
 from tests.support import StubAttacker, StubJudge, fixture_library
 
 SECRET = "s3cret-header-value"
@@ -27,9 +28,10 @@ def save_target(api):
 
 
 def test_config_reports_the_attacker_and_the_caps(make_client):
-    api = make_client(library=fixture_library(), judge=StubJudge(), attacker=StubAttacker(model="deepseek/deepseek-v3.2"))
+    # /api/config reports the attacker model from settings (the default), independent of the stub instance.
+    api = make_client(library=fixture_library(), judge=StubJudge(), attacker=StubAttacker())
     config = api.get("/api/config").json()
-    assert config["attacker"] == {"model": "deepseek/deepseek-v3.2", "configured": True}
+    assert config["attacker"] == {"model": DEFAULT_ATTACKER_MODEL, "configured": True}
     assert config["adaptive"] == {"max_turns": 6, "token_budget": 40000, "time_limit_s": 300}
     assert config["terms"]["version"] == "3"
 

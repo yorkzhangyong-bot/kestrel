@@ -39,6 +39,7 @@ def api(monkeypatch):
 
     monkeypatch.setattr(api_client, "get_config", lambda: CONFIG)
     monkeypatch.setattr(api_client, "list_targets", lambda: [SUMMARY])
+    monkeypatch.setattr(api_client, "get_profile", lambda target_id: {"target_id": 1, "total_runs": 0, "by_family": [], "by_verdict": [], "recent": []})
     monkeypatch.setattr(api_client, "get_target", lambda target_id: DETAIL)
     monkeypatch.setattr(api_client, "attack_families", lambda: {"library_version": "1.0.0", "families": FAMILIES})
     monkeypatch.setattr(api_client, "attack_prompts", lambda family: {"prompts": PROMPTS})

@@ -89,7 +89,7 @@ def tables(path):
 def test_a_fresh_database_is_created_at_version_3(tmp_path, vault):
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "3"
+    assert version(path) == SCHEMA_VERSION  # current version (bumped past 3 in later features)
     assert "run_turns" in tables(path)
     assert {"mode", "attacker_model", "turn_budget", "token_budget", "stopping_condition"} <= columns(path, "runs")
 
@@ -97,7 +97,7 @@ def test_a_fresh_database_is_created_at_version_3(tmp_path, vault):
 def test_a_v2_database_gains_the_columns_and_run_turns_and_moves_to_3(v2_db, vault):
     assert version(v2_db) == "2"
     TargetStore(v2_db, vault)
-    assert version(v2_db) == "3"
+    assert version(v2_db) == SCHEMA_VERSION
     assert "run_turns" in tables(v2_db)
     assert {"mode", "attacker_model", "turn_budget", "turns_used", "token_budget", "tokens_used",
             "time_limit_s", "stopping_condition", "succeeded_turn"} <= columns(v2_db, "runs")
@@ -113,7 +113,7 @@ def test_the_existing_run_survives_and_reads_as_single_turn(v2_db, vault):
 def test_opening_twice_is_harmless(v2_db, vault):
     TargetStore(v2_db, vault)
     TargetStore(v2_db, vault)
-    assert version(v2_db) == "3"
+    assert version(v2_db) == SCHEMA_VERSION
 
 
 def test_a_newer_version_is_refused(tmp_path, vault):

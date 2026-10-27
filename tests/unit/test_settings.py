@@ -84,7 +84,7 @@ def test_blank_judge_values_count_as_unset():
 
 def test_attacker_model_and_base_url_have_defaults():
     s = load_settings({})
-    assert s.attacker_model == DEFAULT_ATTACKER_MODEL == "deepseek/deepseek-v3.2"
+    assert s.attacker_model == DEFAULT_ATTACKER_MODEL == "deepseek/deepseek-v4.1-flash"
     assert s.attacker_base_url == DEFAULT_ATTACKER_BASE_URL
 
 

@@ -12,12 +12,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
-                                 ConnectionTestRequest, ConnectionTestResult, FormDefaults, HeaderOut, JudgeOut,
-                                 RunDetail, RunRequest, RunSummary, SaveTargetRequest, TargetDetail, TargetSummary,
-                                 TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries, validate_save,
-                                 validate_settings)
-from kestrel.attack.attacker import AttackerClient
+                                 ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
+                                 JudgeOut, ProfileOut, RunDetail, RunRequest, RunSummary, SaveTargetRequest,
+                                 TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries,
+                                 validate_save, validate_settings)
+from kestrel.attack.attacker import GOALS, AttackerClient
 from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
+from kestrel.experience.hints import format_hints
+from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
+from kestrel.experience.writeback import write_back
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import ResolvedSettings, refused, run_test
@@ -37,8 +40,9 @@ NAME_TAKEN = "Another saved target already has this name."
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
                resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
-               attacker: Any = None) -> FastAPI:
-    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge and an attacker."""
+               attacker: Any = None, experience: Any = None) -> FastAPI:
+    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker
+    and an experience store (a stub-backed one keeps tests offline)."""
     settings = settings or load_settings()
     logger = _configure_logging()
     key, _source = load_or_create_key(settings, logger)
@@ -61,6 +65,23 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                  base_url=settings.judge_base_url)
     attacker = attacker or AttackerClient(model=settings.attacker_model, api_key=settings.attacker_api_key,
                                           base_url=settings.attacker_base_url)
+    if experience is None:  # production: the local ChromaDB store with its default embeddings (feature 004)
+        try:
+            experience = ExperienceStore(settings.chroma_path)
+            experience.self_check()  # surface a bad store (mismatched EF, failed model download) clearly, now
+        except Exception as error:
+            reason = error.args[0] if isinstance(error, ExperienceStoreError) else describe_store_error(error)
+            logger.error("The experience store at %s is unavailable, so runs will record loudly as not written "
+                         "back (Principle V): %s", settings.chroma_path, reason)
+            experience = None
+    if experience is not None and library is not None:
+        try:
+            seeded = experience.seed_patterns(library)  # idempotent (FR-004)
+            logger.info("Seeded %d attack pattern(s) into the experience store.", seeded)
+        except Exception as error:
+            logger.error("The experience store could not be seeded, so runs will record loudly as not written "
+                         "back: %s", describe_store_error(error))
+            experience = None
 
     app = FastAPI(title="Kestrel API", version="0.1.0")
     app.state.settings = settings
@@ -72,6 +93,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.library = library
     app.state.judge = judge
     app.state.attacker = attacker
+    app.state.experience = experience
     app.add_exception_handler(RequestValidationError, _validation_error)
 
     @app.get("/api/config", response_model=ConfigOut)
@@ -82,7 +104,10 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                               configured=app.state.attacker.configured),
                          adaptive=AdaptiveCapsOut(max_turns=settings.adaptive_max_turns,
                                                   token_budget=settings.adaptive_token_budget,
-                                                  time_limit_s=settings.adaptive_time_limit_s))
+                                                  time_limit_s=settings.adaptive_time_limit_s),
+                         experience=ExperienceOut(pattern_k=settings.experience_pattern_k,
+                                                  memory_cap=settings.experience_memory_cap,
+                                                  use_prior_experience_default=True))
 
     @app.post("/api/connection-tests", response_model=ConnectionTestResult)
     async def connection_test(body: ConnectionTestRequest, request: Request) -> Any:
@@ -134,7 +159,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         try:
             target = store.create_target(name=body.name.strip(), url=resolved.url, method=resolved.method,
                                          headers=list(resolved.headers), body_template=resolved.body_template,
-                                         response_path=resolved.response_path, terms_version=terms.version)
+                                         response_path=resolved.response_path, terms_version=terms.version,
+                                         description=_clean_description(body.description))
             if body.canaries:
                 store.set_canaries(target.id, body.canaries)
         except NameTaken:
@@ -172,7 +198,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             target = store.update_target(target_id, name=body.name.strip(), url=resolved.url, method=resolved.method,
                                          headers=[(h.name.strip(), h.value) for h in body.settings.headers],
                                          body_template=resolved.body_template, response_path=resolved.response_path,
-                                         terms_version=terms.version)
+                                         terms_version=terms.version, description=_clean_description(body.description))
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
         if body.canaries is not None:  # None keeps the stored canaries; [] clears them (contracts/kestrel-api.md)
@@ -185,6 +211,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             store.delete_target(target_id)
         except TargetNotFound:
             return not_found(target_id)
+        if app.state.experience is not None:  # forget this target's memory too; shared patterns stay (FR-024/25)
+            try:
+                app.state.experience.delete_target_memory(target_id)
+            except Exception:
+                logger.exception("could not delete experience memory for target %s", target_id)
         return Response(status_code=204)
 
     @app.post("/api/runs", status_code=201, response_model=RunDetail)
@@ -218,6 +249,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
+        experience = request.app.state.experience
+
+        def hint_provider(conversation: list[tuple[str, str]]) -> str | None:
+            """The attacker's background each turn: purpose always; patterns + memory only on a warm run (FR-021)."""
+            purpose = target.description
+            if not body.use_prior_experience or experience is None:
+                return format_hints(purpose=purpose, patterns=[], memory=[])  # cold: purpose only (FR-015)
+            memory = experience.retrieve_memory(target_id=target.id, family=prompt.family,
+                                                 cap=settings.experience_memory_cap)
+            query = f"{GOALS.get(prompt.family, '')} {_recent_conversation(conversation)}".strip()
+            patterns = experience.retrieve_patterns(family=prompt.family, query_text=query,
+                                                    k=settings.experience_pattern_k)
+            return format_hints(purpose=purpose, patterns=patterns, memory=memory)
+
         try:
             if body.mode == "adaptive":
                 run = await execute_adaptive_run(
@@ -226,15 +271,21 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                     attacker=request.app.state.attacker, judge=request.app.state.judge,
                     max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                     time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
-                    resolver=request.app.state.resolver)
-                return run_detail(run, store.list_turns(run.id))
-            run = await execute_run(store, target_id=target.id, prompt=prompt,
-                                    attacker_source=library.attacker_source, canaries=store.list_canaries(target.id),
-                                    resolved=resolved, mode=settings.mode, judge=request.app.state.judge,
-                                    transport=request.app.state.transport, resolver=request.app.state.resolver)
+                    resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
+                    hint_provider=hint_provider)
+            else:
+                run = await execute_run(store, target_id=target.id, prompt=prompt,
+                                        attacker_source=library.attacker_source,
+                                        canaries=store.list_canaries(target.id), resolved=resolved,
+                                        mode=settings.mode, judge=request.app.state.judge,
+                                        transport=request.app.state.transport, resolver=request.app.state.resolver,
+                                        use_prior_experience=body.use_prior_experience)
         except RunInProgress:
             return api_error(409, "run_in_progress", "A run against this target is already in progress.")
-        return run_detail(run)
+        # Write back to the experience store after every run; a failure is loud, never discards the run (FR-006/10).
+        turns = store.list_turns(run.id)
+        write_back(request.app.state.experience, store, run, turns)
+        return run_detail(store.get_run(run.id), turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
     def list_runs(target_id: int) -> Any:
@@ -242,6 +293,17 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return [run_summary(run) for run in store.list_runs(target_id)]
         except TargetNotFound:
             return not_found(target_id)
+
+    @app.get("/api/targets/{target_id}/profile", response_model=ProfileOut)
+    def target_profile(target_id: int) -> Any:
+        try:
+            store.get_target(target_id)
+        except TargetNotFound:
+            return not_found(target_id)
+        experience = app.state.experience
+        if experience is None:  # store unavailable: an empty profile, not an error
+            return ProfileOut(target_id=target_id, total_runs=0, by_family=[], by_verdict=[], recent=[])
+        return ProfileOut(**experience.profile(target_id))
 
     @app.get("/api/runs/{run_id}", response_model=RunDetail)
     def get_run(run_id: int) -> Any:
@@ -308,7 +370,8 @@ def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None
 
 def summary(target: Target) -> TargetSummary:
     return TargetSummary(id=target.id, name=target.name, url=target.url, method=target.method,
-                         permission_confirmed_at=target.permission_confirmed_at, terms_version=target.terms_version)
+                         permission_confirmed_at=target.permission_confirmed_at, terms_version=target.terms_version,
+                         description=target.description)
 
 
 def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
@@ -318,12 +381,24 @@ def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
                         canaries=canaries if canaries is not None else [])
 
 
+def _clean_description(description: str | None) -> str | None:
+    """Trim the optional purpose description; an empty one is stored as nothing (FR-020)."""
+    cleaned = (description or "").strip()
+    return cleaned or None
+
+
+def _recent_conversation(conversation: list[tuple[str, str]], turns: int = 2) -> str:
+    """The text of the last `turns` turns (up to 2*turns messages), for the pattern-retrieval query (U1)."""
+    return " ".join(text for _, text in conversation[-2 * turns:])
+
+
 def run_summary(run: Run) -> RunSummary:
     return RunSummary(id=run.id, target_id=run.target_id, mode=run.mode, prompt_id=run.prompt_id,
                       prompt_title=run.prompt_title, family=run.family, owasp_category=run.owasp_category,
                       verdict=run.verdict, hard_evidence=run.hard_evidence, judge_used=run.judge_used,
                       judge_model=run.judge_model, failure_step=run.failure_step, started_at=run.started_at,
-                      finished_at=run.finished_at)
+                      finished_at=run.finished_at, memory_written=run.memory_written,
+                      use_prior_experience=run.use_prior_experience)
 
 
 def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:

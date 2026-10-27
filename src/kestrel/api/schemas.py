@@ -46,6 +46,12 @@ class AdaptiveCapsOut(BaseModel):
     time_limit_s: int
 
 
+class ExperienceOut(BaseModel):
+    pattern_k: int
+    memory_cap: int
+    use_prior_experience_default: bool  # the screen defaults the toggle to this (feature 004, FR-014)
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -53,6 +59,7 @@ class ConfigOut(BaseModel):
     judge: JudgeOut
     attacker: AttackerOut
     adaptive: AdaptiveCapsOut
+    experience: ExperienceOut
 
 
 class HeaderIn(BaseModel):
@@ -94,6 +101,7 @@ class SaveTargetRequest(BaseModel):
     terms_version: str = ""
     # None means "not provided" (on PUT, keep the stored canaries); [] clears them (contracts/kestrel-api.md).
     canaries: list[str] | None = None
+    description: str | None = None  # feature 004: optional one-line purpose, non-secret (FR-020)
 
 
 class RunRequest(BaseModel):
@@ -101,6 +109,7 @@ class RunRequest(BaseModel):
     family: str
     prompt_id: str | None = None  # None lets Kestrel pick one from the family (FR-007)
     mode: Literal["single_turn", "adaptive"] = "single_turn"  # adaptive = the multi-turn loop (feature 003)
+    use_prior_experience: bool = True  # feature 004: warm (default) retrieves patterns/memory; cold is feature 003
 
 
 class TurnOut(BaseModel):
@@ -129,6 +138,8 @@ class RunSummary(BaseModel):
     failure_step: str | None
     started_at: str
     finished_at: str | None
+    memory_written: bool | None = None  # feature 004: null not attempted, false failed (warning), true written
+    use_prior_experience: bool = True   # feature 004: warm or cold, recorded on the run (FR-014)
 
 
 class RunDetail(RunSummary):
@@ -180,6 +191,7 @@ class TargetSummary(BaseModel):
     method: str
     permission_confirmed_at: str
     terms_version: str
+    description: str | None = None  # feature 004 (FR-020)
 
 
 class TargetDetail(TargetSummary):
@@ -187,6 +199,32 @@ class TargetDetail(TargetSummary):
     response_path: str
     headers: list[HeaderOut]
     canaries: list[str]
+
+
+class FamilyCount(BaseModel):
+    family: str
+    count: int
+
+
+class VerdictCount(BaseModel):
+    verdict: str
+    count: int
+
+
+class RecentMemory(BaseModel):
+    summary: str
+    family: str
+    verdict: str
+    created_at: str
+
+
+class ProfileOut(BaseModel):
+    """A per-target summary from its memory records — summaries and non-secret metadata only (FR-023)."""
+    target_id: int
+    total_runs: int
+    by_family: list[FamilyCount]
+    by_verdict: list[VerdictCount]
+    recent: list[RecentMemory]
 
 
 def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[str, str]]:
@@ -200,6 +238,8 @@ def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[s
     if request.terms_version != terms_version:
         errors.append({"field": "terms_version",
                        "message": "The terms of service have changed; read them and tick the box again."})
+    if request.description is not None and len(request.description.strip()) > 200:
+        errors.append({"field": "description", "message": "Keep the description to 200 characters or fewer."})
     return errors
 
 

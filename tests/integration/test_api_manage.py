@@ -129,7 +129,8 @@ def test_an_unknown_id_is_404_everywhere(api):
 def test_key_loss_makes_headers_unreadable_until_they_are_re_entered(make_client, settings, recorder, tmp_path,
                                                                       all_logs):
     target = saved_target(make_client(transport=recorder.transport))
-    other_key = Settings(mode="local", db_path=settings.db_path, key_file=tmp_path / "other.key", secret_key=None)
+    other_key = Settings(mode="local", db_path=settings.db_path, key_file=tmp_path / "other.key", secret_key=None,
+                         chroma_path=settings.chroma_path)  # reuse the tmp store; never the real data/chroma
     client = make_client(other_key, transport=recorder.transport)
 
     assert "doesn't match" in all_logs()

@@ -2,7 +2,7 @@
 
 Kestrel is a hosted red-teaming platform for tool-using AI agents. A user registers an agent endpoint (a URL plus optional headers), Kestrel runs adaptive attacks against it, judges the outcomes with hard evidence where possible, and produces a report mapped to the OWASP LLM Top 10 with a risk score. It's built for people who made an agent with Cursor, Claude Code or Lovable and haven't done any security testing.
 
-**Status**: features 001–003 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. The ChromaDB attack-pattern store and per-target memory (004), the OWASP report with risk score (005) and the A/B harness (006) come next. The project's rules are in the [constitution](.specify/memory/constitution.md).
+**Status**: features 001–004 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. Kestrel now learns from every run: a local ChromaDB store keeps attack patterns and per-target memory, and a warm run primes the attacker with what worked before. The OWASP report with risk score (005) and the A/B harness (006) come next. The project's rules are in the [constitution](.specify/memory/constitution.md).
 
 > The built-in attack-prompt library (`src/kestrel/attacks/data/library.json`) is not yet populated; until it is, the attack routes report that no library is available and the end-to-end attack tests skip. See `specs/002-single-turn-attack/tasks.md` (T013).
 
@@ -38,10 +38,19 @@ The judge is optional:
 
 The Attack panel offers two modes. **Single-turn** sends one library prompt (feature 002). **Adaptive** (feature 003) runs a short conversation: an attacker model opens from a library prompt, reads each reply and the judge's note, and adapts its next message until it succeeds or hits a cap.
 
-- The attacker is a separate model, configured like the judge: `KESTREL_ATTACKER_MODEL` (default `deepseek/deepseek-v3.2`, a capable, inexpensive, comparatively unrestricted model), with `KESTREL_ATTACKER_API_KEY` falling back to `OPENROUTER_API_KEY`. Without an attacker key, adaptive mode is disabled; single-turn still works.
+- The attacker is a separate model, configured like the judge: `KESTREL_ATTACKER_MODEL` (default `deepseek/deepseek-v4.1-flash`, a current, inexpensive, comparatively unrestricted DeepSeek model), with `KESTREL_ATTACKER_API_KEY` falling back to `OPENROUTER_API_KEY`. Without an attacker key, adaptive mode is disabled; single-turn still works. If an adaptive run reports the attacker answered with status 404, your OpenRouter account likely has a guardrail blocking that model — allow it, or point `KESTREL_ATTACKER_MODEL` at a model your account permits.
 - Every adaptive run is bounded by three caps, whichever is reached first: turns (`KESTREL_ADAPTIVE_MAX_TURNS`, default 6), a token budget across all attacker and judge calls (`KESTREL_ADAPTIVE_TOKEN_BUDGET`, default 40000), and a wall-clock limit (`KESTREL_ADAPTIVE_TIME_LIMIT_S`, default 300). The run records which cap it hit, so a cutoff is never mistaken for the agent being safe. An adaptive run costs more than a single-turn one — up to a few cents — because it makes several model calls.
 - Each run names the attacker model and the budget it used (Principle III). The full conversation is stored, masked, and shown turn by turn.
 - **Terms version 3**: because an adaptive run also sends replies to the attacker model's provider, the terms now disclose this, and any target saved before this release must have its permission box ticked again before it can be attacked.
+
+### Learning from every run
+
+Every finished run is recorded in a local ChromaDB store next to the database (`data/chroma/`), so Kestrel stops starting from zero (feature 004):
+
+- After each run Kestrel writes one **memory** record for that target — a one-line summary and safe metadata, never the reply text, the URL, or an auth value. A successful attack also becomes a shared, anonymised **pattern**. The attack library is seeded into the store at start-up.
+- The Attack panel has a **Use prior experience** toggle (on by default). A warm run retrieves patterns similar to the current family, plus this target's own memory, and gives them to the attacker as hints; a cold run behaves exactly like feature 003. You can also give a target a one-line **purpose description** (no sensitive info) to orient the attacker from the first turn.
+- A per-target **Profile** summarises what Kestrel has learned. Deleting a target also deletes its memory; the shared patterns stay.
+- Tune it with `KESTREL_CHROMA_PATH` (default `data/chroma`), `KESTREL_EXPERIENCE_PATTERN_K` (default 5) and `KESTREL_EXPERIENCE_MEMORY_CAP` (default 10). Embeddings run locally through ChromaDB's built-in model — no embedding API, no cost.
 
 ## Your encryption key
 
@@ -57,7 +66,7 @@ uv run pytest -m e2e             # end-to-end tests against the sacrificial HS-c
 uv run --directory targets/hs_code pytest   # the target's own smoke tests
 ```
 
-The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code target](targets/hs_code/README.md), the judge (feature 002) and the attacker model (feature 003) all make real model calls through OpenRouter. A run costs a fraction of a cent. Without the key, the tests are skipped.
+The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code target](targets/hs_code/README.md), the judge (feature 002) and the attacker model (feature 003) all make real model calls through OpenRouter. The first end-to-end run also downloads ChromaDB's default local embedding model (~80 MB) once, so it needs network that one time; afterwards it is cached and the offline `uv run pytest` never downloads it. A run costs a fraction of a cent. Without the key, the tests are skipped.
 
 ## More
 
@@ -65,3 +74,4 @@ The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code
 - [Feature 001 spec, plan and tasks](specs/001-register-target/)
 - [Feature 002 spec, plan and tasks](specs/002-single-turn-attack/)
 - [Feature 003 spec, plan and tasks](specs/003-adaptive-attack/)
+- [Feature 004 spec, plan and tasks](specs/004-attack-pattern-memory/)

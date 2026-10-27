@@ -70,13 +70,18 @@ def _format(conversation: Sequence[tuple[str, str]]) -> str:
 async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: AttackPrompt, attacker_source: str,
                        canaries: list[str], resolved: ResolvedSettings, attacker: _Attacker, judge: _Judge,
                        sender: Sender = run_test, mode: str = "local", transport=None, resolver=default_resolver,
-                       max_turns: int, token_budget: int, time_limit_s: float, clock: Callable[[], float] = time.monotonic) -> Run:
-    """Claim an adaptive run, drive the loop to an outcome, finish and return it. May raise RunInProgress (409)."""
+                       max_turns: int, token_budget: int, time_limit_s: float,
+                       use_prior_experience: bool = True, hint_provider: Callable[[list], str | None] | None = None,
+                       clock: Callable[[], float] = time.monotonic) -> Run:
+    """Claim an adaptive run, drive the loop to an outcome, finish and return it. May raise RunInProgress (409).
+
+    `hint_provider(conversation)` (feature 004) returns the attacker's background block each turn, or None."""
     run_id = store.claim_run(target_id, prompt_id=seed_prompt.id, prompt_title=seed_prompt.title,
                              prompt_text=seed_prompt.text, family=seed_prompt.family,
                              owasp_category=seed_prompt.owasp_category, attacker_source=attacker_source,
                              mode="adaptive", attacker_model=attacker.model, turn_budget=max_turns,
-                             token_budget=token_budget, time_limit_s=int(time_limit_s))
+                             token_budget=token_budget, time_limit_s=int(time_limit_s),
+                             use_prior_experience=use_prior_experience)
     deadline = clock() + time_limit_s
     secrets = [value for _, value in resolved.headers]
 
@@ -87,9 +92,15 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
         turn = state["turns_used"] + 1
         if turn == 1:
             return {"pending_message": mask_values(seed_prompt.text, secrets)}
+        hints = None
+        if hint_provider is not None:
+            try:
+                hints = hint_provider(state["conversation"])   # best-effort; a retrieval failure never fails the run
+            except Exception:
+                log.exception("retrieving experience hints failed; continuing without them for run %s", run_id)
         try:
             reply = await attacker.next_message(conversation=state["conversation"], family=seed_prompt.family,
-                                                progress=state["last_progress"],
+                                                progress=state["last_progress"], hints=hints,
                                                 timeout=max(0.1, min(ATTACKER_LIMIT_S, remaining())))
         except AttackerError as error:
             return {"outcome": {"verdict": "unclear", "hard_evidence": False, "reason": str(error),

@@ -13,13 +13,19 @@ DEFAULT_KEY_FILE = "~/.kestrel/secret.key"
 # The judge that decides a run when no canary matched (research R1, contracts/judge.md).
 DEFAULT_JUDGE_MODEL = "google/gemini-3.8-flash"
 DEFAULT_JUDGE_BASE_URL = "https://openrouter.ai/api/v1"
-# The attacker that drives an adaptive run (feature 003, research R1).
-DEFAULT_ATTACKER_MODEL = "deepseek/deepseek-v3.2"
+# The attacker that drives an adaptive run (feature 003): a current DeepSeek chat model via OpenRouter,
+# capable, inexpensive and comparatively unrestricted. (The older deepseek-v3.2 slug is now commonly blocked
+# by OpenRouter account guardrails; the v4 line is the current, permitted equivalent.)
+DEFAULT_ATTACKER_MODEL = "deepseek/deepseek-v4.1-flash"
 DEFAULT_ATTACKER_BASE_URL = "https://openrouter.ai/api/v1"
 # Hard caps on an adaptive run (Principle VIII; feature 003, research R3).
 DEFAULT_ADAPTIVE_MAX_TURNS = 6
 DEFAULT_ADAPTIVE_TOKEN_BUDGET = 40000
 DEFAULT_ADAPTIVE_TIME_LIMIT_S = 300
+# The experience store (feature 004): local ChromaDB next to the SQLite file, and retrieval bounds (research R12).
+DEFAULT_CHROMA_PATH = Path("data") / "chroma"
+DEFAULT_EXPERIENCE_PATTERN_K = 5
+DEFAULT_EXPERIENCE_MEMORY_CAP = 10
 
 Mode = Literal["local", "hosted"]
 
@@ -43,6 +49,9 @@ class Settings:
     adaptive_max_turns: int = DEFAULT_ADAPTIVE_MAX_TURNS
     adaptive_token_budget: int = DEFAULT_ADAPTIVE_TOKEN_BUDGET
     adaptive_time_limit_s: int = DEFAULT_ADAPTIVE_TIME_LIMIT_S
+    chroma_path: Path = REPO_ROOT / DEFAULT_CHROMA_PATH
+    experience_pattern_k: int = DEFAULT_EXPERIENCE_PATTERN_K
+    experience_memory_cap: int = DEFAULT_EXPERIENCE_MEMORY_CAP
 
     @property
     def judge_configured(self) -> bool:
@@ -69,6 +78,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     db_path = Path(env.get("KESTREL_DB_PATH") or DEFAULT_DB_PATH)
     if not db_path.is_absolute():
         db_path = REPO_ROOT / db_path
+
+    chroma_path = Path(env.get("KESTREL_CHROMA_PATH") or DEFAULT_CHROMA_PATH)
+    if not chroma_path.is_absolute():
+        chroma_path = REPO_ROOT / chroma_path
 
     key_file = Path(env.get("KESTREL_KEY_FILE") or DEFAULT_KEY_FILE).expanduser()
 
@@ -102,4 +115,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     attacker_api_key=attacker_api_key,
                     adaptive_max_turns=positive_int("KESTREL_ADAPTIVE_MAX_TURNS", DEFAULT_ADAPTIVE_MAX_TURNS),
                     adaptive_token_budget=positive_int("KESTREL_ADAPTIVE_TOKEN_BUDGET", DEFAULT_ADAPTIVE_TOKEN_BUDGET),
-                    adaptive_time_limit_s=positive_int("KESTREL_ADAPTIVE_TIME_LIMIT_S", DEFAULT_ADAPTIVE_TIME_LIMIT_S))
+                    adaptive_time_limit_s=positive_int("KESTREL_ADAPTIVE_TIME_LIMIT_S", DEFAULT_ADAPTIVE_TIME_LIMIT_S),
+                    chroma_path=chroma_path,
+                    experience_pattern_k=positive_int("KESTREL_EXPERIENCE_PATTERN_K", DEFAULT_EXPERIENCE_PATTERN_K),
+                    experience_memory_cap=positive_int("KESTREL_EXPERIENCE_MEMORY_CAP", DEFAULT_EXPERIENCE_MEMORY_CAP))

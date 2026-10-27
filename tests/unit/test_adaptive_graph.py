@@ -41,8 +41,8 @@ class StubAttacker:
         self._error, self._tokens = error, tokens
         self.seen = []
 
-    async def next_message(self, *, conversation, family, progress=None, timeout=None):
-        self.seen.append({"conversation": conversation, "progress": progress, "timeout": timeout})
+    async def next_message(self, *, conversation, family, progress=None, hints=None, timeout=None):
+        self.seen.append({"conversation": conversation, "progress": progress, "hints": hints, "timeout": timeout})
         if self._error is not None:
             raise self._error
         return AttackerReply(message=f"<attacker turn {len(conversation)//2 + 1}>", tokens=self._tokens)

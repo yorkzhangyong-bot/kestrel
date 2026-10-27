@@ -5,6 +5,7 @@ Async calls are driven through asyncio.run, matching tests/unit/test_judge_clien
 """
 import asyncio
 import json
+import logging
 
 import httpx
 import pytest
@@ -100,6 +101,47 @@ def test_a_non_200_becomes_attacker_error():
 def test_an_empty_message_becomes_attacker_error():
     with pytest.raises(AttackerError):
         ask(client(returns("   ")))
+
+
+def _empty(reasoning_tokens=400, total=400):
+    """A reasoning model's response that spent the whole budget on reasoning: empty content, finish_reason length."""
+    return {"choices": [{"message": {"content": "", "reasoning": "r" * 40}, "finish_reason": "length"}],
+            "usage": {"total_tokens": total, "completion_tokens": total,
+                      "completion_tokens_details": {"reasoning_tokens": reasoning_tokens}}}
+
+
+def test_it_retries_once_on_an_empty_message_then_succeeds():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(200, json=_empty(total=400))                       # first: empty (reasoning only)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "<recovered move>"}}],
+                                         "usage": {"total_tokens": 120}})             # retry: real content
+    reply = asyncio.run(client(handler).next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    assert reply.message == "<recovered move>"
+    assert len(calls) == 2                        # tried once, retried once
+    assert reply.tokens == 520                    # both attempts count toward the run budget (400 + 120)
+
+
+def test_it_stops_after_a_second_empty_message():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json=_empty())
+    with pytest.raises(AttackerError, match="empty message"):
+        asyncio.run(client(handler).next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    assert len(calls) == 2                        # exactly one retry, then stop
+
+
+def test_an_empty_message_is_logged_with_diagnostics(caplog):
+    with caplog.at_level(logging.WARNING, logger="kestrel"):
+        with pytest.raises(AttackerError):
+            asyncio.run(client(lambda r: httpx.Response(200, json=_empty(reasoning_tokens=400, total=400)))
+                        .next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    assert "finish_reason=length" in caplog.text and "reasoning_tokens=400" in caplog.text
 
 
 def test_the_timeout_passed_in_is_honoured():
