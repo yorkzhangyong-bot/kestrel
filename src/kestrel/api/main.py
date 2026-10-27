@@ -19,7 +19,7 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
 from kestrel.attack.attacker import GOALS, AttackerClient
 from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
 from kestrel.experience.hints import format_hints
-from kestrel.experience.store import ExperienceStore
+from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
 from kestrel.experience.writeback import write_back
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
@@ -68,15 +68,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     if experience is None:  # production: the local ChromaDB store with its default embeddings (feature 004)
         try:
             experience = ExperienceStore(settings.chroma_path)
-        except Exception:
-            logger.exception("The experience store could not be opened; runs will record loudly as not written back.")
+            experience.self_check()  # surface a bad store (mismatched EF, failed model download) clearly, now
+        except Exception as error:
+            reason = error.args[0] if isinstance(error, ExperienceStoreError) else describe_store_error(error)
+            logger.error("The experience store at %s is unavailable, so runs will record loudly as not written "
+                         "back (Principle V): %s", settings.chroma_path, reason)
             experience = None
     if experience is not None and library is not None:
         try:
             seeded = experience.seed_patterns(library)  # idempotent (FR-004)
             logger.info("Seeded %d attack pattern(s) into the experience store.", seeded)
-        except Exception:
-            logger.exception("Seeding the experience store failed.")
+        except Exception as error:
+            logger.error("The experience store could not be seeded, so runs will record loudly as not written "
+                         "back: %s", describe_store_error(error))
+            experience = None
 
     app = FastAPI(title="Kestrel API", version="0.1.0")
     app.state.settings = settings

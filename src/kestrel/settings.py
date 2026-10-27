@@ -13,8 +13,10 @@ DEFAULT_KEY_FILE = "~/.kestrel/secret.key"
 # The judge that decides a run when no canary matched (research R1, contracts/judge.md).
 DEFAULT_JUDGE_MODEL = "google/gemini-3.8-flash"
 DEFAULT_JUDGE_BASE_URL = "https://openrouter.ai/api/v1"
-# The attacker that drives an adaptive run (feature 003, research R1).
-DEFAULT_ATTACKER_MODEL = "deepseek/deepseek-v3.2"
+# The attacker that drives an adaptive run (feature 003): a current DeepSeek chat model via OpenRouter,
+# capable, inexpensive and comparatively unrestricted. (The older deepseek-v3.2 slug is now commonly blocked
+# by OpenRouter account guardrails; the v4 line is the current, permitted equivalent.)
+DEFAULT_ATTACKER_MODEL = "deepseek/deepseek-v4.1-flash"
 DEFAULT_ATTACKER_BASE_URL = "https://openrouter.ai/api/v1"
 # Hard caps on an adaptive run (Principle VIII; feature 003, research R3).
 DEFAULT_ADAPTIVE_MAX_TURNS = 6

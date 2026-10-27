@@ -34,6 +34,23 @@ STORE_VERSION = "1"
 VERSION_KEY = "kestrel_store_version"
 
 
+class ExperienceStoreError(Exception):
+    """The store can't be used: a mismatched persisted embedding function, or the local model couldn't load."""
+
+
+def describe_store_error(error: Exception) -> str:
+    """A plain, actionable one-liner for why the store is unusable (surfaced at start-up and in logs)."""
+    text = str(error).lower()
+    if "embedding function" in text and "not found" in text:
+        return ("its collection was created with a different embedding function (often leftover test data). "
+                "Delete the store directory and restart so it can be rebuilt with the default embeddings.")
+    if any(hint in text for hint in ("onnx", "download", "could not resolve", "connection", "timed out",
+                                     "temporary failure", "getaddrinfo", "ssl")):
+        return ("the local embedding model could not be loaded — the first run downloads it (about 80 MB), "
+                "so this needs network once. Check your connection and restart.")
+    return f"{type(error).__name__}: {error}"
+
+
 def _and(*clauses: dict) -> dict:
     """A ChromaDB `where` filter: a single clause as-is, several joined with $and."""
     clauses = [c for c in clauses if c]
@@ -55,6 +72,17 @@ class ExperienceStore:
         if self.version != store_version:
             log.warning("The experience store is at version %s, but this Kestrel writes version %s; "
                         "reconciling it is not handled yet.", self.version, store_version)
+
+    def self_check(self) -> None:
+        """Surface an unusable store early (bad persisted embedding function, or a failed first-use model
+        download) by forcing one embedding, so the failure is a clear start-up message rather than a cryptic
+        error on the first write-back mid-run. A probe record is written and removed, so it leaves no trace."""
+        probe = "kestrel:self-check"
+        try:
+            self._collection.upsert(ids=[probe], documents=["ping"], metadatas=[{"type": "selfcheck"}])
+            self._collection.delete(ids=[probe])
+        except Exception as error:
+            raise ExperienceStoreError(describe_store_error(error)) from error
 
     # ---- diagnostics ----
 
