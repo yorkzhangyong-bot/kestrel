@@ -24,13 +24,13 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `markdown-it-py` to `[project].dependencies` in `pyproject.toml` (one-line note: derive escaped HTML from the report Markdown, Principle X) and run `uv sync`; create the package `src/kestrel/report/__init__.py`.
+- [X] T001 Add `markdown-it-py` to `[project].dependencies` in `pyproject.toml` (one-line note: derive escaped HTML from the report Markdown, Principle X) and run `uv sync`; create the package `src/kestrel/report/__init__.py`.
 
 ---
 
 ## Phase 2: Foundational (blocking prerequisites)
 
-- [ ] T002 Define the report data structures in `src/kestrel/report/model.py` — `ReportModel`, `Header`, `CoverageRow`, `Finding`, `OtherRun`, `Recommendation` dataclasses (the shared contract every story populates). Plain data, no I/O.
+- [X] T002 Define the report data structures in `src/kestrel/report/model.py` — `ReportModel`, `Header`, `CoverageRow`, `Finding`, `OtherRun`, `Recommendation` dataclasses (the shared contract every story populates). Plain data, no I/O.
 
 **Checkpoint**: the report model exists; the stories can build and render it.
 
@@ -44,17 +44,17 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T003 [P] [US1] Write `tests/unit/test_report_render.py` (FR-001, FR-005, FR-014, FR-015, FR-019, SC-001, SC-010): `render_markdown` produces the sections it has, in order (header with name/purpose/time/run count/attacker+judge models/token budget+used; failed-unclear lines; limitations), with all run-derived content inside fenced code blocks; an empty model renders only the empty-state message.
-- [ ] T004 [P] [US1] Write `tests/unit/test_report_html.py` (FR-017, SC-008): `render_html` derives HTML from the Markdown, escapes run-derived HTML/script so it shows as text, and is self-contained (no external CSS/JS/image references).
-- [ ] T005 [P] [US1] Write `tests/integration/test_report_endpoint.py` (FR-002, FR-003, FR-019, SC-001, SC-009): `GET /api/targets/{id}/report?format=md` and `?format=html` return 200 with the right content type; a bad `format` returns 422; a missing target returns 404; a target with no runs returns 200 empty-state with 0 judge calls.
+- [X] T003 [P] [US1] Write `tests/unit/test_report_render.py` (FR-001, FR-005, FR-014, FR-015, FR-019, SC-001, SC-010): `render_markdown` produces the sections it has, in order (header with name/purpose/time/run count/attacker+judge models/token budget+used; failed-unclear lines; limitations), with all run-derived content inside fenced code blocks; an empty model renders only the empty-state message.
+- [X] T004 [P] [US1] Write `tests/unit/test_report_html.py` (FR-017, SC-008): `render_html` derives HTML from the Markdown, escapes run-derived HTML/script so it shows as text, and is self-contained (no external CSS/JS/image references).
+- [X] T005 [P] [US1] Write `tests/integration/test_report_endpoint.py` (FR-002, FR-003, FR-019, SC-001, SC-009): `GET /api/targets/{id}/report?format=md` and `?format=html` return 200 with the right content type; a bad `format` returns 422; a missing target returns 404; a target with no runs returns 200 empty-state with 0 judge calls.
 
 ### Implementation
 
-- [ ] T006 [US1] Implement `build_report(...)` in `src/kestrel/report/model.py` for the header, the failed/unclear `other_runs` (one line each), the limitations note, and `is_empty` — a pure function over target/runs/turns. The header lists only the models actually present across the runs (single-turn runs have no attacker model — A1). (makes T003 pass)
-- [ ] T007 [US1] Implement `render_markdown(model)` in `src/kestrel/report/render.py` — one template, sections in order, run-derived content fenced. (makes T003 pass)
-- [ ] T008 [US1] Implement `render_html(markdown)` in `src/kestrel/report/render.py` using `markdown-it-py` (`html=False`) wrapped in a minimal self-contained HTML document. (makes T004 pass)
-- [ ] T009 [US1] Add `GET /api/targets/{id}/report` in `src/kestrel/api/main.py`: validate `format` (md/html, else 422), 404 on missing target, load runs/turns, build + render, return the body with the right media type; empty target → empty-state body, no judge call. (makes T005 pass)
-- [ ] T010 [US1] Add the Report section in `ui/app.py` after `render_profile()` (Generate report, preview via `st.markdown(..., unsafe_allow_html=False)`, Markdown + HTML download buttons) and `get_report(target_id, fmt)` in `ui/api_client.py`.
+- [X] T006 [US1] Implement `build_report(...)` in `src/kestrel/report/model.py` for the header, the failed/unclear `other_runs` (one line each), the limitations note, and `is_empty` — a pure function over target/runs/turns. The header lists only the models actually present across the runs (single-turn runs have no attacker model — A1). (makes T003 pass)
+- [X] T007 [US1] Implement `render_markdown(model)` in `src/kestrel/report/render.py` — one template, sections in order, run-derived content fenced. (makes T003 pass)
+- [X] T008 [US1] Implement `render_html(markdown)` in `src/kestrel/report/render.py` using `markdown-it-py` (`html=False`) wrapped in a minimal self-contained HTML document. (makes T004 pass)
+- [X] T009 [US1] Add `GET /api/targets/{id}/report` in `src/kestrel/api/main.py`: validate `format` (md/html, else 422), 404 on missing target, load runs/turns, build + render, return the body with the right media type; empty target → empty-state body, no judge call. (makes T005 pass)
+- [X] T010 [US1] Add the Report section in `ui/app.py` after `render_profile()` (Generate report, preview via `st.markdown(..., unsafe_allow_html=False)`, Markdown + HTML download buttons) and `get_report(target_id, fmt)` in `ui/api_client.py`.
 
 **Checkpoint**: a report can be generated, previewed and downloaded in both formats.
 

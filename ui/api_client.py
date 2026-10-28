@@ -89,3 +89,15 @@ def get_run(run_id: int) -> dict[str, Any]:
 
 def get_profile(target_id: int) -> dict[str, Any]:
     return _request("GET", f"/api/targets/{target_id}/profile")
+
+
+def get_report(target_id: int, fmt: str) -> str:
+    """The report in the given format ('md' or 'html'), returned as text (not JSON)."""
+    response = httpx.get(f"{base_url()}/api/targets/{target_id}/report", params={"format": fmt}, timeout=60.0)
+    if response.status_code >= 400:
+        try:
+            body = response.json() if response.content else {}
+        except ValueError:
+            body = {}
+        raise ApiError(response.status_code, body)
+    return response.text

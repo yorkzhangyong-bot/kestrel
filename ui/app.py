@@ -131,6 +131,8 @@ def fill_form(target: dict | None) -> None:
     state["result"] = None
     state["run_result"] = None
     state["runs"] = None  # reload the runs list for the newly selected target
+    state["report_md"] = None  # a report belongs to one target; drop it on switch
+    state["report_html"] = None
     state["confirm_delete"] = False
     new_form_id()
 
@@ -620,6 +622,35 @@ def render_profile() -> None:
         st.code(record["summary"], language=None, wrap_lines=True)
 
 
+def render_report() -> None:
+    """The OWASP-mapped report for the selected target: generate, preview, and download MD/HTML (feature 005)."""
+    st.subheader("Report")
+    target_id = loaded_id()
+    if target_id is None:
+        st.caption("Select a saved target to generate a report.")
+        return
+    if not load_runs(target_id):
+        st.caption("No runs to report yet — attack this target first.")
+        return
+    if st.button("Generate report", key="generate_report"):
+        try:
+            st.session_state["report_md"] = api_client.get_report(target_id, "md")
+            st.session_state["report_html"] = api_client.get_report(target_id, "html")
+        except api_client.ApiError as error:
+            st.session_state["report_md"] = None
+            st.session_state["report_html"] = None
+            st.error(api_message(error))
+    report_md = st.session_state.get("report_md")
+    if report_md:
+        md_col, html_col = st.columns(2)
+        md_col.download_button("Download Markdown", report_md, file_name="kestrel-report.md",
+                               mime="text/markdown", key="download_report_md")
+        html_col.download_button("Download HTML", st.session_state.get("report_html") or "",
+                                 file_name="kestrel-report.html", mime="text/html", key="download_report_html")
+        # Safe preview: run-derived content is fenced, and raw HTML is escaped (unsafe_allow_html stays False).
+        st.markdown(report_md, unsafe_allow_html=False)
+
+
 def render_result() -> None:
     st.subheader("Connection test")
     if st.session_state.get("notice"):
@@ -683,6 +714,7 @@ def main() -> None:
     render_attack(config, families)
     render_runs(config)
     render_profile()
+    render_report()
     render_result()
     render_targets(targets)
 

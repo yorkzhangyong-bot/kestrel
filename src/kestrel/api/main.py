@@ -21,6 +21,8 @@ from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
 from kestrel.experience.hints import format_hints
 from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
 from kestrel.experience.writeback import write_back
+from kestrel.report.model import build_report
+from kestrel.report.render import render_html, render_markdown
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import ResolvedSettings, refused, run_test
@@ -29,7 +31,7 @@ from kestrel.runs import execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
-from kestrel.store import NameTaken, Run, RunInProgress, Target, TargetNotFound, TargetStore
+from kestrel.store import NameTaken, Run, RunInProgress, Target, TargetNotFound, TargetStore, utc_now
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
@@ -305,6 +307,26 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return ProfileOut(target_id=target_id, total_runs=0, by_family=[], by_verdict=[], recent=[])
         return ProfileOut(**experience.profile(target_id))
 
+    @app.get("/api/targets/{target_id}/report")
+    def target_report(target_id: int, format: str = "md") -> Any:
+        """Generate the OWASP-mapped report for a target (feature 005). Read-only: no run, no send, no store write."""
+        if format not in ("md", "html"):
+            return form_errors([{"field": "format", "message": "format must be 'md' or 'html'."}])
+        try:
+            target = store.get_target(target_id)
+        except TargetNotFound:
+            return not_found(target_id)
+        runs = store.list_runs(target_id)
+        turns_by_run = {run.id: store.list_turns(run.id) for run in runs if run.mode == "adaptive"}
+        recommendations = {}  # US2 wires recommendations_for(...) here
+        experience_summary = _experience_counts(app.state.experience, target_id)
+        model = build_report(target=target, runs=runs, turns_by_run=turns_by_run, recommendations=recommendations,
+                             experience_summary=experience_summary, now=utc_now())
+        markdown = render_markdown(model)
+        if format == "html":
+            return Response(content=render_html(markdown), media_type="text/html; charset=utf-8")
+        return Response(content=markdown, media_type="text/markdown; charset=utf-8")
+
     @app.get("/api/runs/{run_id}", response_model=RunDetail)
     def get_run(run_id: int) -> Any:
         try:
@@ -390,6 +412,17 @@ def _clean_description(description: str | None) -> str | None:
 def _recent_conversation(conversation: list[tuple[str, str]], turns: int = 2) -> str:
     """The text of the last `turns` turns (up to 2*turns messages), for the pattern-retrieval query (U1)."""
     return " ".join(text for _, text in conversation[-2 * turns:])
+
+
+def _experience_counts(experience: Any, target_id: int) -> dict | None:
+    """Read-only memory and pattern counts for the report's limitations note; None if the store is unavailable."""
+    if experience is None:
+        return None
+    try:
+        return {"memory_count": experience.count("memory", target_id=target_id),
+                "pattern_count": experience.count("pattern")}
+    except Exception:
+        return None
 
 
 def run_summary(run: Run) -> RunSummary:
