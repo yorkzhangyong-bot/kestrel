@@ -108,8 +108,8 @@ Feature 005 reads what features 002–004 stored. It reuses the saved target, it
 
 - **FR-001**: Users MUST be able to generate a report for one saved target on demand, from a Report section in the screen placed after the Profile section, with a Generate report control, a Markdown download, an HTML download, and a rendered preview of the report.
 - **FR-002**: The report MUST be produced in two formats — Markdown and HTML — with the same content, and MUST be available both through the screen's downloads and through an API endpoint that returns it for a given target.
-- **FR-003**: Generating a report MUST read only the target and its stored runs and conversation turns; it MUST NOT start any run, send anything to the target, or write to the experience store.
-- **FR-004**: A report MUST be generated on demand and MUST NOT require new persistent storage; nothing from a prior report is kept or reused.
+- **FR-003**: Generating a report MUST read only the target, its stored runs and conversation turns, and — read-only — the experience store for the memory and pattern counts shown in the limitations note; it MUST NOT start any run, send anything to the target, or write to the experience store.
+- **FR-004**: The rendered report (Markdown and HTML) MUST be generated on demand and MUST NOT be persisted or reused between generations — no report document is stored. The only data kept between generations is the per-run recommendation cache (FR-012), so regenerating a report does not re-call the model.
 
 **Header (Principle III)**
 

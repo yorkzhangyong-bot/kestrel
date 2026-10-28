@@ -18,7 +18,7 @@ The slice adds no attack behaviour: no new nodes in `attack/graph.py`, no sends 
 
 **Storage**: the existing SQLite file (`meta.schema_version` 4 → 5: add one `report_recommendations` table caching one recommendation per run; additive migration). The experience store (ChromaDB) is read **read-only** for two counts and is never written. Reports are generated on demand and not otherwise persisted.
 
-**Testing**: pytest. Unit tests for the report model, the OWASP mapping and both renderers, driven by fixtures (no database, no model). Integration tests for `GET /api/targets/{id}/report` over a `TestClient` with a stub judge and a stub-backed experience store at a temp path. An end-to-end test is optional (the report makes no target calls; its only model use is recommendations through the judge).
+**Testing**: pytest. Unit tests for the report model, the OWASP mapping and both renderers, driven by fixtures (no database, no model). Integration tests for `GET /api/targets/{id}/report` over a `TestClient` with a stub judge and a stub-backed experience store at a temp path. One required end-to-end test (Principle VII, T027): a real run against the sacrificial target, then a report in both formats, asserting the run shows in the coverage table and the experience-store count is unchanged.
 
 **Target Platform**: the user's machine or hosted; unchanged.
 
@@ -42,7 +42,7 @@ The slice adds no attack behaviour: no new nodes in `attack/graph.py`, no sends 
 | IV. Secrets never leave the vault | PASS | No URL/headers/secrets in the output; recommendation input is non-secret run data; HTML escapes run content (FR-016, FR-017, FR-018; SC-006, SC-008). |
 | V. Learn from every run | PASS (N/A) | The report runs no attack, so there is nothing to write back; it reads the experience store read-only and never writes it (FR-003). |
 | VI. OWASP-mapped, fix-ready findings | PASS | This feature *is* Principle VI: every finding maps to an OWASP class and carries a fix-ready recommendation (FR-006, FR-009–FR-012). |
-| VII. Tests first, thin slices | PASS | Unit tests for rendering and the OWASP mapping with fixtures, integration for the endpoint, e2e optional (FR tests in tasks). |
+| VII. Tests first, thin slices | PASS | Unit tests for rendering and the OWASP mapping with fixtures, integration for the endpoint, and one required end-to-end test against the sacrificial target (T027). |
 | VIII. Only attack what you own | PASS | Generation is read-only: zero sends to the target, zero new runs (FR-003, SC-007). |
 | IX. Simple enough for a vibe coder | PASS | One Generate button, two downloads, a preview; a clear empty state. No config needed beyond the judge key already used. |
 | X. Stack is fixed for the MVP | PASS (with note) | Adds one pure-Python dependency, `markdown-it-py`, for Markdown→HTML; justified in Complexity Tracking. No other new dependency. |
@@ -92,7 +92,7 @@ pyproject.toml               # changed: add markdown-it-py
 tests/
 ├── unit/                    # report model + OWASP mapping + Markdown/HTML renderers (fixtures); judge.recommend; schema v5 migration
 ├── integration/             # GET /api/targets/{id}/report (md + html), empty state, secret-hygiene, recommendation caching
-└── e2e/                     # optional: a report over the sacrificial target after a real run
+└── e2e/                     # required (T027): a report over the sacrificial target after a real run
 ```
 
 **Structure Decision**: all report logic lives in a new `report/` package with a pure core (`model.py`, `render.py`, `owasp.py`) and one I/O-touching helper (`recommend.py`), so rendering and mapping are unit-testable with fixtures. `store.py` keeps all SQL (one new table + two methods). The API route is the only orchestrator that reads SQLite, reads the experience store read-only, and calls the judge. `attack/graph.py` is untouched (no new node).

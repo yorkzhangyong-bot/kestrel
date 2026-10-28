@@ -21,7 +21,7 @@ Attack a saved target a few times first (single-turn or adaptive) so there is so
 
 ```bash
 uv run pytest                                 # unit + integration, offline (stub judge), no keys
-uv run pytest -m e2e                          # optional: a report after a real run
+uv run pytest -m e2e                          # the report e2e (T027): a report after a real run
 uv run --directory targets/hs_code pytest     # unchanged
 ```
 
