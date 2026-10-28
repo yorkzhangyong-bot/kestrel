@@ -78,13 +78,48 @@ def is_strict(diff: str) -> bool:
     return any(path.startswith(STRICT_PATHS) for path in changed_files(diff))
 
 
+# Secret patterns replaced with [REDACTED] in the diff and spec before they go into the prompt. Each
+# (pattern, replacement) is applied in order; a capturing replacement keeps the surrounding text readable.
+_REDACTIONS = [
+    (re.compile(r"sk-(?:or-)?[A-Za-z0-9_-]{16,}"), "[REDACTED]"),                  # OpenAI / OpenRouter keys
+    (re.compile(r"(?:ghp_|gho_|github_pat_)[A-Za-z0-9_]{16,}"), "[REDACTED]"),      # GitHub tokens
+    (re.compile(r"AKIA[0-9A-Z]{16}"), "[REDACTED]"),                               # AWS access key IDs
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{8,}"), r"\1[REDACTED]"),          # Authorization: Bearer <token>
+    # A value assigned to api_key / token / password / secret with = or : on the same line.
+    (re.compile("(?i)(api_key|token|password|secret)(\\s*[:=]\\s*)[\"']?[^\\s\"']+[\"']?"), r"\1\2[REDACTED]"),
+    (re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s:/@]+:[^\s:/@]+@"), r"\1[REDACTED]@"),  # user:password@ in a URL
+]
+
+
+def redact(text: str) -> str:
+    """Replace secrets in `text` with [REDACTED] before it is placed in the review prompt."""
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _is_env_file(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1].strip()
+    return name == ".env" or re.search(r"\.env\.[^/]*$", name) is not None
+
+
+def drop_env_hunks(diff: str) -> str:
+    """Drop the whole diff section for any .env or .env.* file, so its contents never reach the prompt."""
+    sections = re.split(r"(?m)^(?=diff --git )", diff)
+    kept = [section for section in sections
+            if not ((match := re.match(r"diff --git a/.*? b/(.*)", section)) and _is_env_file(match.group(1)))]
+    return "".join(kept)
+
+
 def build_messages(spec: str, diff: str) -> list[dict]:
+    diff = redact(drop_env_hunks(diff))   # strip .env files and secrets before anything is sent (SC-006 spirit)
+    spec = redact(spec)
     system = CHECKLIST.read_text(encoding="utf-8")
     if is_strict(diff):
         system += STRICT_NOTE
     system += (
         "\n\nReturn ONLY a JSON object of the form "
-        '{"findings": [{"severity": "severe|major|minor", "file": "path", "line": 0, "reason": "..."}], '
+        '{"findings": [{"severity": "severe|major|possible|minor", "file": "path", "line": 0, "reason": "..."}], '
         '"verdict": "one short sentence"}. Use file paths and line numbers from the diff. If the diff is clean, '
         "return an empty findings list.")
     if len(diff) > MAX_DIFF_CHARS:

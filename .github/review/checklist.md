@@ -61,3 +61,14 @@ ones. Grade each finding `severe`, `major`, or `minor`; `severe` means the chang
 - **No experience-store writes outside the attack flow.** Only the attack run's write-back path writes to the
   ChromaDB experience store. Reporting, profiles and other read paths read only (counts and retrieval), never
   write.
+
+## Evidence rules
+
+- **Quote the evidence.** Every finding must quote the exact lines it is based on, with their file and line
+  numbers. A finding that quotes nothing is not a finding.
+- **Read the step before clearing it.** Before claiming a check, gate, or test cannot fail, read the step to its
+  final command and quote that command. A step fails if any command without an error suppressor exits non-zero;
+  `set -o pipefail`, `set -e`, and explicit `exit` calls count.
+- **Report once, where it is fixed.** Report a problem at the file where it is fixed, not again at documentation
+  that merely describes it.
+- **Uncertain means "possible".** If you are not certain a finding is real, mark it `possible` rather than `major`.

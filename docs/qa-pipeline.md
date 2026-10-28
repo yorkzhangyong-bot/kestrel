@@ -42,6 +42,10 @@ pair of eyes, not a gate on its own:
 - Only a **severe** finding fails the job. `major`/`minor` findings are informational and appear in the PR comment.
 - The model prompt contains only the checklist, the feature spec, and the diff. Environment variables and files
   outside the diff and the spec are never sent.
+- Before they are sent, the diff and the spec are **redacted**: OpenAI/OpenRouter keys (`sk-…`, `sk-or-…`), GitHub
+  tokens (`ghp_`/`gho_`/`github_pat_`), AWS keys (`AKIA…`), `Authorization: Bearer` tokens, any `api_key`/`token`/
+  `password`/`secret` value assigned with `=` or `:`, and `user:password@` URLs all become `[REDACTED]`. Diff hunks
+  for `.env` and `.env.*` files are dropped entirely.
 
 Treat the AI review as a second pair of eyes, not an authority: confirm its findings before acting on them.
 

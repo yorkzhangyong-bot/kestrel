@@ -37,7 +37,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "ui"]
+pythonpath = ["src", "ui", "scripts"]
 markers = ["e2e: starts the sacrificial target and the API; needs OPENROUTER_API_KEY"]
 addopts = "-m 'not e2e' --import-mode=importlib"
 
