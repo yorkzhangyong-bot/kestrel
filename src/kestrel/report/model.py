@@ -5,7 +5,9 @@ store); it does no I/O of its own. The renderers in `render.py` consume only the
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from kestrel.report import owasp
 
 
 @dataclass(frozen=True)
@@ -86,11 +88,35 @@ def build_report(*, target, runs, turns_by_run, recommendations=None, experience
                                          run_count=0), is_empty=True)
     recommendations = recommendations or {}
     header = _header(target, runs, now)
+    coverage = tuple(_coverage_row(tested, runs) for tested in owasp.TESTED)
+    untested = tuple(UntestedClass(owasp_class=name, reason=reason) for name, reason in owasp.UNTESTED)
     findings = tuple(_finding(run, turns_by_run.get(run.id, ()), recommendations)
                      for run in runs if (run.verdict or "") == "succeeded")
     other_runs = tuple(_other_run(run) for run in runs if (run.verdict or "") != "succeeded")
-    return ReportModel(header=header, findings=findings, other_runs=other_runs,
-                       limitations=_limitations(experience_summary), is_empty=False)
+    return ReportModel(header=header, coverage=coverage, untested=untested, findings=findings,
+                       other_runs=other_runs, limitations=_limitations(experience_summary), is_empty=False)
+
+
+def _coverage_row(tested, runs) -> CoverageRow:
+    matching = [r for r in runs if r.owasp_category == tested.owasp_class]
+    confirmed = sum(1 for r in matching if (r.verdict or "") == "succeeded" and r.hard_evidence)
+    suspected = sum(1 for r in matching if (r.verdict or "") == "succeeded" and not r.hard_evidence)
+    return CoverageRow(owasp_class=tested.owasp_class, families=tested.family_label, run_count=len(matching),
+                       result=_coverage_result(len(matching), confirmed, suspected))
+
+
+def _coverage_result(count: int, confirmed: int, suspected: int) -> str:
+    """An honest one-liner: confirmed = hard evidence (Principle II), suspected = judge-only, else held."""
+    if count == 0:
+        return "not run yet"
+    parts = []
+    if confirmed:
+        parts.append(f"{confirmed} confirmed")
+    if suspected:
+        parts.append(f"{suspected} suspected")
+    if not parts:
+        return f"{count} run(s), held"
+    return f"{count} run(s), " + " + ".join(parts) + " finding(s)"
 
 
 def winning_message(run, turns) -> str:

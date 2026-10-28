@@ -92,12 +92,12 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T019 [P] [US3] Write `tests/unit/test_report_coverage.py` (FR-006, FR-007, FR-008, SC-005): the coverage table lists exactly the three tested classes (LLM01 Prompt Injection → direct & indirect injection; LLM06 Excessive Agency → tool-mediated exfiltration; LLM07 System Prompt Leakage → system-prompt leak) with per-class run counts and results, "not run yet" for a family with 0 runs; the untested section lists exactly the seven classes (LLM02, LLM03, LLM04, LLM05, LLM08, LLM09, LLM10), each with a reason.
+- [X] T019 [P] [US3] Write `tests/unit/test_report_coverage.py` (FR-006, FR-007, FR-008, SC-005): the coverage table lists exactly the three tested classes (LLM01 Prompt Injection → direct & indirect injection; LLM06 Excessive Agency → tool-mediated exfiltration; LLM07 System Prompt Leakage → system-prompt leak) with per-class run counts and results, "not run yet" for a family with 0 runs; the untested section lists exactly the seven classes (LLM02, LLM03, LLM04, LLM05, LLM08, LLM09, LLM10), each with a reason.
 
 ### Implementation
 
-- [ ] T020 [US3] Add `src/kestrel/report/owasp.py`: the OWASP LLM Top 10 (2025) data — the three tested classes and their families, and the seven untested classes each with a short reason. (makes part of T019)
-- [ ] T021 [US3] Add the coverage rows and the untested-classes section to `build_report` (`src/kestrel/report/model.py`) and to `render_markdown` (`src/kestrel/report/render.py`). (makes T019 pass)
+- [X] T020 [US3] Add `src/kestrel/report/owasp.py`: the OWASP LLM Top 10 (2025) data — the three tested classes and their families, and the seven untested classes each with a short reason. (makes part of T019)
+- [X] T021 [US3] Add the coverage rows and the untested-classes section to `build_report` (`src/kestrel/report/model.py`) and to `render_markdown` (`src/kestrel/report/render.py`). (makes T019 pass)
 
 **Checkpoint**: the report states honestly what was and was not tested.
 
