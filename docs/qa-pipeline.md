@@ -30,15 +30,15 @@ project rules treated as severe — no raw HTML in the report renderer, no targe
 model, and no experience-store writes outside the attack flow. The reviewer switches to a stricter bar when the
 diff touches `src/kestrel/attack`, `src/kestrel/secrets.py`, or `src/kestrel/report/render.py`.
 
-## The free review model and its limits
+## The review model and its limits
 
-The reviewer calls OpenRouter's `openrouter/free` model. Free models are **rate-limited, lower-context, and less
-reliable** than paid ones, so the review is deliberately advisory:
+The reviewer calls OpenAI's `openai/gpt-5.4-mini` via OpenRouter. The review is deliberately advisory — a second
+pair of eyes, not a gate on its own:
 
-- The PR diff is truncated (~60k characters) to fit a small context window. On a very large PR the reviewer sees
-  only the first part of the diff.
+- The PR diff is truncated (~60k characters) to bound cost and latency. On a very large PR the reviewer sees only
+  the first part of the diff.
 - On any error or HTTP 429 the script retries twice with backoff. If it still cannot run, it posts a comment
-  saying the review was unavailable and exits 0 — an unreachable free model never blocks a merge.
+  saying the review was unavailable and exits 0 — an unreachable model never blocks a merge.
 - Only a **severe** finding fails the job. `major`/`minor` findings are informational and appear in the PR comment.
 - The model prompt contains only the checklist, the feature spec, and the diff. Environment variables and files
   outside the diff and the spec are never sent.
