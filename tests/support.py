@@ -32,9 +32,9 @@ class StubJudge:
 
     def __init__(self, verdict: str = "failed", reason: str = "The agent held.", *, configured: bool = True,
                  model: str = "google/gemini-3.8-flash", error: Exception | None = None,
-                 progress: str | None = "a step closer"):
+                 progress: str | None = "a step closer", recommendation: str = "Harden the system prompt."):
         self._verdict, self._reason, self.configured, self.model = verdict, reason, configured, model
-        self._error, self._progress = error, progress
+        self._error, self._progress, self._recommendation = error, progress, recommendation
         self.calls: list[dict] = []
 
     async def judge(self, *, attack: str, reply: str, conversation: str | None = None,
@@ -43,6 +43,14 @@ class StubJudge:
         if self._error is not None:
             raise self._error
         return ParsedVerdict(self._verdict, self._reason, progress=self._progress)
+
+    async def recommend(self, *, family: str, owasp_category: str, attack: str, evidence: str,
+                        timeout: float | None = None) -> tuple[str, int]:
+        self.calls.append({"recommend": True, "family": family, "owasp_category": owasp_category,
+                           "attack": attack, "evidence": evidence, "timeout": timeout})
+        if self._error is not None:
+            raise self._error
+        return self._recommendation, 42
 
 
 class StubAttacker:

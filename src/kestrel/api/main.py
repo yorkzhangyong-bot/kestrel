@@ -22,6 +22,7 @@ from kestrel.experience.hints import format_hints
 from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
 from kestrel.experience.writeback import write_back
 from kestrel.report.model import build_report
+from kestrel.report.recommend import recommendations_for
 from kestrel.report.render import render_html, render_markdown
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
@@ -308,7 +309,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         return ProfileOut(**experience.profile(target_id))
 
     @app.get("/api/targets/{target_id}/report")
-    def target_report(target_id: int, format: str = "md") -> Any:
+    async def target_report(target_id: int, format: str = "md") -> Any:
         """Generate the OWASP-mapped report for a target (feature 005). Read-only: no run, no send, no store write."""
         if format not in ("md", "html"):
             return form_errors([{"field": "format", "message": "format must be 'md' or 'html'."}])
@@ -318,7 +319,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return not_found(target_id)
         runs = store.list_runs(target_id)
         turns_by_run = {run.id: store.list_turns(run.id) for run in runs if run.mode == "adaptive"}
-        recommendations = {}  # US2 wires recommendations_for(...) here
+        # One judge call per uncached success (FR-012); cached thereafter. No target send, no experience write.
+        recommendations = await recommendations_for(store, app.state.judge, runs, turns_by_run)
         experience_summary = _experience_counts(app.state.experience, target_id)
         model = build_report(target=target, runs=runs, turns_by_run=turns_by_run, recommendations=recommendations,
                              experience_summary=experience_summary, now=utc_now())

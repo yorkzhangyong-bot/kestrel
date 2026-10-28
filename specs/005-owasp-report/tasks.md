@@ -68,17 +68,17 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T011 [P] [US2] Write `tests/unit/test_report_findings.py` (FR-009, FR-010, FR-011, SC-002, SC-003): `build_report` yields exactly one finding per "succeeded" run and none for other runs; a canary success quotes the stored evidence byte-for-byte; a judge-only success shows the note marked suspected; the winning message is the attacker turn(s) up to `succeeded_turn` (or the seed for a single-turn/turn-one success).
-- [ ] T012 [P] [US2] Write `tests/unit/test_judge_recommend.py` (FR-018): `JudgeClient.recommend(...)` posts only non-secret fields (family, OWASP class, winning message, evidence) and returns text + tokens via `httpx.MockTransport`; raises `JudgeError` when not configured.
-- [ ] T013 [P] [US2] Write `tests/unit/test_store_migration_v5.py`: a fresh database is at version 5 with a `report_recommendations` table; a version-4 database migrates to 5 keeping its rows; `get_recommendation`/`save_recommendation` round-trip; an unknown version is refused.
-- [ ] T014 [P] [US2] Write `tests/integration/test_report_recommendations.py` (FR-012, FR-013, SC-004, SC-011): a generated report fills a suggestion-marked recommendation for each success (stub judge); regenerating makes 0 new judge calls (served from the cache); with no judge key, findings show a clear "no recommendation available" note and 0 judge calls.
+- [X] T011 [P] [US2] Write `tests/unit/test_report_findings.py` (FR-009, FR-010, FR-011, SC-002, SC-003): `build_report` yields exactly one finding per "succeeded" run and none for other runs; a canary success quotes the stored evidence byte-for-byte; a judge-only success shows the note marked suspected; the winning message is the attacker turn(s) up to `succeeded_turn` (or the seed for a single-turn/turn-one success).
+- [X] T012 [P] [US2] Write `tests/unit/test_judge_recommend.py` (FR-018): `JudgeClient.recommend(...)` posts only non-secret fields (family, OWASP class, winning message, evidence) and returns text + tokens via `httpx.MockTransport`; raises `JudgeError` when not configured.
+- [X] T013 [P] [US2] Write `tests/unit/test_store_migration_v5.py`: a fresh database is at version 5 with a `report_recommendations` table; a version-4 database migrates to 5 keeping its rows; `get_recommendation`/`save_recommendation` round-trip; an unknown version is refused.
+- [X] T014 [P] [US2] Write `tests/integration/test_report_recommendations.py` (FR-012, FR-013, SC-004, SC-011): a generated report fills a suggestion-marked recommendation for each success (stub judge); regenerating makes 0 new judge calls (served from the cache); with no judge key, findings show a clear "no recommendation available" note and 0 judge calls.
 
 ### Implementation
 
-- [ ] T015 [US2] Extend `src/kestrel/store.py` to schema v5: add the `report_recommendations` table, allow migration from `1`/`2`/`3`/`4` → `5`, and add `get_recommendation`/`save_recommendation`. (makes T013 pass)
-- [ ] T016 [US2] Add `JudgeClient.recommend(...)` in `src/kestrel/judge/client.py`, reusing the client's model/key/base-url/transport, with a fix-advice system prompt and non-secret inputs. (makes T012 pass)
-- [ ] T017 [US2] Implement `src/kestrel/report/recommend.py` `recommendations_for(store, judge, runs, turns_by_run)`: return cached recommendations, call the judge once per uncached success, save each; skip when no judge key. (makes part of T014)
-- [ ] T018 [US2] Populate `findings` in `build_report` (winning message, verbatim evidence / judge note, recommendation), render them in `render_markdown` (fenced content; recommendation under a "Suggestion" label), and call `recommendations_for` from the endpoint in `src/kestrel/api/main.py`. (makes T011, T014 pass)
+- [X] T015 [US2] Extend `src/kestrel/store.py` to schema v5: add the `report_recommendations` table, allow migration from `1`/`2`/`3`/`4` → `5`, and add `get_recommendation`/`save_recommendation`. (makes T013 pass)
+- [X] T016 [US2] Add `JudgeClient.recommend(...)` in `src/kestrel/judge/client.py`, reusing the client's model/key/base-url/transport, with a fix-advice system prompt and non-secret inputs. (makes T012 pass)
+- [X] T017 [US2] Implement `src/kestrel/report/recommend.py` `recommendations_for(store, judge, runs, turns_by_run)`: return cached recommendations, call the judge once per uncached success, save each; skip when no judge key. (makes part of T014)
+- [X] T018 [US2] Populate `findings` in `build_report` (winning message, verbatim evidence / judge note, recommendation), render them in `render_markdown` (fenced content; recommendation under a "Suggestion" label), and call `recommendations_for` from the endpoint in `src/kestrel/api/main.py`. (makes T011, T014 pass)
 
 **Checkpoint**: successful runs appear as fix-ready findings with cached recommendations.
 

@@ -84,10 +84,60 @@ def build_report(*, target, runs, turns_by_run, recommendations=None, experience
     if not runs:
         return ReportModel(header=Header(target_name=target.name, purpose=target.description, generated_at=now,
                                          run_count=0), is_empty=True)
+    recommendations = recommendations or {}
     header = _header(target, runs, now)
+    findings = tuple(_finding(run, turns_by_run.get(run.id, ()), recommendations)
+                     for run in runs if (run.verdict or "") == "succeeded")
     other_runs = tuple(_other_run(run) for run in runs if (run.verdict or "") != "succeeded")
-    return ReportModel(header=header, other_runs=other_runs, limitations=_limitations(experience_summary),
-                       is_empty=False)
+    return ReportModel(header=header, findings=findings, other_runs=other_runs,
+                       limitations=_limitations(experience_summary), is_empty=False)
+
+
+def winning_message(run, turns) -> str:
+    """The attacker message(s) that won: an adaptive run's turns up to `succeeded_turn` (turn 1 is the seed),
+    or the seed prompt for a single-turn or turn-less run. Shared by the finding and the recommendation input."""
+    if run.mode == "adaptive" and turns:
+        cutoff = run.succeeded_turn
+        chosen = [t.attacker_message for t in turns if cutoff is None or t.position <= cutoff]
+        if chosen:
+            return "\n\n".join(chosen)
+    return run.prompt_text
+
+
+def proof(run, turns) -> tuple[str | None, str | None]:
+    """The success evidence as (verbatim hard evidence, judge note). A canary success carries the reply that
+    contained the canary; a judge-only success carries the judge's note (shown as suspected). Never both."""
+    if run.hard_evidence:
+        return _success_reply(run, turns), None
+    return None, _judge_note(run, turns)
+
+
+def _finding(run, turns, recommendations) -> Finding:
+    evidence, judge_note = proof(run, turns)
+    return Finding(family=run.family, owasp_class=run.owasp_category, winning_message=winning_message(run, turns),
+                   evidence=evidence, judge_note=judge_note, recommendation=recommendations.get(run.id))
+
+
+def _turn_at(turns, position):
+    if position is None:
+        return turns[-1] if turns else None
+    return next((t for t in turns if t.position == position), None)
+
+
+def _success_reply(run, turns) -> str | None:
+    if run.mode == "adaptive" and turns:
+        turn = _turn_at(turns, run.succeeded_turn)
+        if turn is not None and turn.reply_text is not None:
+            return turn.reply_text
+    return run.reply_text
+
+
+def _judge_note(run, turns) -> str | None:
+    if run.mode == "adaptive" and turns:
+        turn = _turn_at(turns, run.succeeded_turn)
+        if turn is not None:
+            return turn.judge_progress or turn.judge_reason or run.reason
+    return run.reason
 
 
 def _header(target, runs, now) -> Header:
