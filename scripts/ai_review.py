@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""AI code review gate for a pull request.
+"""AI code review gate for a pull request. DEPRECATED — retained for reference and its redaction tests.
+
+The QA pipeline's review gate now uses the official Claude Code GitHub Action
+(`anthropics/claude-code-action@v1`, see .github/workflows/qa.yml); this standalone OpenRouter-based reviewer is
+no longer wired into CI. Its `redact`/`drop_env_hunks` helpers are still exercised by tests/unit/test_ai_review.py.
 
 Sends the review checklist (system prompt) and the feature's spec plus the PR diff against master (user message)
 to an OpenRouter model, asks for JSON findings and a verdict, posts them as a PR comment, and exits 1 if any

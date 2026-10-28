@@ -121,22 +121,58 @@ jobs:
           if-no-files-found: ignore
 
   review:
-    needs: [traceability, quality]
+    needs: mutation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - name: Claude Code review
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true   # the verdict step below is the gate, so the review blocks on a severe finding only
         with:
-          python-version: "3.12"
-      - name: Install review dependencies
-        run: pip install httpx
-      - name: AI review (fails only on a severe finding)
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the QA pipeline's code reviewer for this repository.
+
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            BRANCH: ${{ github.head_ref }}
+
+            The PR branch is already checked out in the current working directory.
+
+            Review this pull request against two references, and read both before judging:
+            - The review standard in .github/review/checklist.md (the constitution, the ten checks, the project rules, and especially the Evidence rules) — follow it exactly.
+            - The feature spec for this branch: the spec.md under specs/ whose directory starts with this branch's numeric prefix (for example branch "005-owasp-report" uses specs/005-*/spec.md).
+
+            You may read any file in the repository to gather evidence, and you may run `uv run pytest tests/unit -q` if it helps you judge a change.
+
+            Then post exactly ONE top-level comment on the pull request using `gh pr comment`. In that comment:
+            - List each finding with a severity of severe, major, minor, or possible.
+            - For every finding, quote the exact file and line(s) it is based on (as file:line), per the checklist's Evidence rules. A finding that quotes nothing is not a finding.
+            - If there are no findings, say so plainly.
+            - End with a single final line that is exactly "VERDICT: PASS" or "VERDICT: FAIL". Use FAIL if and only if there is at least one severe finding; otherwise PASS.
+
+            Post only the GitHub comment — do not submit the review as chat messages.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Bash(uv run pytest:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+      - name: Enforce the review verdict (blocks on a severe finding only)
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/ai_review.py 2>&1 | tee qa-review.log
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json comments --jq '.comments[-1].body // ""')
+          printf '%s\n' "$body" | tee qa-review.log
+          if printf '%s' "$body" | grep -q "VERDICT: FAIL"; then
+            echo "AI review returned VERDICT: FAIL (at least one severe finding)." | tee -a qa-review.log
+            exit 1
+          fi
+          echo "AI review verdict is not FAIL; the review gate passes." | tee -a qa-review.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
