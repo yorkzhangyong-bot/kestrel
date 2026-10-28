@@ -84,13 +84,14 @@ The loop is a LangGraph `StateGraph` with six nodes: **attacker** (draft the nex
 
 ## 5. Data model
 
-**SQLite** (`data/kestrel.db`, `meta.schema_version = "4"`; migrations are additive — a v1/v2/v3 database is `ALTER`-ed up, an unknown version is refused):
+**SQLite** (`data/kestrel.db`, `meta.schema_version = "5"`; migrations are additive — a v1/v2/v3/v4 database is `ALTER`-ed up (v5 only adds a table), an unknown version is refused):
 
 - `targets` — name (unique, case-folded), url, method, body template, response path, permission timestamp, terms version, and (v4) an optional one-line `description` (the non-secret purpose).
 - `target_headers` — one row per auth header, the value stored as a Fernet token in `value_encrypted` (never returned by the API).
 - `target_canaries` — declared canary strings (plain text; they are evidence, not credentials).
 - `runs` — one row per run: seed prompt, family, OWASP category, attacker source, status, verdict, `hard_evidence`, reason, judge model/usage, failure step, timestamps; plus (v3) `mode`, `attacker_model`, turn/token/time budgets and usage, `stopping_condition`, `succeeded_turn`; plus (v4) `use_prior_experience` and `memory_written`. A unique partial index enforces one in-progress run per target.
 - `run_turns` — the adaptive conversation, one row per turn: masked attacker message and reply (reply cut to a fixed length), and the per-turn judge verdict/reason/progress. Evidence is represented by the `hard_evidence` flag + reason on `runs` (canary) and the per-turn judge fields, rather than a separate table.
+- `report_recommendations` — (v5) one cached, model-generated fix suggestion per successful run (`run_id` primary key, recommendation text, judge model, created-at), so regenerating a report does not re-call the model. This is the report's only persisted output; the rendered report document itself is never stored.
 
 **ChromaDB** (`data/chroma/`, one collection `kestrel_experience`, version in collection metadata `kestrel_store_version = "1"`). Every record carries a `type` of `pattern` or `memory`:
 
@@ -134,5 +135,5 @@ Tests release cached ChromaDB clients between cases so file handles do not accum
 
 ## 10. Roadmap
 
-- **005 — report.** An OWASP LLM Top 10-mapped report with a risk score, with findings structured so a fix action (hardened prompt, guardrail config, re-scan) can be attached later (Principle VI).
+- **005 — report (done).** An OWASP LLM Top 10-mapped, fix-ready report of a target's runs, built as a pure function over existing data (`src/kestrel/report/`): an OWASP coverage table, one finding per successful run with hard evidence or the judge's note plus a model-generated fix suggestion (cached per run in SQLite, schema v5), rendered as Markdown and escaped, self-contained HTML (via `markdown-it-py`) and served read-only by `GET /api/targets/{id}/report?format=md|html`. Findings are structured so a fix action can be attached later (Principle VI).
 - **006 — A/B harness.** A harness to compare attacker models and warm-vs-cold runs, with a promptfoo baseline, using the per-run `use_prior_experience` flag and the env-configurable models and caps already in place.

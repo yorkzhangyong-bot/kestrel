@@ -123,10 +123,10 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ## Phase 7: Polish
 
-- [ ] T024 [P] Update the root `README.md` (and the `docs/technical-design.md` roadmap line) for the report: the Report section, the `GET /api/targets/{id}/report` endpoint, the `markdown-it-py` dependency, and schema v5.
-- [ ] T025 Secret-hygiene audit across `src/kestrel/report/**`, the report endpoint, and `JudgeClient.recommend` (FR-016, FR-018, SC-006): confirm no target URL, header name/value or secret reaches the report output, the recommendation prompt, or a log line.
-- [ ] T026 Run the full suite: `uv run pytest`, `uv run --directory targets/hs_code pytest`, and `uv run pytest -m e2e`; fix any difference.
-- [ ] T027 [US1] Write `tests/e2e/test_report_e2e.py` (Principle VII, required): run one attack against the sacrificial target (isolated temp DB and `KESTREL_CHROMA_PATH`), generate the report in both Markdown and HTML, and assert the run appears in the OWASP coverage table and that the experience-store record count is unchanged by report generation (read-only).
+- [X] T024 [P] Update the root `README.md` (and the `docs/technical-design.md` roadmap line) for the report: the Report section, the `GET /api/targets/{id}/report` endpoint, the `markdown-it-py` dependency, and schema v5.
+- [X] T025 Secret-hygiene audit across `src/kestrel/report/**`, the report endpoint, and `JudgeClient.recommend` (FR-016, FR-018, SC-006): confirm no target URL, header name/value or secret reaches the report output, the recommendation prompt, or a log line.
+- [X] T026 Run the full suite: `uv run pytest`, `uv run --directory targets/hs_code pytest`, and `uv run pytest -m e2e`; fix any difference.
+- [X] T027 [US1] Write `tests/e2e/test_report_e2e.py` (Principle VII, required): run one attack against the sacrificial target (isolated temp DB and `KESTREL_CHROMA_PATH`), generate the report in both Markdown and HTML, and assert the run appears in the OWASP coverage table and that the experience-store record count is unchanged by report generation (read-only).
 
 ---
 
