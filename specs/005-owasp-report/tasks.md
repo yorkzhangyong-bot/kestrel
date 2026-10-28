@@ -111,11 +111,11 @@ Single repo: `src/kestrel/`, `ui/`, `tests/` at the root; the sacrificial target
 
 ### Tests (write first, must fail)
 
-- [ ] T022 [P] [US4] Write `tests/integration/test_report_safety.py` (FR-003, FR-016, FR-018, SC-006, SC-007): generating a report makes 0 sends through the target transport and 0 writes to the experience store (spy), and neither the Markdown nor the HTML output contains the target's auth value, URL, or header names.
+- [X] T022 [P] [US4] Write `tests/integration/test_report_safety.py` (FR-003, FR-016, FR-018, SC-006, SC-007): generating a report makes 0 sends through the target transport and 0 writes to the experience store (spy), and neither the Markdown nor the HTML output contains the target's auth value, URL, or header names.
 
 ### Implementation
 
-- [ ] T023 [US4] Confirm the endpoint's invariants in `src/kestrel/api/main.py`: recommendation input carries no secret (FR-018), the experience store is read only (counts via `count(...)` for the limitations note, no write), and the memory/pattern counts are folded into the limitations note (FR-015). (makes T022 pass)
+- [X] T023 [US4] Confirm the endpoint's invariants in `src/kestrel/api/main.py`: recommendation input carries no secret (FR-018), the experience store is read only (counts via `count(...)` for the limitations note, no write), and the memory/pattern counts are folded into the limitations note (FR-015). (makes T022 pass)
 
 **Checkpoint**: the report is safe to generate and share.
 
