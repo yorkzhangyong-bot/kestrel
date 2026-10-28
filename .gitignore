@@ -13,6 +13,13 @@ dist/
 # Local secrets
 .env
 
+# QA pipeline artifacts (coverage, mutation, logs)
+.coverage
+.mutmut-cache
+mutmut-results.xml
+qa-*.log
+email-body.txt
+
 # Sacrificial HS-code target
 targets/hs_code/.venv/
 targets/hs_code/.env

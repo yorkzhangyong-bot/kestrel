@@ -1,8 +1,6 @@
 """The Report section after Profile: generate, preview, downloads, and the empty state (feature 005, contracts/ui-screen.md)."""
 from pathlib import Path
-from types import SimpleNamespace
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
 import api_client

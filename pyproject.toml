@@ -28,6 +28,11 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    # QA pipeline (CI): coverage gate, type checking, mutation testing, dependency audit.
+    "pytest-cov>=5.0",
+    "mypy>=1.11",
+    "mutmut>=2.4,<3.0",
+    "pip-audit>=2.7",
 ]
 
 [tool.pytest.ini_options]
@@ -35,3 +40,24 @@ testpaths = ["tests"]
 pythonpath = ["src", "ui"]
 markers = ["e2e: starts the sacrificial target and the API; needs OPENROUTER_API_KEY"]
 addopts = "-m 'not e2e' --import-mode=importlib"
+
+[tool.mypy]
+python_version = "3.12"
+# The fixed MVP stack (ChromaDB, LangGraph, Streamlit, …) ships few type stubs; ignore their missing imports
+# rather than failing the gate on third-party typing gaps. Kestrel's own code is still type-checked.
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# The classic ruff baseline: pyflakes (unused imports/variables, undefined names) plus the essential pycodestyle
+# error classes. A deliberate, documented rule set for the QA gate — widen it in a follow-up rather than
+# silencing findings. (Ruff's newer default also enables many style/modernisation rules this codebase never
+# adopted; pinning the set keeps the gate meaningful instead of noisy.)
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pre-existing dead assignment (F841, the unused `target` from update_target) in a feature file. Deferred so this
+# CI-only commit changes no feature code; drop this entry when that assignment is cleaned up in a feature PR.
+"src/kestrel/api/main.py" = ["F841"]

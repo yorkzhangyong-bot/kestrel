@@ -5,7 +5,6 @@ Covers FR-001, FR-003, FR-004, SC-008. The target send goes through a MockTransp
 import uuid
 
 import httpx
-import pytest
 
 from kestrel.api.main import load_terms
 from tests.support import StubAttacker, StubJudge, fixture_library

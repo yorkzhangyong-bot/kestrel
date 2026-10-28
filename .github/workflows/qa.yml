@@ -1,0 +1,201 @@
+name: QA
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write   # the AI review posts a PR comment
+
+jobs:
+  traceability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Traceability (every FR/SC in the spec is referenced by a test)
+        run: python scripts/check_traceability.py 2>&1 | tee qa-traceability.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-traceability
+          path: qa-traceability.log
+          if-no-files-found: ignore
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync dependencies
+        run: uv sync 2>&1 | tee -a qa-quality.log
+      - name: Ruff
+        run: uvx ruff check src ui tests 2>&1 | tee -a qa-quality.log
+      - name: Mypy (advisory)
+        # Advisory while the pre-existing type gaps in the core modules are cleared: this runs over all of src and
+        # reports, but does not yet block the gate (the CI commit that introduced it changed no feature code).
+        continue-on-error: true
+        run: uv run mypy src 2>&1 | tee -a qa-quality.log
+      - name: Tests with coverage (fail under 85%)
+        run: uv run pytest tests/unit tests/integration --cov=src --cov-report=term-missing --cov-fail-under=85 2>&1 | tee -a qa-quality.log
+      - name: Gitleaks (no secrets in the diff or history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: pip-audit (no known-vulnerable dependencies)
+        # Known chromadb advisories with no fix version available, on a stack-pinned dependency (Principle X), are
+        # allowlisted so the gate still blocks on any NEW vulnerability. Re-evaluate when chromadb ships a fix.
+        run: uv run pip-audit --ignore-vuln PYSEC-2026-311 --ignore-vuln PYSEC-2026-3813 --ignore-vuln PYSEC-2026-3814 --ignore-vuln PYSEC-2026-3815 2>&1 | tee -a qa-quality.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-quality
+          path: qa-quality.log
+          if-no-files-found: ignore
+
+  mutation:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync dependencies
+        run: uv sync
+      - name: Find changed src files
+        id: changed
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --quiet origin "$BASE" || true
+          changed=$(git diff --name-only "origin/$BASE...HEAD" | { grep -E '^src/.*\.py$' || true; } | paste -sd, -)
+          echo "files=$changed" >> "$GITHUB_OUTPUT"
+          echo "Changed src files: ${changed:-<none>}"
+      - name: Skip mutation testing (no src files changed)
+        if: steps.changed.outputs.files == ''
+        run: echo "No src files changed in this PR; skipping mutation testing."
+      - name: Mutation testing (fail under 70% score)
+        if: steps.changed.outputs.files != ''
+        run: |
+          set -o pipefail
+          # mutmut --use-coverage only runs the tests that cover each mutant, so this stays tractable in CI.
+          uv run coverage run --source=src -m pytest -q tests/unit tests/integration > /dev/null 2>&1 || true
+          uv run mutmut run --paths-to-mutate "${{ steps.changed.outputs.files }}" --use-coverage --simple-output 2>&1 | tee qa-mutation.log || true
+          uv run mutmut junitxml > mutmut-results.xml || true
+          uv run python - <<'PY' 2>&1 | tee -a qa-mutation.log
+          import sys, xml.etree.ElementTree as ET
+          try:
+              cases = ET.parse("mutmut-results.xml").findall(".//testcase")
+          except (OSError, ET.ParseError) as error:
+              print(f"Could not read mutation results: {error}")
+              sys.exit(1)
+          total = len(cases)
+          if total == 0:
+              print("No mutants were generated; nothing to score.")
+              sys.exit(0)
+          survived = sum(1 for case in cases if case.find("failure") is not None)
+          killed = total - survived
+          score = killed / total * 100
+          print(f"Mutation score: {killed}/{total} killed = {score:.1f}% (threshold 70%)")
+          sys.exit(0 if score >= 70 else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-mutation
+          path: qa-mutation.log
+          if-no-files-found: ignore
+
+  review:
+    needs: [traceability, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install review dependencies
+        run: pip install httpx
+      - name: AI review (fails only on a severe finding)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/ai_review.py 2>&1 | tee qa-review.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-review
+          path: qa-review.log
+          if-no-files-found: ignore
+
+  notify:
+    needs: [traceability, quality, mutation, review]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: qa-logs-*
+          merge-multiple: true
+      - name: Build email body (failed jobs and first error lines)
+        env:
+          R_TRACE: ${{ needs.traceability.result }}
+          R_QUALITY: ${{ needs.quality.result }}
+          R_MUTATION: ${{ needs.mutation.result }}
+          R_REVIEW: ${{ needs.review.result }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import glob, os, pathlib, re
+          results = {"traceability": os.environ.get("R_TRACE", ""), "quality": os.environ.get("R_QUALITY", ""),
+                     "mutation": os.environ.get("R_MUTATION", ""), "review": os.environ.get("R_REVIEW", "")}
+          failed = [name for name, result in results.items() if result == "failure"]
+          lines = [f"QA pipeline failed for {os.environ.get('REPO', '?')} PR #{os.environ.get('PR', '?')}.",
+                   f"Branch: {os.environ.get('BRANCH', '?')}",
+                   f"Run: {os.environ.get('RUN_URL', '?')}",
+                   "",
+                   "Failed jobs: " + (", ".join(failed) if failed else "(none reported)"),
+                   ""]
+          pattern = re.compile(r"error|fail|assert|traceback|exit code|not found|severe", re.I)
+          for log in sorted(glob.glob("artifacts/*.log")):
+              hits = [line for line in pathlib.Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
+                      if pattern.search(line)][:5]
+              if hits:
+                  lines.append(f"== {pathlib.Path(log).name} ==")
+                  lines.extend(hits)
+                  lines.append("")
+          pathlib.Path("email-body.txt").write_text("\n".join(lines), encoding="utf-8")
+          print("\n".join(lines))
+          PY
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: "QA pipeline failed: ${{ github.repository }} PR #${{ github.event.pull_request.number }}"
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: Kestrel CI <${{ secrets.SMTP_USER }}>
+          body: file://email-body.txt

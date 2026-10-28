@@ -37,7 +37,8 @@ def target(store):
 class StubAttacker:
     """Emits a placeholder message each turn; records what it was shown; can be told to fail."""
     def __init__(self, error=None, tokens=100):
-        self.model = "stub/attacker"; self.configured = True
+        self.model = "stub/attacker"
+        self.configured = True
         self._error, self._tokens = error, tokens
         self.seen = []
 
@@ -50,7 +51,8 @@ class StubAttacker:
 
 class StubJudge:
     def __init__(self, verdict="failed", progress="getting closer", error=None, configured=True, tokens=120):
-        self.model = "stub/judge"; self.configured = configured
+        self.model = "stub/judge"
+        self.configured = configured
         self._v, self._p, self._err, self._tokens = verdict, progress, error, tokens
         self.calls = []
 

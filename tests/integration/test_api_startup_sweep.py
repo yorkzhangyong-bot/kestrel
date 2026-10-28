@@ -1,7 +1,5 @@
 """On start-up, a run left in progress by a stopped process is closed as "unclear" (FR-031, SC-012)."""
 import httpx
-import pytest
-from cryptography.fernet import Fernet
 
 from kestrel.api.main import load_terms
 from kestrel.secrets import Vault

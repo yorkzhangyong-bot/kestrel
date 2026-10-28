@@ -2,7 +2,6 @@
 import uuid
 
 import httpx
-import pytest
 
 from kestrel.api.main import load_terms
 from kestrel.settings import DEFAULT_ATTACKER_MODEL
