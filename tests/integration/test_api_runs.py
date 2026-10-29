@@ -6,10 +6,8 @@ is stubbed, so no network and no real attack content.
 import uuid
 
 import httpx
-import pytest
 
 from kestrel.api.main import load_terms
-from kestrel.judge.client import JudgeError
 from tests.support import StubJudge, fixture_library
 
 SECRET = "s3cret-header-value"

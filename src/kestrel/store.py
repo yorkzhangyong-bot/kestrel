@@ -13,7 +13,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -103,6 +103,15 @@ CREATE TABLE IF NOT EXISTS run_turns (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_run_turns_run ON run_turns (run_id, position);
+
+-- Added in schema version 5 (feature 005): one cached, model-generated fix suggestion per successful run (FR-012,
+-- FR-013). Keyed by run id so regenerating a report serves the cache instead of re-calling the model.
+CREATE TABLE IF NOT EXISTS report_recommendations (
+    run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    recommendation TEXT NOT NULL,
+    model TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 # Columns added to `runs` in version 3; ALTER-added for a version-2 database (fresh ones get them from SCHEMA).
@@ -205,6 +214,15 @@ class Turn:
 
 
 @dataclass(frozen=True)
+class StoredRecommendation:
+    """A cached, model-generated fix suggestion for one successful run (feature 005, FR-012)."""
+    run_id: int
+    recommendation: str
+    model: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class Target:
     id: int
     name: str
@@ -235,14 +253,14 @@ class TargetStore:
 
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
-        """Additive migrations. New tables come from the schema script (CREATE IF NOT EXISTS); the version-3
-        columns (adaptive) and version-4 columns (experience) on the existing tables are ALTER-added for an
-        older database (R9)."""
+        """Additive migrations. New tables (v2 canaries/runs, v3 turns, v5 report_recommendations) come from the
+        schema script (CREATE IF NOT EXISTS); the version-3 columns (adaptive) and version-4 columns (experience)
+        on the existing tables are ALTER-added for an older database (R9). Version 5 adds only a new table."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3"):
+        if current is not None and current not in ("1", "2", "3", "4"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
         # An older database may lack the adaptive (v3) and experience (v4) columns on `runs`; add any missing.
@@ -483,6 +501,27 @@ class TargetStore:
         if row is None:
             raise LookupError(f"No run with id {run_id}.")
         return self._run(row)
+
+    # ---- report recommendations (feature 005, FR-012/FR-013) ----
+
+    def get_recommendation(self, run_id: int) -> StoredRecommendation | None:
+        """The cached fix suggestion for a run, or None if none has been generated yet."""
+        with self.connect() as db:
+            row = db.execute("SELECT run_id, recommendation, model, created_at FROM report_recommendations"
+                             " WHERE run_id = ?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        return StoredRecommendation(run_id=row["run_id"], recommendation=row["recommendation"],
+                                    model=row["model"], created_at=row["created_at"])
+
+    def save_recommendation(self, run_id: int, *, recommendation: str, model: str | None) -> None:
+        """Cache (or replace) the fix suggestion for a run, so regenerating a report does not re-call the model."""
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO report_recommendations (run_id, recommendation, model, created_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(run_id) DO UPDATE SET recommendation = excluded.recommendation,"
+                " model = excluded.model, created_at = excluded.created_at",
+                (run_id, recommendation, model, utc_now()))
 
     def close_interrupted_runs(self) -> int:
         """Close anything a stopped process left open, so the target isn't locked by FR-010 forever (FR-031)."""

@@ -89,18 +89,18 @@ def columns(path, table):
         db.close()
 
 
-def test_a_fresh_database_is_created_at_version_4(tmp_path, vault):
+def test_a_fresh_database_has_the_v4_columns(tmp_path, vault):
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "4"
+    assert version(path) == SCHEMA_VERSION   # the current version (>= 4); the v4 columns are present below
     assert "description" in columns(path, "targets")
     assert {"use_prior_experience", "memory_written"} <= columns(path, "runs")
 
 
-def test_a_v3_database_gains_the_new_columns_and_moves_to_4(v3_db, vault):
+def test_a_v3_database_gains_the_new_columns_and_migrates_forward(v3_db, vault):
     assert version(v3_db) == "3"
     TargetStore(v3_db, vault)
-    assert version(v3_db) == "4"
+    assert version(v3_db) == SCHEMA_VERSION
     assert "description" in columns(v3_db, "targets")
     assert {"use_prior_experience", "memory_written"} <= columns(v3_db, "runs")
 
@@ -117,7 +117,7 @@ def test_the_existing_run_survives_and_defaults_to_warm(v3_db, vault):
 def test_opening_twice_is_harmless(v3_db, vault):
     TargetStore(v3_db, vault)
     TargetStore(v3_db, vault)
-    assert version(v3_db) == "4"
+    assert version(v3_db) == SCHEMA_VERSION
 
 
 def test_a_newer_version_is_refused(tmp_path, vault):

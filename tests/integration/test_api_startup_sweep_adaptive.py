@@ -2,7 +2,6 @@
 import logging
 
 import httpx
-import pytest
 
 from kestrel.api.main import load_terms
 from kestrel.secrets import Vault, load_or_create_key

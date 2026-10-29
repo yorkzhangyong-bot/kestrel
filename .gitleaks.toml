@@ -1,0 +1,13 @@
+# Gitleaks configuration: keep the upstream default rules, and allowlist only the redaction unit test. Its
+# fixtures are deliberately fake sample secrets (all marked FAKE) used to prove the AI-review scrubber works —
+# not real credentials.
+title = "Kestrel"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Redaction test fixtures are fake sample secrets, not real credentials."
+paths = [
+    '''tests/unit/test_ai_review\.py''',
+]

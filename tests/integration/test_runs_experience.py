@@ -3,7 +3,6 @@
 import uuid
 
 import httpx
-import pytest
 
 from kestrel.api.main import load_terms
 from tests.support import StubAttacker, StubJudge, fixture_library

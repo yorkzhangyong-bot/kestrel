@@ -173,7 +173,6 @@ def test_a_send_that_eats_the_whole_deadline_skips_the_judge(store, target):
 
 def test_every_path_ends_with_a_verdict_or_a_failure_step(store):
     """SC-002: no finished run is left with neither a verdict nor a failure step."""
-    clock = FakeClock()
     scenarios = [
         dict(canaries=["KESTREL-CANARY-7Q4M2X"], judge=StubJudge(result=ParsedVerdict("failed", "x")),
              sender=sender_returning(ok("KESTREL-CANARY-7Q4M2X"))),                      # canary

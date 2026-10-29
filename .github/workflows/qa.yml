@@ -1,0 +1,179 @@
+name: QA
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write   # the AI review posts a PR comment
+
+jobs:
+  traceability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Traceability (every FR/SC in the spec is referenced by a test)
+        run: python scripts/check_traceability.py 2>&1 | tee qa-traceability.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-traceability
+          path: qa-traceability.log
+          if-no-files-found: ignore
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync dependencies
+        run: uv sync 2>&1 | tee -a qa-quality.log
+      - name: Ruff
+        run: uvx ruff check src ui tests 2>&1 | tee -a qa-quality.log
+      - name: Mypy (advisory)
+        # Advisory while the pre-existing type gaps in the core modules are cleared: this runs over all of src and
+        # reports, but does not yet block the gate (the CI commit that introduced it changed no feature code).
+        continue-on-error: true
+        run: uv run mypy src 2>&1 | tee -a qa-quality.log
+      - name: Tests with coverage (fail under 85%)
+        run: uv run pytest tests/unit tests/integration --cov=src --cov-report=term-missing --cov-fail-under=85 2>&1 | tee -a qa-quality.log
+      - name: Gitleaks (no secrets in the diff or history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: pip-audit (no known-vulnerable dependencies)
+        # Known chromadb advisories with no fix version available, on a stack-pinned dependency (Principle X), are
+        # allowlisted so the gate still blocks on any NEW vulnerability. Re-evaluate when chromadb ships a fix.
+        run: uv run pip-audit --ignore-vuln PYSEC-2026-311 --ignore-vuln PYSEC-2026-3813 --ignore-vuln PYSEC-2026-3814 --ignore-vuln PYSEC-2026-3815 2>&1 | tee -a qa-quality.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-quality
+          path: qa-quality.log
+          if-no-files-found: ignore
+
+  review:
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Claude Code review
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true   # the verdict step below is the gate, so the review blocks on a severe finding only
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the QA pipeline's code reviewer for this repository.
+
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            BRANCH: ${{ github.head_ref }}
+
+            The PR branch is already checked out in the current working directory.
+
+            Review this pull request against two references, and read both before judging:
+            - The review standard in .github/review/checklist.md (the constitution, the ten checks, the project rules, and especially the Evidence rules) — follow it exactly.
+            - The feature spec for this branch: the spec.md under specs/ whose directory starts with this branch's numeric prefix (for example branch "005-owasp-report" uses specs/005-*/spec.md).
+
+            You may read any file in the repository to gather evidence, and you may run `uv run pytest tests/unit -q` if it helps you judge a change.
+
+            Then post exactly ONE top-level comment on the pull request using `gh pr comment`. In that comment:
+            - List each finding with a severity of severe, major, minor, or possible.
+            - For every finding, quote the exact file and line(s) it is based on (as file:line), per the checklist's Evidence rules. A finding that quotes nothing is not a finding.
+            - If there are no findings, say so plainly.
+            - End with a single final line that is exactly "VERDICT: PASS" or "VERDICT: FAIL". Use FAIL if and only if there is at least one severe finding; otherwise PASS.
+
+            Post only the GitHub comment — do not submit the review as chat messages.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Bash(uv run pytest:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+      - name: Enforce the review verdict (blocks on a severe finding only)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json comments --jq '.comments[-1].body // ""')
+          printf '%s\n' "$body" | tee qa-review.log
+          if printf '%s' "$body" | grep -q "VERDICT: FAIL"; then
+            echo "AI review returned VERDICT: FAIL (at least one severe finding)." | tee -a qa-review.log
+            exit 1
+          fi
+          echo "AI review verdict is not FAIL; the review gate passes." | tee -a qa-review.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: qa-logs-review
+          path: qa-review.log
+          if-no-files-found: ignore
+
+  notify:
+    needs: [traceability, quality, review]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: qa-logs-*
+          merge-multiple: true
+      - name: Build email body (failed jobs and first error lines)
+        env:
+          R_TRACE: ${{ needs.traceability.result }}
+          R_QUALITY: ${{ needs.quality.result }}
+          R_REVIEW: ${{ needs.review.result }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import glob, os, pathlib, re
+          results = {"traceability": os.environ.get("R_TRACE", ""), "quality": os.environ.get("R_QUALITY", ""),
+                     "review": os.environ.get("R_REVIEW", "")}
+          failed = [name for name, result in results.items() if result == "failure"]
+          lines = [f"QA pipeline failed for {os.environ.get('REPO', '?')} PR #{os.environ.get('PR', '?')}.",
+                   f"Branch: {os.environ.get('BRANCH', '?')}",
+                   f"Run: {os.environ.get('RUN_URL', '?')}",
+                   "",
+                   "Failed jobs: " + (", ".join(failed) if failed else "(none reported)"),
+                   ""]
+          pattern = re.compile(r"error|fail|assert|traceback|exit code|not found|severe", re.I)
+          for log in sorted(glob.glob("artifacts/*.log")):
+              hits = [line for line in pathlib.Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
+                      if pattern.search(line)][:5]
+              if hits:
+                  lines.append(f"== {pathlib.Path(log).name} ==")
+                  lines.extend(hits)
+                  lines.append("")
+          pathlib.Path("email-body.txt").write_text("\n".join(lines), encoding="utf-8")
+          print("\n".join(lines))
+          PY
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: "QA pipeline failed: ${{ github.repository }} PR #${{ github.event.pull_request.number }}"
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: Kestrel CI <${{ secrets.SMTP_USER }}>
+          body: file://email-body.txt
