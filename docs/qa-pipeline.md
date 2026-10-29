@@ -70,9 +70,11 @@ Gate 3 runs the official [Claude Code GitHub Action](https://github.com/anthropi
 (`severe`/`major`/`minor`/`possible`), each quoting the exact `file:line` evidence the Evidence rules require, and
 ends with a line `VERDICT: PASS` or `VERDICT: FAIL`.
 
-A follow-up step reads that comment (via the `gh` CLI with `GITHUB_TOKEN`) and fails the job only when it contains
-`VERDICT: FAIL` — at least one severe finding — so the gate blocks on severe only; a review that cannot run does
-not block. The gate needs the `ANTHROPIC_API_KEY` secret. **OpenRouter is no longer used for the review.**
+A follow-up step reads that comment (via the `gh` CLI with `GITHUB_TOKEN`) and is **fail-closed**: it fails the job
+both when the latest verdict is `VERDICT: FAIL` (at least one severe finding) **and** when no `VERDICT: PASS` comment
+was posted at all. A reviewer that cannot run — a missing or expired `ANTHROPIC_API_KEY`, an API error, an outage —
+therefore blocks the merge instead of passing vacuously on an empty comment. The gate needs the `ANTHROPIC_API_KEY`
+secret. **OpenRouter is no longer used for the review.**
 
 The earlier standalone reviewer, [scripts/ai_review.py](../scripts/ai_review.py) — which called an OpenRouter model
 over a redacted diff — is **deprecated** and no longer wired into CI; it and its redaction tests are kept for
