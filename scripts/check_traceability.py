@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Traceability gate: every requirement id in the feature's spec must be referenced by at least one test.
+"""Traceability gate for implementation pull requests (feature 005, extended by feature 006).
 
-The feature is taken from the branch-name prefix (``005-owasp-report`` -> feature ``005``); the spec is
-``specs/<nnn>-*/spec.md``. Every ``FR-nnn`` and ``SC-nnn`` identifier in that spec must appear somewhere under
-``tests/`` (matched as a whole token, so ``FR-1`` does not satisfy ``FR-10``). Unreferenced identifiers are
-printed and the script exits 1. A branch with no numeric feature prefix has nothing to trace and exits 0.
+Two things, both on implementation PRs (the workflow runs ``check_spec.py`` instead on spec-only PRs):
+
+1. **Tests-traceability** — every ``FR-nnn``/``SC-nnn`` in the feature's ``specs/<nnn>-*/spec.md`` must appear
+   somewhere under ``tests/`` (matched as a whole token, so ``FR-1`` does not satisfy ``FR-10``).
+2. **Implementation-PR rules** (feature 006) — the PR description must carry a ``Spec-PR: #<n>`` reference
+   (FR-009), and a PR that edits a spec file alongside a ``src/`` change must carry a ``spec-change:`` note
+   (FR-010/FR-011).
+
+Unreferenced ids or a broken rule are printed and the script exits 1. A branch with no numeric feature prefix
+skips tests-traceability; a PR with no code-directory change is not an implementation PR and skips the rules.
 """
 from __future__ import annotations
 
@@ -17,6 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = ROOT / "tests"
 ID_RE = re.compile(r"\b(?:FR|SC)-\d+\b")
+CODE_DIRS = ("src/", "tests/", "ui/", "scripts/")
+SPEC_CHANGE_RE = re.compile(r"(?im)^spec-change:\s*\S")
+SPEC_PR_RE = re.compile(r"(?im)^Spec-PR:\s*#\d+")
 
 
 def branch_name() -> str:
@@ -58,36 +67,79 @@ def identifiers_referenced_by_tests() -> set[str]:
     return referenced
 
 
-def main() -> int:
-    branch = branch_name()
-    prefix = feature_prefix(branch)
-    if prefix is None:
-        print(f"No numeric feature prefix in branch {branch!r}; nothing to trace.")
-        return 0
+# ---- implementation-PR rules (feature 006) ----
 
+def changed_files() -> list[str]:
+    """The PR's changed paths via git diff against the base ref. Empty when not in a PR context."""
+    base = os.environ.get("GITHUB_BASE_REF")
+    if not base:
+        return []
+    subprocess.run(["git", "fetch", "--quiet", "origin", base], cwd=ROOT, capture_output=True, text=True)
+    done = subprocess.run(["git", "diff", "--name-only", f"origin/{base}...HEAD"],
+                          cwd=ROOT, capture_output=True, text=True)
+    return [line.strip() for line in done.stdout.splitlines() if line.strip()]
+
+
+def is_spec_only(files: list[str]) -> bool:
+    """True when the PR changes nothing under src/, tests/, ui/, or scripts/ (FR-002)."""
+    return not any(path.startswith(CODE_DIRS) for path in files)
+
+
+def needs_spec_change_note(files: list[str]) -> bool:
+    """True when the PR edits a spec file in the same change as a src/ file (FR-010)."""
+    return any(p.startswith("specs/") for p in files) and any(p.startswith("src/") for p in files)
+
+
+def spec_change_ok(files: list[str], pr_body: str | None) -> bool:
+    return not needs_spec_change_note(files) or bool(SPEC_CHANGE_RE.search(pr_body or ""))
+
+
+def has_spec_pr_reference(pr_body: str | None) -> bool:
+    """True when the description carries a ``Spec-PR: #<n>`` line (FR-009)."""
+    return bool(SPEC_PR_RE.search(pr_body or ""))
+
+
+def _pr_rule_problems() -> list[str]:
+    files = changed_files()
+    if not files or is_spec_only(files):
+        return []   # not an implementation PR (or no PR context)
+    pr_body = os.environ.get("PR_BODY", "")
+    problems: list[str] = []
+    if not has_spec_pr_reference(pr_body):
+        problems.append("implementation PR description lacks a 'Spec-PR: #<n>' reference line (FR-009)")
+    if not spec_change_ok(files, pr_body):
+        problems.append("a spec file changed alongside a src/ change without a 'spec-change:' note (FR-010/FR-011)")
+    return problems
+
+
+def _traceability_problems() -> list[str]:
+    prefix = feature_prefix(branch_name())
+    if prefix is None:
+        print("No numeric feature prefix; skipping tests-traceability.")
+        return []
     spec = find_spec(prefix)
     if spec is None:
-        print(f"No spec found for feature {prefix} (expected specs/{prefix}-*/spec.md).")
-        return 1
-
+        return [f"no spec found for feature {prefix} (expected specs/{prefix}-*/spec.md)"]
     ids = spec_identifiers(spec)
     rel = spec.relative_to(ROOT).as_posix()
     if not ids:
         print(f"No FR-/SC- identifiers found in {rel}; nothing to trace.")
-        return 0
-
+        return []
     referenced = identifiers_referenced_by_tests()
     unreferenced = [identifier for identifier in ids if identifier not in referenced]
-
     print(f"Feature {prefix}: {len(ids)} requirement id(s) in {rel}; "
           f"{len(ids) - len(unreferenced)} referenced under tests/.")
-    if unreferenced:
-        print("Unreferenced identifiers (no test mentions them):")
-        for identifier in unreferenced:
-            print(f"  - {identifier}")
-        return 1
+    return [f"requirement {identifier} is referenced by no test" for identifier in unreferenced]
 
-    print("All requirement identifiers are referenced by at least one test.")
+
+def main() -> int:
+    problems = _pr_rule_problems() + _traceability_problems()
+    if problems:
+        print("Traceability check failed:")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    print("Traceability OK.")
     return 0
 
 

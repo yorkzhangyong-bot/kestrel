@@ -131,7 +131,7 @@ A contributor needs to follow the workflow without tribal knowledge, and the own
 
 ## Assumptions
 
-- The repository owner is the single code owner; `CODEOWNERS` assigns `specs/` (and, through branch protection, `master`) to that owner, `@yorkzhangyong-bot`.
+- The single code owner is `@ilikeandroid` (the human reviewer account); `CODEOWNERS` assigns `specs/` (and, through branch protection, `master`) to that owner. The owner differs from the PR author `@yorkzhangyong-bot`, because GitHub does not count a PR author's own review toward a Code Owners requirement.
 - The implementation PR's spec-PR reference (FR-009) uses a `Spec-PR: #<n>` line in the pull request description and is enforced by the traceability job, not only by human review.
 - Branch protection and `CODEOWNERS` enforcement are GitHub platform features the owner applies manually (documented in `docs/branch-protection.md`); the repository cannot set them programmatically.
 - The existing four-gate QA pipeline from feature 005 (traceability, quality, Claude Code review, notify) is the basis; this feature adds the spec-only path and the spec-change rule to it rather than replacing it.

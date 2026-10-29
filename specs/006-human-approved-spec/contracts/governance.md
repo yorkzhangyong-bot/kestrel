@@ -21,11 +21,12 @@ always report a result.
 
 ```text
 # The repository owner approves every pull request; specs in particular.
-*         @yorkzhangyong-bot
-/specs/   @yorkzhangyong-bot
+# The owner MUST differ from the PR author: @yorkzhangyong-bot opens the PRs, so review comes from @ilikeandroid.
+*         @ilikeandroid
+/specs/   @ilikeandroid
 ```
 
-- `@yorkzhangyong-bot` is the repository owner's GitHub login.
+- `@ilikeandroid` is the human reviewer account; it differs from the PR author `@yorkzhangyong-bot` so a PR author cannot satisfy their own Code Owners review.
 - Requires "Require review from Code Owners" in branch protection to have effect.
 
 ## `docs/branch-protection.md` — manual settings on `master`
