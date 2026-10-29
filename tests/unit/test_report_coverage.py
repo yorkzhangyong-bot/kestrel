@@ -5,6 +5,8 @@ US3, FR-006/007/008, SC-005. Counts join on the run's owasp_category, which matc
 from kestrel.report.model import build_report
 from kestrel.store import Run
 
+FEATURE = "005"
+
 NOW = "2026-10-28T12:00:00Z"
 TESTED = {"LLM01: Prompt Injection", "LLM06: Excessive Agency", "LLM07: System Prompt Leakage"}
 

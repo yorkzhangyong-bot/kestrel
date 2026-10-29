@@ -5,6 +5,8 @@ not asserted; what is asserted is deterministic — the run completes, names its
 the conversation (the feature-002 model-determinism caveat applies here too)."""
 import pytest
 
+FEATURE = "003"
+
 pytestmark = pytest.mark.e2e
 
 

@@ -4,6 +4,8 @@ import re
 from kestrel.report.model import (CoverageRow, Finding, Header, OtherRun, Recommendation, ReportModel, UntestedClass)
 from kestrel.report.render import render_markdown
 
+FEATURE = "005"
+
 
 def a_model(**changes) -> ReportModel:
     base = dict(

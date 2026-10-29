@@ -7,6 +7,8 @@ from cryptography.fernet import Fernet
 from kestrel.secrets import Vault
 from kestrel.store import SCHEMA_VERSION, UnknownSchemaVersion, TargetStore
 
+FEATURE = "002"
+
 SECRET = "s3cret-header-value"
 
 # The schema exactly as feature 001 shipped it. Kept verbatim so this test keeps checking a real

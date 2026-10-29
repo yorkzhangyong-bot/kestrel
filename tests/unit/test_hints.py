@@ -2,6 +2,8 @@
 from kestrel.experience.hints import format_hints
 from kestrel.experience.store import MemoryRecord
 
+FEATURE = "004"
+
 
 def mem(summary: str) -> MemoryRecord:
     return MemoryRecord(summary=summary, family="system_prompt_leak", verdict="failed", succeeded=False, run_id=1)

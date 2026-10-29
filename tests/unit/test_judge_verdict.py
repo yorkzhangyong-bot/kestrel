@@ -7,6 +7,8 @@ import pytest
 
 from kestrel.judge.verdict import VERDICTS, ParsedVerdict, VerdictParseError, parse_verdict
 
+FEATURE = "002"
+
 REASON = "The agent refused and continued with its classification task."
 
 

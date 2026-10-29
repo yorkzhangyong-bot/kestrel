@@ -5,6 +5,8 @@ from cryptography.fernet import Fernet
 from kestrel.secrets import Vault
 from kestrel.store import TargetStore
 
+FEATURE = "003"
+
 PROMPT = dict(prompt_id="spl-002", prompt_title="t", prompt_text="<seed>", family="system_prompt_leak",
               owasp_category="LLM07: System Prompt Leakage", attacker_source="library:1.0.0")
 

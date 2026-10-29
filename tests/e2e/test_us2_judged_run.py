@@ -6,6 +6,8 @@ is deterministic and is what SC-008's second and third parts are about: the judg
 the model, and the verdict is never dressed up as hard evidence (Principle II)."""
 import pytest
 
+FEATURE = "002"
+
 pytestmark = pytest.mark.e2e
 
 

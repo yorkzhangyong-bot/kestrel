@@ -2,7 +2,7 @@
 
 Kestrel is an autonomous red-teaming agent for tool-using AI agents. You register a target (any HTTP chat endpoint you own), pick an attack family, and Kestrel's attacker agent plans and runs a multi-turn attack against it: it sends messages, inspects the replies and any tool activity for hard evidence, judges each turn, and adapts its next move. Across runs it builds a memory of what worked on each target and reuses successful attack patterns. You don't chat with Kestrel; you configure it and watch the attacker's conversation with your target unfold turn by turn in the Streamlit UI. Built for vibe coders who ship agents with tools but have no security testing in place.
 
-**Status**: features 001–005 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. Kestrel learns from every run: a local ChromaDB store keeps attack patterns and per-target memory, and a warm run primes the attacker with what worked before. And it writes a report (005): an OWASP-mapped, fix-ready summary of a target's runs, with model-generated fix suggestions, in Markdown or HTML. The human-approved spec workflow (006) comes next, then the A/B harness (007). Every pull request runs a four-gate QA pipeline — traceability, quality (ruff, mypy, tests with coverage, gitleaks, pip-audit), a Claude Code review, and a failure notifier — described in [the QA pipeline docs](docs/qa-pipeline.md). The project's rules are in the [constitution](.specify/memory/constitution.md).
+**Status**: features 001–005 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. Kestrel learns from every run: a local ChromaDB store keeps attack patterns and per-target memory, and a warm run primes the attacker with what worked before. And it writes a report (005): an OWASP-mapped, fix-ready summary of a target's runs, with model-generated fix suggestions, in Markdown or HTML. The human-approved spec workflow (006) comes next, then the A/B harness (007). Every pull request runs a four-gate QA pipeline — traceability, quality (ruff, mypy, tests with coverage, gitleaks, pip-audit), a Claude Code review, and a failure notifier — described in [the QA pipeline docs](docs/qa-pipeline.md). Each feature's spec is approved by a human on GitHub before implementation begins (006): specify → clarify → spec PR → human approval → plan/tasks/implement → implementation PR → four gates → human merge. The project's rules are in the [constitution](.specify/memory/constitution.md).
 
 ## Run it on your own machine
 
@@ -80,6 +80,8 @@ The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code
 
 - [Technical design](docs/technical-design.md)
 - [QA pipeline](docs/qa-pipeline.md)
+- [Branch protection setup](docs/branch-protection.md)
+- [QA scorecard](docs/qa-scorecard.md)
 - [Quickstart and manual checks](specs/001-register-target/quickstart.md)
 - [Feature 001 spec, plan and tasks](specs/001-register-target/)
 - [Feature 002 spec, plan and tasks](specs/002-single-turn-attack/)

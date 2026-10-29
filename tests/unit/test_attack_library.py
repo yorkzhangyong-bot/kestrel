@@ -9,6 +9,8 @@ import pytest
 from kestrel.attacks.library import (FAMILIES, MAX_PROMPT_CHARS, AttackLibrary, LibraryError, build_library,
                                      load_library)
 
+FEATURE = "002"
+
 OWASP = {key: meta["owasp_category"] for key, meta in FAMILIES.items()}
 
 

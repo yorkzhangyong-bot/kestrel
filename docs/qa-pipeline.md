@@ -7,12 +7,21 @@ It is a set of gates: a PR should not merge until they pass. It changes no featu
 
 | Job | What it does | Fails when |
 | --- | --- | --- |
-| **traceability** | [scripts/check_traceability.py](../scripts/check_traceability.py) reads the feature's `specs/<nnn>-*/spec.md` (feature inferred from the branch prefix, e.g. `005`), collects every `FR-nnn`/`SC-nnn`, and checks each is referenced somewhere under `tests/`. | Any requirement id has no test that mentions it. |
-| **quality** | `uv sync`, then `ruff check src ui tests`, `mypy src`, `pytest tests/unit tests/integration` with coverage on `src`, plus `gitleaks` and `pip-audit`. | A lint or test failure; line coverage **below 85%**; a secret in the diff/history; a **new** known-vulnerable dependency. |
-| **review** | Needs **quality**. The [Claude Code Action](https://github.com/anthropics/claude-code-action) (`anthropics/claude-code-action@v1`) reviews the PR against the checklist and feature spec with full-repo access (it may read any file and run `uv run pytest tests/unit -q`), then posts one PR comment ending in `VERDICT: PASS`/`FAIL`; a follow-up step enforces the verdict. | The posted comment ends in `VERDICT: FAIL` (at least one **severe** finding). A review that cannot run does not block. |
+| **classify** | Computes `spec_only` (true when the PR changes nothing under `src/`, `tests/`, `ui/`, `scripts/`) and exposes it to the other jobs; always succeeds, so the required jobs never skip (FR-006). | — (it only classifies). |
+| **traceability** | On an **implementation PR**, [check_traceability.py](../scripts/check_traceability.py) checks every `FR-nnn`/`SC-nnn` in the feature spec is referenced under `tests/`, **and** enforces the implementation-PR rules (a `Spec-PR: #<n>` line; a `spec-change:` note when a spec file changes alongside `src/`). On a **spec-only PR** it runs [check_spec.py](../scripts/check_spec.py) instead (ids well-formed, unique, no orphan references across the feature dir; ids inside code spans are ignored). | A requirement id with no test; a missing `Spec-PR:` or required `spec-change:` line; or a malformed/duplicate/orphan id. |
+| **quality** | On an implementation PR: `uv sync`, `ruff check src ui tests`, `mypy src`, `pytest … --cov=src` (≥85%), `gitleaks`, `pip-audit`. **On a spec-only PR it reports success without running these** (FR-005). | A lint or test failure; coverage **below 85%**; a secret; a **new** known-vulnerable dependency. (Never on a spec-only PR.) |
+| **review** | Needs **quality**. The [Claude Code Action](https://github.com/anthropics/claude-code-action) (`anthropics/claude-code-action@v1`) reviews against [.github/review/checklist.md](../.github/review/checklist.md) on code PRs or [.github/review/spec-checklist.md](../.github/review/spec-checklist.md) on spec-only PRs, then posts one PR comment ending in `VERDICT: PASS`/`FAIL`; a follow-up step enforces the verdict. | The posted comment ends in `VERDICT: FAIL` (at least one **severe** finding). A review that cannot run does not block. |
 | **notify** | Runs only if any job failed. Emails the failed job names and the first error lines (via `dawidd6/action-send-mail`). | — (best effort; never gates the PR). |
 
 > Mutation testing was dropped from CI because its runtime exceeded 6 hours; run it locally with `uv run mutmut run` when needed.
+
+> **Feature-scoped traceability.** The gate is per-feature: it checks only the feature of the PR's branch, and a
+> test reference counts for feature `<nnn>` only if it **names the feature** — a scoped token `<nnn>/FR-001` (or
+> `<nnn>-FR-001`) anywhere, or a bare `FR-001` in a test file carrying a module-level `FEATURE = "<nnn>"` marker.
+> This stops one feature's tests from accidentally "covering" another feature's same-numbered id. A requirement
+> enforced outside unit tests (branch protection, `CODEOWNERS`, docs) can instead be justified in
+> `specs/<nnn>-*/traceability.md` as a line `<nnn>/FR-00x: <justification>`. See
+> [specs/006-human-approved-spec/traceability.md](../specs/006-human-approved-spec/traceability.md).
 
 Two deliberate, documented exceptions keep the quality gate meaningful on a codebase that predates it, without
 touching feature code:
@@ -30,6 +39,27 @@ handling, authorization, error handling, failure-path tests, non-weakened CI, ar
 project rules treated as severe — no raw HTML in the report renderer, no target name/URL/auth header sent to any
 model, and no experience-store writes outside the attack flow. The Evidence rules require every finding to quote
 its exact `file:line` and to end the comment with the `VERDICT:` line the gate reads.
+
+## The human-approved spec workflow
+
+No feature implementation reaches `master` until a human has approved its specification (feature 006). The cycle:
+
+```text
+specify -> clarify -> spec PR (specs/ + docs/ only) -> human approval -> merge
+        -> plan / tasks / implement -> implementation PR (Spec-PR: #n) -> four gates -> human merge
+```
+
+- **Spec-only PR** — the Spec Kit artifacts under `specs/<nnn>-*/` are opened as a PR that touches no code
+  directory. `classify` marks it spec-only; `traceability` runs the spec-mode check; `quality` reports success
+  without running; `review` uses the spec checklist. A code owner must approve before it merges.
+- **Implementation PR** — references its merged spec PR with a `Spec-PR: #<n>` line (enforced by `traceability`);
+  and if it edits a spec file alongside a `src/` change it must carry a `spec-change: <reason>` line in the
+  description. Both lines live in the PR description.
+- **Human approval** is platform-enforced: [.github/CODEOWNERS](../.github/CODEOWNERS) assigns `specs/` (and the
+  repo) to the reviewer `@ilikeandroid` — deliberately **not** the PR author `@yorkzhangyong-bot`, since GitHub
+  does not count a PR author's own review. Branch protection (manual) requires a PR, a code-owner approval, and the
+  `traceability`/`quality`/`review` checks; see [docs/branch-protection.md](branch-protection.md). The approval
+  guarantee holds only once the owner has applied those settings.
 
 ## The review gate (Claude Code Action)
 

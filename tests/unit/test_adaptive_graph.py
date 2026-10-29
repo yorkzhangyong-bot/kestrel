@@ -16,6 +16,8 @@ from kestrel.judge.verdict import ParsedVerdict
 from kestrel.secrets import Vault
 from kestrel.store import TargetStore
 
+FEATURE = "003"
+
 SEED = AttackPrompt(id="spl-002", title="t", text="<seed opening>", family="system_prompt_leak",
                     owasp_category="LLM07: System Prompt Leakage", source="x", source_url="x", licence="x")
 RESOLVED = ResolvedSettings(url="http://t/chat", method="POST", headers=(("X-API-Key", "test-key-123"),),

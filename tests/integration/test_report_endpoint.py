@@ -1,6 +1,8 @@
 """GET /api/targets/{id}/report: both formats, bad format, missing target, empty state (US1, FR-002/3/19)."""
 from tests.support import StubJudge, fixture_library
 
+FEATURE = "005"
+
 SECRET = "s3cret-header-value"
 
 

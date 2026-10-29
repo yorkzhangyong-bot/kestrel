@@ -11,6 +11,8 @@ import pytest
 
 from kestrel.judge.client import JudgeClient, JudgeError
 
+FEATURE = "002"
+
 ATTACK = "<attack prompt placeholder>"
 REPLY = "The agent answered its ordinary task."
 

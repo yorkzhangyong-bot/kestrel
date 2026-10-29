@@ -5,6 +5,8 @@ import pytest
 from kestrel.settings import (DEFAULT_ATTACKER_BASE_URL, DEFAULT_ATTACKER_MODEL, DEFAULT_JUDGE_BASE_URL,
                               DEFAULT_JUDGE_MODEL, SettingsError, load_settings)
 
+FEATURE = "001"
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

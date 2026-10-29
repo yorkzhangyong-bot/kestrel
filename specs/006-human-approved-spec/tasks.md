@@ -24,15 +24,15 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the feature needs no new runtime/pip dependency (Principle X) and that `.github/workflows/qa.yml` (feature 005's four gates: traceability, quality, review, notify) is the baseline to extend; this feature changes only `.github/`, `scripts/`, `tests/unit/`, and `docs/`.
+- [X] T001 Confirm the feature needs no new runtime/pip dependency (Principle X) and that `.github/workflows/qa.yml` (feature 005's four gates: traceability, quality, review, notify) is the baseline to extend; this feature changes only `.github/`, `scripts/`, `tests/unit/`, and `docs/`.
 
 ---
 
 ## Phase 2: Foundational (blocking prerequisites)
 
-- [ ] T002 Add a `classify` job to `.github/workflows/qa.yml`: compute changed files with `git diff --name-only origin/${{ github.base_ref }}...HEAD`, set output `spec_only=true` when none start with `src/`, `tests/`, `ui/`, or `scripts/` (else `false`), and **always exit 0**; make `traceability`, `quality`, and `review` declare `needs: classify` so they always run and report (FR-002, FR-006).
-- [ ] T003 [P] [US2] Write `tests/unit/test_check_spec.py` (FR-003, SC-002, SC-006): a well-formed feature directory passes; a duplicate definition fails and names the ID; an orphan reference (referenced, never defined) fails and names the ID; a malformed ID (`FR-7`, `FR-0001`) fails; a clean minimal spec passes; a numbering gap does **not** fail.
-- [ ] T004 [US2] Implement `scripts/check_spec.py` (FR-003, FR-014): resolve the feature dir (CLI arg, else branch prefix like `check_traceability.py`), read every `*.md` under it, collect definitions (`- **FR-### / SC-###**`) and references (`(FR|SC)-\d+` tokens), fail (exit 1, naming each offender) on a malformed id (`^(FR|SC)-\d{3}$` fails), a duplicate definition, or an orphan reference; pass (exit 0) otherwise; gaps allowed. Makes T003 pass. **(Delivers User Story 2 — spec-mode validation — placed in Foundational because US1's spec-only traceability gate depends on it.)**
+- [X] T002 Add a `classify` job to `.github/workflows/qa.yml`: compute changed files with `git diff --name-only origin/${{ github.base_ref }}...HEAD`, set output `spec_only=true` when none start with `src/`, `tests/`, `ui/`, or `scripts/` (else `false`), and **always exit 0**; make `traceability`, `quality`, and `review` declare `needs: classify` so they always run and report (FR-002, FR-006).
+- [X] T003 [P] [US2] Write `tests/unit/test_check_spec.py` (FR-003, SC-002, SC-006): a well-formed feature directory passes; a duplicate definition fails and names the ID; an orphan reference (referenced, never defined) fails and names the ID; a malformed ID (`FR-7`, `FR-0001`) fails; a clean minimal spec passes; a numbering gap does **not** fail.
+- [X] T004 [US2] Implement `scripts/check_spec.py` (FR-003, FR-014): resolve the feature dir (CLI arg, else branch prefix like `check_traceability.py`), read every `*.md` under it, collect definitions (`- **FR-### / SC-###**`) and references (`(FR|SC)-\d+` tokens), fail (exit 1, naming each offender) on a malformed id (`^(FR|SC)-\d{3}$` fails), a duplicate definition, or an orphan reference; pass (exit 0) otherwise; gaps allowed. Makes T003 pass. **(Delivers User Story 2 — spec-mode validation — placed in Foundational because US1's spec-only traceability gate depends on it.)**
 
 **Checkpoint**: every required job can read `needs.classify.outputs.spec_only`; none is ever skipped; and the spec-mode checker is correct and unit-tested, ready for US1's traceability wiring.
 
@@ -46,12 +46,12 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 
 ### Implementation
 
-- [ ] T005 [P] [US1] Create `.github/CODEOWNERS` assigning `*` and `/specs/` to the repository owner `@yorkzhangyong-bot` (FR-007).
-- [ ] T006 [P] [US1] Create `.github/review/spec-checklist.md` — the spec review standard: ambiguity, missing or weak success criteria, untestable requirements, and conflicts with the constitution; same `severe`/`major`/`minor`/`possible` grading and `VERDICT:` line as `checklist.md` (FR-004).
-- [ ] T007 [US1] In `.github/workflows/qa.yml`, guard the `quality` job's heavy steps with `if: needs.classify.outputs.spec_only != 'true'` so a spec-only PR's `quality` job **reports success without running its heavy steps** (lint, type check, tests, coverage, secret and dependency scans) (FR-005, FR-006).
-- [ ] T008 [US1] In `.github/workflows/qa.yml`, add a spec-only `review` step (gated on `spec_only == 'true'`) running `anthropics/claude-code-action@v1` against `.github/review/spec-checklist.md` + the feature spec, keeping the shared `VERDICT: FAIL` enforcement step (FR-004).
-- [ ] T009 [US1] In `.github/workflows/qa.yml`, branch the `traceability` job: run `python scripts/check_spec.py` when `spec_only == 'true'`, else the existing `check_traceability.py` (FR-003, FR-005). Depends on `scripts/check_spec.py` from Foundational T004.
-- [ ] T010 [P] [US1] Create `docs/branch-protection.md` — the exact manual GitHub settings for `master`: require a PR; require 1 approval; require review from Code Owners; require status checks `traceability`/`quality`/`review` with "branches up to date"; no bypass. Note the required-check names must match the `qa.yml` job names, protection is applied only after the workflow merges, and **SC-004's guarantee (no unapproved merge) holds only once the owner has applied these settings** (FR-008, FR-013).
+- [X] T005 [P] [US1] Create `.github/CODEOWNERS` assigning `*` and `/specs/` to the repository owner `@yorkzhangyong-bot` (FR-007).
+- [X] T006 [P] [US1] Create `.github/review/spec-checklist.md` — the spec review standard: ambiguity, missing or weak success criteria, untestable requirements, and conflicts with the constitution; same `severe`/`major`/`minor`/`possible` grading and `VERDICT:` line as `checklist.md` (FR-004).
+- [X] T007 [US1] In `.github/workflows/qa.yml`, guard the `quality` job's heavy steps with `if: needs.classify.outputs.spec_only != 'true'` so a spec-only PR's `quality` job **reports success without running its heavy steps** (lint, type check, tests, coverage, secret and dependency scans) (FR-005, FR-006).
+- [X] T008 [US1] In `.github/workflows/qa.yml`, add a spec-only `review` step (gated on `spec_only == 'true'`) running `anthropics/claude-code-action@v1` against `.github/review/spec-checklist.md` + the feature spec, keeping the shared `VERDICT: FAIL` enforcement step (FR-004).
+- [X] T009 [US1] In `.github/workflows/qa.yml`, branch the `traceability` job: run `python scripts/check_spec.py` when `spec_only == 'true'`, else the existing `check_traceability.py` (FR-003, FR-005). Depends on `scripts/check_spec.py` from Foundational T004.
+- [X] T010 [P] [US1] Create `docs/branch-protection.md` — the exact manual GitHub settings for `master`: require a PR; require 1 approval; require review from Code Owners; require status checks `traceability`/`quality`/`review` with "branches up to date"; no bypass. Note the required-check names must match the `qa.yml` job names, protection is applied only after the workflow merges, and **SC-004's guarantee (no unapproved merge) holds only once the owner has applied these settings** (FR-008, FR-013).
 
 **Checkpoint**: the spec-only path and the approval gate work end to end (approval itself is enforced once T010's settings are applied manually).
 
@@ -65,12 +65,12 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 
 ### Tests (write first, must fail)
 
-- [ ] T011 [P] [US3] Write `tests/unit/test_check_traceability.py` (FR-009, FR-010, FR-011, SC-003, SC-007) for the pure helpers: `is_spec_only(changed_files)`; the spec-change rule (required when changed files include both `specs/**` and `src/**`, satisfied by a `^spec-change:\s*\S` line, not required otherwise); `has_spec_pr_reference(pr_body)` (a `^Spec-PR:\s*#\d+` line) present/absent.
+- [X] T011 [P] [US3] Write `tests/unit/test_check_traceability.py` (FR-009, FR-010, FR-011, SC-003, SC-007) for the pure helpers: `is_spec_only(changed_files)`; the spec-change rule (required when changed files include both `specs/**` and `src/**`, satisfied by a `^spec-change:\s*\S` line, not required otherwise); `has_spec_pr_reference(pr_body)` (a `^Spec-PR:\s*#\d+` line) present/absent.
 
 ### Implementation
 
-- [ ] T012 [US3] Extend `scripts/check_traceability.py` (FR-009, FR-010, FR-011): add the pure helpers above; on an implementation PR, read changed files (`git diff` vs `$GITHUB_BASE_REF`) and the PR body (`$PR_BODY`, missing = empty) and fail (exit 1, with a clear message) when a required `spec-change:` note or the `Spec-PR: #<n>` line is missing — alongside the existing tests-traceability check. Makes T011 pass.
-- [ ] T013 [US3] In `.github/workflows/qa.yml`, pass `PR_BODY: ${{ github.event.pull_request.body }}` to the `traceability` job so `check_traceability.py` can read it on the implementation-PR path (FR-009, FR-010).
+- [X] T012 [US3] Extend `scripts/check_traceability.py` (FR-009, FR-010, FR-011): add the pure helpers above; on an implementation PR, read changed files (`git diff` vs `$GITHUB_BASE_REF`) and the PR body (`$PR_BODY`, missing = empty) and fail (exit 1, with a clear message) when a required `spec-change:` note or the `Spec-PR: #<n>` line is missing — alongside the existing tests-traceability check. Makes T011 pass.
+- [X] T013 [US3] In `.github/workflows/qa.yml`, pass `PR_BODY: ${{ github.event.pull_request.body }}` to the `traceability` job so `check_traceability.py` can read it on the implementation-PR path (FR-009, FR-010).
 
 **Checkpoint**: implementation PRs are gated on the spec-PR reference and the spec-change acknowledgment.
 
@@ -84,8 +84,8 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 
 ### Implementation
 
-- [ ] T014 [P] [US4] Update `docs/qa-pipeline.md` (FR-012): document the spec-only path (classify → spec-mode traceability, success-without-running quality, spec-checklist review), the implementation-PR rules (`Spec-PR:`, `spec-change:`), and link `docs/branch-protection.md`.
-- [ ] T015 [P] [US4] Update `README.md` (FR-012, SC-005): describe the cycle specify → clarify → spec PR → human approval → plan/tasks/implement → implementation PR → four gates → human merge, linking the QA-pipeline and branch-protection docs.
+- [X] T014 [P] [US4] Update `docs/qa-pipeline.md` (FR-012): document the spec-only path (classify → spec-mode traceability, success-without-running quality, spec-checklist review), the implementation-PR rules (`Spec-PR:`, `spec-change:`), and link `docs/branch-protection.md`.
+- [X] T015 [P] [US4] Update `README.md` (FR-012, SC-005): describe the cycle specify → clarify → spec PR → human approval → plan/tasks/implement → implementation PR → four gates → human merge, linking the QA-pipeline and branch-protection docs.
 
 **Checkpoint**: the workflow is documented and reproducible from the repo alone.
 
@@ -93,11 +93,11 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 
 ## Phase 6: Polish & cross-cutting
 
-- [ ] T016 Run `uv run pytest tests/unit/test_check_spec.py tests/unit/test_check_traceability.py -q` and the full `uv run pytest`; fix any failure (SC-002, SC-003, SC-006, SC-007).
-- [ ] T017 [P] Run `uvx ruff check scripts tests` and fix lint on the new/changed scripts and tests.
-- [ ] T018 Dogfood: run `uv run python scripts/check_spec.py specs/006-human-approved-spec` and confirm exit 0 (this feature's own spec passes spec-mode).
-- [ ] T019 Confirm the spec review and spec-mode check read only `specs/`/`docs/` and leak no secret, and that the required-check names in `docs/branch-protection.md` match the `qa.yml` job names exactly (FR-006, FR-013).
-- [ ] T020 [P] Validate `.github/workflows/qa.yml` parses as YAML and the `classify` output is wired into `traceability`, `quality`, and `review`.
+- [X] T016 Run `uv run pytest tests/unit/test_check_spec.py tests/unit/test_check_traceability.py -q` and the full `uv run pytest`; fix any failure (SC-002, SC-003, SC-006, SC-007).
+- [X] T017 [P] Run `uvx ruff check scripts tests` and fix lint on the new/changed scripts and tests.
+- [X] T018 Dogfood: run `uv run python scripts/check_spec.py specs/006-human-approved-spec` and confirm exit 0 (this feature's own spec passes spec-mode).
+- [X] T019 Confirm the spec review and spec-mode check read only `specs/`/`docs/` and leak no secret, and that the required-check names in `docs/branch-protection.md` match the `qa.yml` job names exactly (FR-006, FR-013).
+- [X] T020 [P] Validate `.github/workflows/qa.yml` parses as YAML and the `classify` output is wired into `traceability`, `quality`, and `review`.
 
 ---
 

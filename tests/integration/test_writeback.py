@@ -10,6 +10,8 @@ from kestrel.secrets import Vault
 from kestrel.store import TargetStore
 from tests.support import StubEmbeddingFunction
 
+FEATURE = "004"
+
 SECRET = "s3cret-header-value"
 
 

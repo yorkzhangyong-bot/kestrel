@@ -5,6 +5,8 @@ from cryptography.fernet import Fernet
 from kestrel.secrets import Vault
 from kestrel.store import TargetNotFound, TargetStore
 
+FEATURE = "002"
+
 
 @pytest.fixture
 def store(tmp_path) -> TargetStore:

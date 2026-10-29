@@ -1,0 +1,10 @@
+# Code owners for Kestrel (feature 006: human-approved spec workflow).
+#
+# The repository owner reviews and approves every pull request, specifications in particular. The code owner MUST
+# differ from the pull-request author: @yorkzhangyong-bot opens the PRs, so required review comes from the human
+# reviewer account @ilikeandroid (a PR author cannot satisfy a Code Owners review of their own PR).
+#
+# Requires "Require review from Code Owners" in the master branch-protection rule (see docs/branch-protection.md).
+
+*         @ilikeandroid
+/specs/   @ilikeandroid

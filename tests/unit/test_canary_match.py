@@ -4,6 +4,8 @@ Hard evidence must be the kind of match that cannot be argued with, so a near-mi
 """
 from kestrel.runs import match_canary
 
+FEATURE = "002"
+
 CANARY = "KESTREL-CANARY-7Q4M2X"
 
 

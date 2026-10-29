@@ -11,6 +11,8 @@ import pytest
 
 from kestrel.judge.client import JudgeClient, JudgeError
 
+FEATURE = "005"
+
 FAMILY = "system_prompt_leak"
 OWASP = "LLM07: System Prompt Leakage"
 ATTACK = "<winning attacker message placeholder>"

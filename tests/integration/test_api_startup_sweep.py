@@ -6,6 +6,8 @@ from kestrel.secrets import Vault
 from kestrel.store import TargetStore
 from tests.support import StubJudge, fixture_library
 
+FEATURE = "002"
+
 CURRENT_TERMS = load_terms().version
 
 SECRET = "s3cret-header-value"
