@@ -179,17 +179,24 @@ jobs:
           claude_args: |
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Bash(uv run pytest:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
-      - name: Enforce the review verdict (blocks on a severe finding only)
+      - name: Enforce the review verdict (fails on a severe finding or a missing verdict)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          body=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json comments --jq '.comments[-1].body // ""')
+          # Pick the latest comment that actually carries a verdict line, so an unrelated comment
+          # posted after the reviewer cannot hide the verdict and an absent verdict is detectable.
+          body=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+            --json comments --jq '[.comments[] | select((.body // "") | test("VERDICT: (PASS|FAIL)"))] | last | .body // ""')
           printf '%s\n' "$body" | tee qa-review.log
           if printf '%s' "$body" | grep -q "VERDICT: FAIL"; then
             echo "AI review returned VERDICT: FAIL (at least one severe finding)." | tee -a qa-review.log
             exit 1
           fi
-          echo "AI review verdict is not FAIL; the review gate passes." | tee -a qa-review.log
+          if ! printf '%s' "$body" | grep -q "VERDICT: PASS"; then
+            echo "No review verdict was posted - the reviewer did not complete (e.g. an API error), so the gate fails rather than passing vacuously." | tee -a qa-review.log
+            exit 1
+          fi
+          echo "AI review verdict is PASS; the review gate passes." | tee -a qa-review.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
