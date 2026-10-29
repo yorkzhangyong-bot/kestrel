@@ -6,6 +6,8 @@ import httpx
 from kestrel.api.main import load_terms
 from tests.support import StubAttacker, StubJudge, fixture_library
 
+FEATURE = "004"
+
 SECRET = "s3cret-header-value"
 CURRENT_TERMS = load_terms().version
 REPLY = httpx.MockTransport(lambda r: httpx.Response(200, json={"reply": "ok"}))

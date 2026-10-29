@@ -6,6 +6,8 @@ import pytest
 from kestrel.experience.store import ExperienceStore, ExperienceStoreError
 from tests.support import StubEmbeddingFunction
 
+FEATURE = "004"
+
 
 def open_store(path, *, store_version="1") -> ExperienceStore:
     return ExperienceStore(path, embedding_function=StubEmbeddingFunction(), store_version=store_version)

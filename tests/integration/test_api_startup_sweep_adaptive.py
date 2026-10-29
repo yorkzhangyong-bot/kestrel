@@ -8,6 +8,8 @@ from kestrel.secrets import Vault, load_or_create_key
 from kestrel.store import TargetStore
 from tests.support import StubAttacker, StubJudge, fixture_library
 
+FEATURE = "003"
+
 SECRET = "s3cret-header-value"
 CURRENT_TERMS = load_terms().version
 

@@ -10,6 +10,8 @@ import httpx
 from kestrel.api.main import load_terms
 from tests.support import StubJudge, fixture_library
 
+FEATURE = "002"
+
 SECRET = "s3cret-header-value"
 CURRENT_TERMS = load_terms().version
 CANARY = "KESTREL-CANARY-7Q4M2X"

@@ -1,6 +1,8 @@
 """The one-line situation summary: built from judge progress notes, no model call, sanitised (FR-008, FR-013)."""
 from kestrel.experience.summary import MAX_SUMMARY_CHARS, build_summary
 
+FEATURE = "004"
+
 
 def test_summary_joins_judge_progress_notes():
     s = build_summary(["got a refusal", "agent wavered", "still held"],

@@ -2,6 +2,8 @@
 from kestrel.report.render import render_html, render_markdown
 from tests.unit.test_report_render import a_model
 
+FEATURE = "005"
+
 
 def test_html_is_a_self_contained_document_with_no_scripts_or_external_resources():
     html = render_html(render_markdown(a_model()))

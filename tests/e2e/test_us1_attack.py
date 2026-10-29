@@ -11,6 +11,8 @@ the offline tests (tests/unit/test_runs.py, tests/integration/test_api_runs.py),
 """
 import pytest
 
+FEATURE = "002"
+
 pytestmark = pytest.mark.e2e
 
 

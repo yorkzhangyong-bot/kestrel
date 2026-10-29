@@ -2,6 +2,8 @@
 from kestrel.report.model import Recommendation, build_report
 from kestrel.store import Run, Turn
 
+FEATURE = "005"
+
 NOW = "2026-10-28T12:00:00Z"
 
 

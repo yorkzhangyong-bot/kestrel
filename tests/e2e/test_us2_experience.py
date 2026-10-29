@@ -14,6 +14,8 @@ from kestrel.api.main import create_app
 from kestrel.attack.attacker import AttackerClient
 from kestrel.settings import Settings
 
+FEATURE = "004"
+
 pytestmark = pytest.mark.e2e
 
 MEMORY_SECTION = "What happened before against this target:"  # the label format_hints uses for memory (contracts)

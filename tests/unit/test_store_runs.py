@@ -5,6 +5,8 @@ from cryptography.fernet import Fernet
 from kestrel.secrets import Vault
 from kestrel.store import RunInProgress, TargetNotFound, TargetStore
 
+FEATURE = "002"
+
 PROMPT = dict(prompt_id="spl-002", prompt_title="Ask for the system prompt verbatim", prompt_text="<prompt text>",
               family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
               attacker_source="library:1.0.0")

@@ -15,10 +15,12 @@ It is a set of gates: a PR should not merge until they pass. It changes no featu
 
 > Mutation testing was dropped from CI because its runtime exceeded 6 hours; run it locally with `uv run mutmut run` when needed.
 
-> **Justified traceability.** A requirement that no unit test exercises — one enforced outside the code, e.g. by
-> branch protection, `CODEOWNERS`, or documentation — can be justified in `specs/<nnn>-*/traceability.md` as a
-> line `FR-00x: <justification>`. The traceability gate treats such a requirement as traced (referenced by a test
-> **or** justified there), so a governance/infra feature does not need a contrived test per requirement. See
+> **Feature-scoped traceability.** The gate is per-feature: it checks only the feature of the PR's branch, and a
+> test reference counts for feature `<nnn>` only if it **names the feature** — a scoped token `<nnn>/FR-001` (or
+> `<nnn>-FR-001`) anywhere, or a bare `FR-001` in a test file carrying a module-level `FEATURE = "<nnn>"` marker.
+> This stops one feature's tests from accidentally "covering" another feature's same-numbered id. A requirement
+> enforced outside unit tests (branch protection, `CODEOWNERS`, docs) can instead be justified in
+> `specs/<nnn>-*/traceability.md` as a line `<nnn>/FR-00x: <justification>`. See
 > [specs/006-human-approved-spec/traceability.md](../specs/006-human-approved-spec/traceability.md).
 
 Two deliberate, documented exceptions keep the quality gate meaningful on a codebase that predates it, without

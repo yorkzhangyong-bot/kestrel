@@ -1,7 +1,8 @@
 """check_spec.py: spec-mode requirement validation — well-formed, unique, no orphan references (feature 006).
 
-FR-003, FR-014, SC-002, SC-006. Identifiers inside inline code / fenced blocks must be ignored, so the
-illustrative bad ids in the contracts/tasks/quickstart (e.g. ``FR-7``, ``SC-099``) never count.
+Traces 006/FR-003, 006/FR-014, 006/SC-002, 006/SC-006. (No FEATURE marker — the bare ids below are *sample data*
+for the checker, not references to 006's own requirements.) Identifiers inside inline code / fenced blocks are
+ignored, so illustrative bad ids like ``FR-7``/``SC-099`` never count.
 """
 from pathlib import Path
 

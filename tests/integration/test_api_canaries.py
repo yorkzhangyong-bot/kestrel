@@ -6,6 +6,8 @@ import pytest
 
 from kestrel.api.main import load_terms
 
+FEATURE = "002"
+
 SECRET = "s3cret-header-value"
 CURRENT_TERMS = load_terms().version
 CANARY = "KESTREL-CANARY-7Q4M2X"

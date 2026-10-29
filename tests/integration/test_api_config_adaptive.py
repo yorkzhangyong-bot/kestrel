@@ -7,6 +7,8 @@ from kestrel.api.main import load_terms
 from kestrel.settings import DEFAULT_ATTACKER_MODEL
 from tests.support import StubAttacker, StubJudge, fixture_library
 
+FEATURE = "003"
+
 SECRET = "s3cret-header-value"
 CURRENT_TERMS = load_terms().version
 

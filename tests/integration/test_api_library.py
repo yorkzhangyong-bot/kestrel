@@ -3,6 +3,8 @@ import pytest
 
 from tests.support import fixture_library
 
+FEATURE = "002"
+
 
 @pytest.fixture
 def api(make_client):

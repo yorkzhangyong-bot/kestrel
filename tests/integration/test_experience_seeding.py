@@ -2,6 +2,8 @@
 from kestrel.experience.store import ExperienceStore
 from tests.support import StubEmbeddingFunction, fixture_library
 
+FEATURE = "004"
+
 
 def store(tmp_path) -> ExperienceStore:
     return ExperienceStore(tmp_path / "chroma", embedding_function=StubEmbeddingFunction())

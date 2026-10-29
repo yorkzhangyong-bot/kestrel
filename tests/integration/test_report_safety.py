@@ -8,6 +8,8 @@ import httpx
 from kestrel.experience.store import ExperienceStore
 from tests.support import StubEmbeddingFunction, StubJudge, fixture_library
 
+FEATURE = "005"
+
 SECRET = "s3cret-auth-value-xyz"
 URL = "http://127.0.0.1:8109/private-chat"
 HEADER_NAME = "X-Secret-Header"

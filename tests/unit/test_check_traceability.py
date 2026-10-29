@@ -1,7 +1,8 @@
 """check_traceability.py PR-rule helpers for implementation PRs (feature 006).
 
-FR-009 (Spec-PR reference), FR-010/FR-011 (spec-change note), SC-003, SC-007. These pure helpers take plain
-arguments so the rules are tested without GitHub.
+Traces 006/FR-002 (classification), 006/FR-009 (Spec-PR reference), 006/FR-010, 006/FR-011 (spec-change note),
+006/SC-003, 006/SC-007. (No FEATURE marker — the bare ids in the samples below are not references to 006's own
+requirements.) These pure helpers take plain arguments so the rules are tested without GitHub.
 """
 import check_traceability as ct
 
@@ -32,13 +33,13 @@ def test_has_spec_pr_reference():
     assert ct.has_spec_pr_reference(None) is False
 
 
-def test_justified_identifiers_parses_traceability_lines():
-    # A requirement counts as traced when justified in traceability.md as "FR-00x: <justification>".
-    # Sample ids are intentionally outside the 006 range so this test does not itself "reference" real ids.
+def test_justified_identifiers_parses_feature_scoped_lines():
+    # A requirement counts as traced when justified as a feature-scoped line "<prefix>/FR-00x: <reason>".
+    # Sample ids are outside the 006 range so this test does not itself trace real requirements.
     text = ("# Traceability\n\n"
-            "- FR-900: justified outside unit tests\n"
-            "- SC-901: enforced by branch protection\n"
-            "FR-902: manual settings in a doc\n"
-            "FR-903 has no colon so it is not a justification\n"
-            "note: this is not an identifier line\n")
-    assert ct.justified_identifiers(text) == {"FR-900", "SC-901", "FR-902"}
+            "- 006/FR-900: justified outside unit tests\n"
+            "- 006-SC-901: enforced by branch protection\n"
+            "006/FR-902: manual settings in a doc\n"
+            "007/FR-903: belongs to another feature\n"
+            "FR-904: no feature prefix, not counted\n")
+    assert ct.justified_identifiers(text, "006") == {"FR-900", "SC-901", "FR-902"}

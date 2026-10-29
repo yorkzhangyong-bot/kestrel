@@ -6,6 +6,8 @@ import httpx
 
 from kestrel.attack.attacker import GOALS, SYSTEM_PROMPT, AttackerClient
 
+FEATURE = "004"
+
 CONVERSATION = [("attacker", "<m1>"), ("agent", "<r1>")]
 
 

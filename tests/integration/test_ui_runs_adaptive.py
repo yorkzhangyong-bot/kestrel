@@ -7,6 +7,8 @@ from streamlit.testing.v1 import AppTest
 
 import api_client
 
+FEATURE = "003"
+
 APP = str(Path(__file__).resolve().parents[2] / "ui" / "app.py")
 CONFIG = {"mode": "local",
           "defaults": {"method": "POST", "body_template": '{"message": "{{prompt}}"}', "response_path": "$.reply"},
