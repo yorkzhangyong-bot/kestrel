@@ -30,3 +30,15 @@ def test_has_spec_pr_reference():
     assert ct.has_spec_pr_reference("no reference at all") is False
     assert ct.has_spec_pr_reference("") is False
     assert ct.has_spec_pr_reference(None) is False
+
+
+def test_justified_identifiers_parses_traceability_lines():
+    # A requirement counts as traced when justified in traceability.md as "FR-00x: <justification>".
+    # Sample ids are intentionally outside the 006 range so this test does not itself "reference" real ids.
+    text = ("# Traceability\n\n"
+            "- FR-900: justified outside unit tests\n"
+            "- SC-901: enforced by branch protection\n"
+            "FR-902: manual settings in a doc\n"
+            "FR-903 has no colon so it is not a justification\n"
+            "note: this is not an identifier line\n")
+    assert ct.justified_identifiers(text) == {"FR-900", "SC-901", "FR-902"}
