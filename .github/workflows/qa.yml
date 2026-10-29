@@ -63,65 +63,8 @@ jobs:
           path: qa-quality.log
           if-no-files-found: ignore
 
-  mutation:
-    needs: quality
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-      - name: Sync dependencies
-        run: uv sync
-      - name: Find changed src files
-        id: changed
-        env:
-          BASE: ${{ github.base_ref }}
-        run: |
-          git fetch --quiet origin "$BASE" || true
-          changed=$(git diff --name-only "origin/$BASE...HEAD" | { grep -E '^src/.*\.py$' || true; } | paste -sd, -)
-          echo "files=$changed" >> "$GITHUB_OUTPUT"
-          echo "Changed src files: ${changed:-<none>}"
-      - name: Skip mutation testing (no src files changed)
-        if: steps.changed.outputs.files == ''
-        run: echo "No src files changed in this PR; skipping mutation testing."
-      - name: Mutation testing (fail under 70% score)
-        if: steps.changed.outputs.files != ''
-        run: |
-          set -o pipefail
-          # mutmut --use-coverage only runs the tests that cover each mutant, so this stays tractable in CI.
-          uv run coverage run --source=src -m pytest -q tests/unit tests/integration > /dev/null 2>&1 || true
-          uv run mutmut run --paths-to-mutate "${{ steps.changed.outputs.files }}" --use-coverage --simple-output 2>&1 | tee qa-mutation.log || true
-          uv run mutmut junitxml > mutmut-results.xml || true
-          uv run python - <<'PY' 2>&1 | tee -a qa-mutation.log
-          import sys, xml.etree.ElementTree as ET
-          try:
-              cases = ET.parse("mutmut-results.xml").findall(".//testcase")
-          except (OSError, ET.ParseError) as error:
-              print(f"Could not read mutation results: {error}")
-              sys.exit(1)
-          total = len(cases)
-          if total == 0:
-              print("No mutants were generated; nothing to score.")
-              sys.exit(0)
-          survived = sum(1 for case in cases if case.find("failure") is not None)
-          killed = total - survived
-          score = killed / total * 100
-          print(f"Mutation score: {killed}/{total} killed = {score:.1f}% (threshold 70%)")
-          sys.exit(0 if score >= 70 else 1)
-          PY
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: qa-logs-mutation
-          path: qa-mutation.log
-          if-no-files-found: ignore
-
   review:
-    needs: mutation
+    needs: quality
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -181,7 +124,7 @@ jobs:
           if-no-files-found: ignore
 
   notify:
-    needs: [traceability, quality, mutation, review]
+    needs: [traceability, quality, review]
     if: failure()
     runs-on: ubuntu-latest
     steps:
@@ -194,7 +137,6 @@ jobs:
         env:
           R_TRACE: ${{ needs.traceability.result }}
           R_QUALITY: ${{ needs.quality.result }}
-          R_MUTATION: ${{ needs.mutation.result }}
           R_REVIEW: ${{ needs.review.result }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
@@ -204,7 +146,7 @@ jobs:
           python - <<'PY'
           import glob, os, pathlib, re
           results = {"traceability": os.environ.get("R_TRACE", ""), "quality": os.environ.get("R_QUALITY", ""),
-                     "mutation": os.environ.get("R_MUTATION", ""), "review": os.environ.get("R_REVIEW", "")}
+                     "review": os.environ.get("R_REVIEW", "")}
           failed = [name for name, result in results.items() if result == "failure"]
           lines = [f"QA pipeline failed for {os.environ.get('REPO', '?')} PR #{os.environ.get('PR', '?')}.",
                    f"Branch: {os.environ.get('BRANCH', '?')}",

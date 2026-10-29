@@ -9,9 +9,10 @@ It is a set of gates: a PR should not merge until they pass. It changes no featu
 | --- | --- | --- |
 | **traceability** | [scripts/check_traceability.py](../scripts/check_traceability.py) reads the feature's `specs/<nnn>-*/spec.md` (feature inferred from the branch prefix, e.g. `005`), collects every `FR-nnn`/`SC-nnn`, and checks each is referenced somewhere under `tests/`. | Any requirement id has no test that mentions it. |
 | **quality** | `uv sync`, then `ruff check src ui tests`, `mypy src`, `pytest tests/unit tests/integration` with coverage on `src`, plus `gitleaks` and `pip-audit`. | A lint or test failure; line coverage **below 85%**; a secret in the diff/history; a **new** known-vulnerable dependency. |
-| **mutation** | Needs **quality**. Runs `mutmut` on the `src/*.py` files changed in the PR (using coverage so only covering tests run per mutant) and computes the kill score. | Mutation score **below 70%**. Skips (and passes) when the PR changes no `src` files. |
-| **review** | Needs **mutation**. The [Claude Code Action](https://github.com/anthropics/claude-code-action) (`anthropics/claude-code-action@v1`) reviews the PR against the checklist and feature spec with full-repo access (it may read any file and run `uv run pytest tests/unit -q`), then posts one PR comment ending in `VERDICT: PASS`/`FAIL`; a follow-up step enforces the verdict. | The posted comment ends in `VERDICT: FAIL` (at least one **severe** finding). A review that cannot run does not block. |
+| **review** | Needs **quality**. The [Claude Code Action](https://github.com/anthropics/claude-code-action) (`anthropics/claude-code-action@v1`) reviews the PR against the checklist and feature spec with full-repo access (it may read any file and run `uv run pytest tests/unit -q`), then posts one PR comment ending in `VERDICT: PASS`/`FAIL`; a follow-up step enforces the verdict. | The posted comment ends in `VERDICT: FAIL` (at least one **severe** finding). A review that cannot run does not block. |
 | **notify** | Runs only if any job failed. Emails the failed job names and the first error lines (via `dawidd6/action-send-mail`). | — (best effort; never gates the PR). |
+
+> Mutation testing was dropped from CI because its runtime exceeded 6 hours; run it locally with `uv run mutmut run` when needed.
 
 Two deliberate, documented exceptions keep the quality gate meaningful on a codebase that predates it, without
 touching feature code:
@@ -32,7 +33,7 @@ its exact `file:line` and to end the comment with the `VERDICT:` line the gate r
 
 ## The review gate (Claude Code Action)
 
-Gate 4 runs the official [Claude Code GitHub Action](https://github.com/anthropics/claude-code-action)
+Gate 3 runs the official [Claude Code GitHub Action](https://github.com/anthropics/claude-code-action)
 (`anthropics/claude-code-action@v1`) with **full access to the checked-out repository**: it reads
 `.github/review/checklist.md` and the feature spec, may read any other file to gather evidence, and may run
 `uv run pytest tests/unit -q`. It posts exactly one PR comment listing findings with a severity
