@@ -4,6 +4,7 @@ Rules the database can't check (URL, template and header rules, value length) ar
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -112,6 +113,52 @@ CREATE TABLE IF NOT EXISTS report_recommendations (
     model TEXT,
     created_at TEXT NOT NULL
 );
+
+-- Added in schema version 6 (feature 007, A/B harness): experiments and their two arms; each executed run links
+-- back to the generic `runs` table, which already carries verdict/hard_evidence/tokens_used/attacker_model/etc.
+CREATE TABLE IF NOT EXISTS experiments (
+    id INTEGER PRIMARY KEY,
+    target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL CHECK (mode IN ('single_turn', 'adaptive')),
+    families TEXT NOT NULL,                      -- JSON array of family keys
+    reps INTEGER NOT NULL CHECK (reps >= 1),
+    seed_prompt_ids TEXT NOT NULL,               -- JSON object family -> prompt_id (FR-016)
+    max_runs INTEGER NOT NULL CHECK (max_runs >= 1),
+    token_budget_total INTEGER NOT NULL CHECK (token_budget_total >= 1),
+    wall_clock_s INTEGER NOT NULL CHECK (wall_clock_s >= 1),
+    status TEXT NOT NULL CHECK (status IN ('running', 'finished', 'stopped', 'failed')),
+    stopped_reason TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_target ON experiments (target_id, created_at DESC);
+-- At most one running experiment per target, so arms never contend for the single active-run slot (FR-008).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_experiments_active ON experiments (target_id) WHERE status = 'running';
+CREATE TABLE IF NOT EXISTS experiment_arms (
+    id INTEGER PRIMARY KEY,
+    experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK (label IN ('A', 'B')),
+    attacker_model TEXT NOT NULL,                -- model name only; never a secret (Principle IV)
+    judge_model TEXT NOT NULL,
+    use_prior_experience INTEGER NOT NULL,       -- retrieval on (1) / off (0)
+    turn_cap INTEGER NOT NULL CHECK (turn_cap >= 1),
+    token_budget INTEGER NOT NULL CHECK (token_budget >= 1),
+    write_back INTEGER NOT NULL DEFAULT 1,       -- cold arm = 0 (FR-005)
+    run_order INTEGER                            -- 1 or 2; set when the arm starts
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_experiment_arms ON experiment_arms (experiment_id, label);
+CREATE TABLE IF NOT EXISTS experiment_runs (
+    id INTEGER PRIMARY KEY,
+    experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    arm_id INTEGER NOT NULL REFERENCES experiment_arms(id) ON DELETE CASCADE,
+    rep_index INTEGER NOT NULL,
+    family TEXT NOT NULL,
+    run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,   -- null only if the run could not be claimed (FR-015)
+    send_ok INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_experiment_runs_exp ON experiment_runs (experiment_id, arm_id);
 """
 
 # Columns added to `runs` in version 3; ALTER-added for a version-2 database (fresh ones get them from SCHEMA).
@@ -148,6 +195,10 @@ class UnknownSchemaVersion(Exception):
 
 class RunInProgress(Exception):
     """A run against this target is already in progress (FR-010)."""
+
+
+class ExperimentInProgress(Exception):
+    """An experiment against this target is already running (feature 007, FR-008)."""
 
 
 @dataclass(frozen=True)
@@ -223,6 +274,53 @@ class StoredRecommendation:
 
 
 @dataclass(frozen=True)
+class ExperimentArm:
+    """One arm of an experiment (feature 007, FR-002). Holds model names and settings only - never a secret."""
+    id: int
+    label: str
+    attacker_model: str
+    judge_model: str
+    use_prior_experience: bool
+    turn_cap: int
+    token_budget: int
+    write_back: bool
+    run_order: int | None = None
+
+
+@dataclass(frozen=True)
+class Experiment:
+    """One campaign run under arm A and arm B (feature 007, FR-003, FR-016)."""
+    id: int
+    target_id: int
+    mode: str
+    families: tuple[str, ...]
+    reps: int
+    seed_prompt_ids: dict[str, str]
+    max_runs: int
+    token_budget_total: int
+    wall_clock_s: int
+    status: str
+    stopped_reason: str | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+    arms: tuple[ExperimentArm, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExperimentRunLink:
+    """Tags an ordinary run with its experiment and arm (feature 007, FR-004)."""
+    id: int
+    experiment_id: int
+    arm_id: int
+    rep_index: int
+    family: str
+    run_id: int | None
+    send_ok: bool
+    created_at: str
+
+
+@dataclass(frozen=True)
 class Target:
     id: int
     name: str
@@ -260,7 +358,7 @@ class TargetStore:
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4"):
+        if current is not None and current not in ("1", "2", "3", "4", "5"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
         # An older database may lack the adaptive (v3) and experience (v4) columns on `runs`; add any missing.
@@ -522,6 +620,131 @@ class TargetStore:
                 " ON CONFLICT(run_id) DO UPDATE SET recommendation = excluded.recommendation,"
                 " model = excluded.model, created_at = excluded.created_at",
                 (run_id, recommendation, model, utc_now()))
+
+    # ---- experiments (feature 007, FR-003, FR-004, FR-016) ----
+
+    def create_experiment(self, *, target_id: int, mode: str, families: list[str], reps: int,
+                          seed_prompt_ids: dict[str, str], max_runs: int, token_budget_total: int,
+                          wall_clock_s: int, arm_a: dict, arm_b: dict) -> Experiment:
+        """Create a running experiment with its two arms. Raises ExperimentInProgress if one already runs here."""
+        now = utc_now()
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
+                raise TargetNotFound(target_id)
+            try:
+                cursor = db.execute(
+                    "INSERT INTO experiments (target_id, mode, families, reps, seed_prompt_ids, max_runs,"
+                    " token_budget_total, wall_clock_s, status, created_at, started_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)",
+                    (target_id, mode, json.dumps(list(families)), reps, json.dumps(dict(seed_prompt_ids)),
+                     max_runs, token_budget_total, wall_clock_s, now, now))
+            except sqlite3.IntegrityError:
+                running = db.execute("SELECT id FROM experiments WHERE target_id = ? AND status = 'running'",
+                                     (target_id,)).fetchone()
+                if running is not None:
+                    raise ExperimentInProgress(target_id) from None
+                raise
+            experiment_id = int(cursor.lastrowid)
+            for label, arm in (("A", arm_a), ("B", arm_b)):
+                db.execute(
+                    "INSERT INTO experiment_arms (experiment_id, label, attacker_model, judge_model,"
+                    " use_prior_experience, turn_cap, token_budget, write_back) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (experiment_id, label, arm["attacker_model"], arm["judge_model"],
+                     int(arm["use_prior_experience"]), arm["turn_cap"], arm["token_budget"],
+                     int(arm.get("write_back", True))))
+        return self.get_experiment(experiment_id)
+
+    def get_experiment(self, experiment_id: int) -> Experiment:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM experiments WHERE id = ?", (experiment_id,)).fetchone()
+            if row is None:
+                raise LookupError(f"No experiment with id {experiment_id}.")
+            arms = [self._arm(a) for a in db.execute(
+                "SELECT * FROM experiment_arms WHERE experiment_id = ? ORDER BY label", (experiment_id,))]
+        return self._experiment(row, arms)
+
+    def list_experiments(self, target_id: int | None = None) -> list[Experiment]:
+        with self.connect() as db:
+            if target_id is None:
+                rows = db.execute("SELECT * FROM experiments ORDER BY created_at DESC, id DESC").fetchall()
+            else:
+                rows = db.execute("SELECT * FROM experiments WHERE target_id = ? ORDER BY created_at DESC, id DESC",
+                                  (target_id,)).fetchall()
+            out = []
+            for row in rows:
+                arms = [self._arm(a) for a in db.execute(
+                    "SELECT * FROM experiment_arms WHERE experiment_id = ? ORDER BY label", (row["id"],))]
+                out.append(self._experiment(row, arms))
+        return out
+
+    def set_arm_order(self, arm_id: int, run_order: int) -> None:
+        with self.connect() as db:
+            db.execute("UPDATE experiment_arms SET run_order = ? WHERE id = ?", (run_order, arm_id))
+
+    def set_experiment_status(self, experiment_id: int, *, status: str, stopped_reason: str | None = None,
+                              finished: bool = False) -> None:
+        with self.connect() as db:
+            if finished:
+                db.execute("UPDATE experiments SET status = ?, stopped_reason = ?, finished_at = ? WHERE id = ?",
+                           (status, stopped_reason, utc_now(), experiment_id))
+            else:
+                db.execute("UPDATE experiments SET status = ?, stopped_reason = ? WHERE id = ?",
+                           (status, stopped_reason, experiment_id))
+
+    def add_experiment_run(self, *, experiment_id: int, arm_id: int, rep_index: int, family: str,
+                           run_id: int | None, send_ok: bool = True) -> None:
+        """Link a run to its experiment and arm. A failed send records run_id=None, send_ok=False (not dropped)."""
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO experiment_runs (experiment_id, arm_id, rep_index, family, run_id, send_ok, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (experiment_id, arm_id, rep_index, family, run_id, int(send_ok), utc_now()))
+
+    def experiment_run_links(self, experiment_id: int) -> list[ExperimentRunLink]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY id",
+                              (experiment_id,)).fetchall()
+        return [ExperimentRunLink(id=r["id"], experiment_id=r["experiment_id"], arm_id=r["arm_id"],
+                                  rep_index=r["rep_index"], family=r["family"], run_id=r["run_id"],
+                                  send_ok=bool(r["send_ok"]), created_at=r["created_at"]) for r in rows]
+
+    def arm_runs(self, experiment_id: int, arm_id: int) -> list[Run]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT r.* FROM runs r JOIN experiment_runs er ON er.run_id = r.id"
+                " WHERE er.experiment_id = ? AND er.arm_id = ? ORDER BY er.id", (experiment_id, arm_id)).fetchall()
+        return [self._run(row) for row in rows]
+
+    def experiment_progress(self, experiment_id: int) -> dict:
+        """Completed-run count, total tokens, and per-arm completed counts (for the status endpoint)."""
+        with self.connect() as db:
+            completed = db.execute(
+                "SELECT COUNT(*) AS n FROM experiment_runs WHERE experiment_id = ? AND run_id IS NOT NULL",
+                (experiment_id,)).fetchone()["n"]
+            tokens = db.execute(
+                "SELECT COALESCE(SUM(r.tokens_used), 0) AS t FROM runs r"
+                " JOIN experiment_runs er ON er.run_id = r.id WHERE er.experiment_id = ?",
+                (experiment_id,)).fetchone()["t"]
+            per_arm = {row["arm_id"]: row["n"] for row in db.execute(
+                "SELECT arm_id, COUNT(*) AS n FROM experiment_runs WHERE experiment_id = ? AND run_id IS NOT NULL"
+                " GROUP BY arm_id", (experiment_id,))}
+        return {"completed": int(completed), "tokens": int(tokens), "per_arm": per_arm}
+
+    @staticmethod
+    def _arm(row: sqlite3.Row) -> ExperimentArm:
+        return ExperimentArm(id=row["id"], label=row["label"], attacker_model=row["attacker_model"],
+                             judge_model=row["judge_model"], use_prior_experience=bool(row["use_prior_experience"]),
+                             turn_cap=row["turn_cap"], token_budget=row["token_budget"],
+                             write_back=bool(row["write_back"]), run_order=row["run_order"])
+
+    @staticmethod
+    def _experiment(row: sqlite3.Row, arms: list[ExperimentArm]) -> Experiment:
+        return Experiment(id=row["id"], target_id=row["target_id"], mode=row["mode"],
+                          families=tuple(json.loads(row["families"])), reps=row["reps"],
+                          seed_prompt_ids=dict(json.loads(row["seed_prompt_ids"])), max_runs=row["max_runs"],
+                          token_budget_total=row["token_budget_total"], wall_clock_s=row["wall_clock_s"],
+                          status=row["status"], stopped_reason=row["stopped_reason"], created_at=row["created_at"],
+                          started_at=row["started_at"], finished_at=row["finished_at"], arms=tuple(arms))
 
     def close_interrupted_runs(self) -> int:
         """Close anything a stopped process left open, so the target isn't locked by FR-010 forever (FR-031)."""
