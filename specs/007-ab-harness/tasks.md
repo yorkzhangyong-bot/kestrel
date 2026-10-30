@@ -105,11 +105,11 @@ Single project: `src/kestrel/…`, `ui/…`, `tests/{unit,integration,e2e}/…` 
 
 **Independent test**: a low cap stops the experiment within the wall-clock limit, returns a usable partial comparison naming the cap; no arm/output contains a target header or key.
 
-- [ ] T031 [P] [US4] Test `tests/unit/test_experiment_caps.py` (cites `007/FR-008`, `007/SC-004`): each of max_runs / token_budget_total / wall_clock_s trips a clean stop at a run boundary, sets the matching `stopped_reason`, and leaves a usable partial result; no run left in progress.
-- [ ] T032 [P] [US4] Test `tests/integration/test_experiment_secrets.py` (cites `007/FR-011`, `007/SC-007`): no target header value or key appears in a stored arm, the status/result JSON, or the logs.
-- [ ] T033 [US4] Engine: check all three caps **before each run**; on a hit set `stopped_reason`, `status=stopped`, `finished_at`, and return cleanly. `src/kestrel/experiments/engine.py`. Make T031 pass. *(after T029)*
-- [ ] T034 [US4] Status/progress: planned vs completed, tokens, cost, per-arm progress, and the partial result while running. `src/kestrel/api/main.py` + `results.py`. *(after T022)*
-- [ ] T035 [US4] Guarantee secret-safety: arms persist only model names + numeric settings; headers are resolved per run (as `POST /api/runs` does) and never copied into an arm row, a payload, a result, or a log. Verify with T032. *(engine/schemas/store — after T033)*
+- [X] T031 [P] [US4] Test `tests/unit/test_experiment_caps.py` (cites `007/FR-008`, `007/SC-004`): each of max_runs / token_budget_total / wall_clock_s trips a clean stop at a run boundary, sets the matching `stopped_reason`, and leaves a usable partial result; no run left in progress.
+- [X] T032 [P] [US4] Test `tests/integration/test_experiment_secrets.py` (cites `007/FR-011`, `007/SC-007`): no target header value or key appears in a stored arm, the status/result JSON, or the logs.
+- [X] T033 [US4] Engine: check all three caps **before each run**; on a hit set `stopped_reason`, `status=stopped`, `finished_at`, and return cleanly. `src/kestrel/experiments/engine.py`. Make T031 pass. *(after T029)*
+- [X] T034 [US4] Status/progress: planned vs completed, tokens, cost, per-arm progress, and the partial result while running. `src/kestrel/api/main.py` + `results.py`. *(after T022)*
+- [X] T035 [US4] Guarantee secret-safety: arms persist only model names + numeric settings; headers are resolved per run (as `POST /api/runs` does) and never copied into an arm row, a payload, a result, or a log. Verify with T032. *(engine/schemas/store — after T033)*
 
 ---
 

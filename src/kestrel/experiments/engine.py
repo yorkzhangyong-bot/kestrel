@@ -36,6 +36,9 @@ async def run_experiment(store: TargetStore, *, experiment_id: int, settings, li
     target = store.get_target(experiment.target_id)
     canaries = store.list_canaries(target.id)
     resolved = _resolve(store, target)
+    start = clock()
+    completed = 0
+    tokens = 0
     try:
         for order, arm in enumerate(sorted(experiment.arms, key=lambda a: a.label), start=1):
             store.set_arm_order(arm.id, order)
@@ -44,13 +47,31 @@ async def run_experiment(store: TargetStore, *, experiment_id: int, settings, li
             for family in experiment.families:
                 seed = library.pick(family, experiment.seed_prompt_ids.get(family))
                 for rep in range(experiment.reps):
-                    await _run_rep(store, experiment, target, arm, family, rep, seed, resolved, canaries, settings,
-                                   library, judge, attacker, experience, transport, resolver)
+                    cap = _cap_hit(experiment, completed, tokens, clock() - start)
+                    if cap is not None:   # stop cleanly at a run boundary, with whatever has been gathered (FR-008)
+                        store.set_experiment_status(experiment_id, status="stopped", stopped_reason=cap, finished=True)
+                        return
+                    run = await _run_rep(store, experiment, target, arm, family, rep, seed, resolved, canaries,
+                                         settings, library, judge, attacker, experience, transport, resolver)
+                    completed += 1
+                    if run is not None:
+                        tokens += run.tokens_used or 0
         store.set_experiment_status(experiment_id, status="finished", stopped_reason="completed", finished=True)
     except Exception as error:  # a run that failed to start is recorded below; anything else fails the experiment
         log.exception("experiment %s failed", experiment_id)
         store.set_experiment_status(experiment_id, status="failed",
                                     stopped_reason=f"failed:{type(error).__name__}", finished=True)
+
+
+def _cap_hit(experiment, completed: int, tokens: int, elapsed_s: float) -> str | None:
+    """The first hard cap that has been reached, or None (FR-008). Checked before each run, so none truncates one."""
+    if completed >= experiment.max_runs:
+        return "max_runs"
+    if tokens >= experiment.token_budget_total:
+        return "token_budget"
+    if elapsed_s >= experiment.wall_clock_s:
+        return "wall_clock"
+    return None
 
 
 async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, canaries, settings, library, judge,
