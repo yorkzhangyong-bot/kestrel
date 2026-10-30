@@ -120,8 +120,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Temporary escape hatch: set repo variable SKIP_AI_REVIEW=true to bypass the reviewer and pass the gate.
+      # Delete the variable to restore the normal fail-closed behaviour. See docs/qa-pipeline.md.
+      - name: AI review bypass (temporary, via SKIP_AI_REVIEW)
+        if: vars.SKIP_AI_REVIEW == 'true'
+        run: echo "AI review BYPASSED via SKIP_AI_REVIEW (temporary)"
       - name: Spec review (spec-only PR -> spec-checklist)
-        if: needs.classify.outputs.spec_only == 'true'
+        if: vars.SKIP_AI_REVIEW != 'true' && needs.classify.outputs.spec_only == 'true'
         uses: anthropics/claude-code-action@v1
         continue-on-error: true   # the verdict step below is the gate, so the review blocks on a severe finding only
         with:
@@ -149,7 +154,7 @@ jobs:
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
       - name: Code review (implementation PR -> checklist)
-        if: needs.classify.outputs.spec_only != 'true'
+        if: vars.SKIP_AI_REVIEW != 'true' && needs.classify.outputs.spec_only != 'true'
         uses: anthropics/claude-code-action@v1
         continue-on-error: true   # the verdict step below is the gate, so the review blocks on a severe finding only
         with:
@@ -179,17 +184,25 @@ jobs:
           claude_args: |
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Bash(uv run pytest:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
-      - name: Enforce the review verdict (blocks on a severe finding only)
+      - name: Enforce the review verdict (fails on a severe finding or a missing verdict)
+        if: vars.SKIP_AI_REVIEW != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          body=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json comments --jq '.comments[-1].body // ""')
+          # Pick the latest comment that actually carries a verdict line, so an unrelated comment
+          # posted after the reviewer cannot hide the verdict and an absent verdict is detectable.
+          body=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+            --json comments --jq '[.comments[] | select((.body // "") | test("VERDICT: (PASS|FAIL)"))] | last | .body // ""')
           printf '%s\n' "$body" | tee qa-review.log
           if printf '%s' "$body" | grep -q "VERDICT: FAIL"; then
             echo "AI review returned VERDICT: FAIL (at least one severe finding)." | tee -a qa-review.log
             exit 1
           fi
-          echo "AI review verdict is not FAIL; the review gate passes." | tee -a qa-review.log
+          if ! printf '%s' "$body" | grep -q "VERDICT: PASS"; then
+            echo "No review verdict was posted - the reviewer did not complete (e.g. an API error), so the gate fails rather than passing vacuously." | tee -a qa-review.log
+            exit 1
+          fi
+          echo "AI review verdict is PASS; the review gate passes." | tee -a qa-review.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

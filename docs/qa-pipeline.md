@@ -70,9 +70,24 @@ Gate 3 runs the official [Claude Code GitHub Action](https://github.com/anthropi
 (`severe`/`major`/`minor`/`possible`), each quoting the exact `file:line` evidence the Evidence rules require, and
 ends with a line `VERDICT: PASS` or `VERDICT: FAIL`.
 
-A follow-up step reads that comment (via the `gh` CLI with `GITHUB_TOKEN`) and fails the job only when it contains
-`VERDICT: FAIL` — at least one severe finding — so the gate blocks on severe only; a review that cannot run does
-not block. The gate needs the `ANTHROPIC_API_KEY` secret. **OpenRouter is no longer used for the review.**
+A follow-up step reads that comment (via the `gh` CLI with `GITHUB_TOKEN`) and is **fail-closed**: it fails the job
+both when the latest verdict is `VERDICT: FAIL` (at least one severe finding) **and** when no `VERDICT: PASS` comment
+was posted at all. A reviewer that cannot run — a missing or expired `ANTHROPIC_API_KEY`, an API error, an outage —
+therefore blocks the merge instead of passing vacuously on an empty comment. The gate needs the `ANTHROPIC_API_KEY`
+secret. **OpenRouter is no longer used for the review.**
+
+### Temporary bypass: `SKIP_AI_REVIEW`
+
+While the reviewer account's `ANTHROPIC_API_KEY` has no API credit, the review gate can be bypassed with a
+repository **variable** (not a secret): set `SKIP_AI_REVIEW` to `true` under **Settings → Secrets and variables →
+Actions → Variables**. When it is `true`, the `review` job skips the Claude Code Action and the verdict step and
+reports success with the log line `AI review BYPASSED via SKIP_AI_REVIEW (temporary)`. When the variable is unset
+(or any other value) behaviour is unchanged — fail-closed on a missing verdict. **Delete the variable to turn the
+gate back on.** The bypass is deliberately temporary; it exists only because the reviewer has no credit.
+
+The Claude Code Action also refuses to run on a pull request that edits a workflow file (it requires the workflow to
+match the version on the default branch), so **workflow-editing PRs can never be reviewed by the action** — they are
+merged by an administrator, or with `SKIP_AI_REVIEW` set. See [branch-protection.md](branch-protection.md).
 
 The earlier standalone reviewer, [scripts/ai_review.py](../scripts/ai_review.py) — which called an OpenRouter model
 over a redacted diff — is **deprecated** and no longer wired into CI; it and its redaction tests are kept for
@@ -86,7 +101,7 @@ Set these four in **Settings → Secrets and variables → Actions** (`GITHUB_TO
 
 | Secret | Used by | Purpose |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | review | Authenticates the Claude Code Action's review. Without it the review cannot run and the gate does not block. |
+| `ANTHROPIC_API_KEY` | review | Authenticates the Claude Code Action's review. Without it the review cannot run, so the gate **blocks** (fail-closed) unless the `SKIP_AI_REVIEW` variable is set. |
 | `SMTP_USER` | notify | SMTP username / sender address for the failure email. |
 | `SMTP_PASS` | notify | SMTP password or app password. |
 | `NOTIFY_EMAIL` | notify | Recipient of the failure email. |
