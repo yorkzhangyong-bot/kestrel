@@ -28,6 +28,7 @@ from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
 from kestrel.experiments import results as exp_results
 from kestrel.experiments.engine import run_experiment
+from kestrel.report.experiment import build_experiment_report, render_experiment_markdown
 from kestrel.report.model import build_report
 from kestrel.report.recommend import recommendations_for
 from kestrel.report.render import render_html, render_markdown
@@ -432,6 +433,30 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return api_error(404, "not_found", f"No experiment with id {experiment_id}.")
         return _experiment_result(store, settings, experiment)
 
+    @app.get("/api/experiments/{experiment_id}/report")
+    def experiment_report(experiment_id: int, format: str = "md") -> Any:
+        """The comparison report (Markdown or HTML), read-only (FR-014). Reuses the feature-005 HTML renderer."""
+        if format not in ("md", "html"):
+            return form_errors([{"field": "format", "message": "format must be 'md' or 'html'."}])
+        try:
+            experiment = store.get_experiment(experiment_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No experiment with id {experiment_id}.")
+        try:
+            target_name = store.get_target(experiment.target_id).name
+        except TargetNotFound:
+            target_name = ""
+        arm_results, comparison = _experiment_arm_results(store, settings, experiment)
+        by_label = {arm.label: arm for arm in experiment.arms}
+        model = build_experiment_report(experiment, arm_results[0], arm_results[1], comparison,
+                                        diff=experiment_diff(by_label["A"], by_label["B"]),
+                                        order=_order_text(experiment), warming=_warming_text(experiment),
+                                        now=utc_now(), target_name=target_name)
+        markdown = render_experiment_markdown(model)
+        if format == "html":
+            return Response(content=render_html(markdown), media_type="text/html; charset=utf-8")
+        return Response(content=markdown, media_type="text/markdown; charset=utf-8")
+
     return app
 
 
@@ -567,7 +592,8 @@ def _experiment_cost(store: TargetStore, settings: Settings, experiment) -> floa
     return total
 
 
-def _experiment_result(store: TargetStore, settings: Settings, experiment) -> ExperimentResultOut:
+def _experiment_arm_results(store: TargetStore, settings: Settings, experiment):
+    """The two ArmResults and their Comparison, shared by the result and report endpoints."""
     links = store.experiment_run_links(experiment.id)
     arm_results = []
     for arm in sorted(experiment.arms, key=lambda a: a.label):
@@ -575,7 +601,11 @@ def _experiment_result(store: TargetStore, settings: Settings, experiment) -> Ex
         send_failures = sum(1 for link in links if link.arm_id == arm.id and not link.send_ok)
         arm_results.append(exp_results.arm_result(arm, runs, mode=experiment.mode,
                                                   model_prices=settings.model_prices, send_failures=send_failures))
-    comparison = exp_results.build_comparison(arm_results[0], arm_results[1])
+    return arm_results, exp_results.build_comparison(arm_results[0], arm_results[1])
+
+
+def _experiment_result(store: TargetStore, settings: Settings, experiment) -> ExperimentResultOut:
+    arm_results, comparison = _experiment_arm_results(store, settings, experiment)
     by_label = {arm.label: arm for arm in experiment.arms}
     return ExperimentResultOut(
         id=experiment.id, status=experiment.status, stopped_reason=experiment.stopped_reason,

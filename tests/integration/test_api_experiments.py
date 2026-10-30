@@ -79,6 +79,21 @@ def test_unknown_target_is_404(make_client):
     assert client.post("/api/experiments", json=body).status_code == 404
 
 
+def test_report_downloads_in_markdown_and_html(make_client):
+    client = _client(make_client)
+    target_id = _target(client)
+    body = {"target_id": target_id, "mode": "single_turn", "families": ["direct_injection"], "reps": 1,
+            "arm_a": ARM_A, "arm_b": ARM_B}
+    experiment_id = client.post("/api/experiments", json=body).json()["id"]
+    _await_finished(client, experiment_id)
+
+    md = client.get(f"/api/experiments/{experiment_id}/report", params={"format": "md"})
+    assert md.status_code == 200 and "A/B experiment report" in md.text and "OWASP" in md.text
+    html = client.get(f"/api/experiments/{experiment_id}/report", params={"format": "html"})
+    assert html.status_code == 200 and html.text.startswith("<!doctype html>")
+    assert client.get(f"/api/experiments/{experiment_id}/report", params={"format": "pdf"}).status_code == 422
+
+
 def test_experiments_are_listed(make_client):
     client = _client(make_client)
     target_id = _target(client)

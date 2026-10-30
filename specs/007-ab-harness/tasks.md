@@ -119,10 +119,10 @@ Single project: `src/kestrel/…`, `ui/…`, `tests/{unit,integration,e2e}/…` 
 
 **Independent test**: a finished experiment's report names both attacker models + versions and maps each category row to OWASP; downloads as Markdown and HTML.
 
-- [ ] T036 [P] [US5] Test `tests/unit/test_experiment_report.py` (cites `007/FR-009`, `007/FR-010`, `007/FR-014`, `007/SC-006`, `007/SC-008`): the report names both arms' attacker models + versions and judges; a per-OWASP table maps every row to an OWASP LLM Top 10 class; Markdown + HTML render; run-derived text is fenced/escaped.
-- [ ] T037 [US5] Implement `src/kestrel/report/experiment.py` (`build_experiment_report`, `render_experiment_markdown`) reusing `report.render.render_html` and `report.owasp`. Make T036 pass.
-- [ ] T038 [US5] Add `GET /api/experiments/{id}/report?format=md|html` to `src/kestrel/api/main.py` (read-only). *(after T034)*
-- [ ] T039 [US5] Add `experiment_report(id, fmt)` to `ui/api_client.py` and a Download control to `render_experiments`. *(after T027)*
+- [X] T036 [P] [US5] Test `tests/unit/test_experiment_report.py` (cites `007/FR-009`, `007/FR-010`, `007/FR-014`, `007/SC-006`, `007/SC-008`): the report names both arms' attacker models + versions and judges; a per-OWASP table maps every row to an OWASP LLM Top 10 class; Markdown + HTML render; run-derived text is fenced/escaped.
+- [X] T037 [US5] Implement `src/kestrel/report/experiment.py` (`build_experiment_report`, `render_experiment_markdown`) reusing `report.render.render_html` and `report.owasp`. Make T036 pass.
+- [X] T038 [US5] Add `GET /api/experiments/{id}/report?format=md|html` to `src/kestrel/api/main.py` (read-only). *(after T034)*
+- [X] T039 [US5] Add `experiment_report(id, fmt)` to `ui/api_client.py` and a Download control to `render_experiments`. *(after T027)*
 
 ---
 

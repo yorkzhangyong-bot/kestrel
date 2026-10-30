@@ -816,6 +816,11 @@ def _render_comparison(result: dict) -> None:
     stopped = result.get("stopped_reason")
     if stopped not in ("completed", None):
         st.info(f"Stopped early: {stopped}. Showing partial results.")
+    try:
+        st.download_button("Download report (Markdown)", data=api_client.experiment_report(result["id"], "md"),
+                           file_name=f"experiment-{result['id']}.md", mime="text/markdown", key="exp_download")
+    except api_client.ApiError:
+        st.caption("Report unavailable.")
 
 
 def main() -> None:

@@ -64,6 +64,7 @@ def api(monkeypatch):
         "id": 1, "status": "finished", "stopped_reason": "completed", "planned_runs": 6, "completed_runs": 6,
         "tokens_used": 7200, "cost": 1.0, "arms": []})
     monkeypatch.setattr(api_client, "experiment_result", lambda experiment_id: RESULT)
+    monkeypatch.setattr(api_client, "experiment_report", lambda experiment_id, fmt: "# report")
     return created
 
 
