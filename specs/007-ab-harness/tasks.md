@@ -81,9 +81,9 @@ Single project: `src/kestrel/…`, `ui/…`, `tests/{unit,integration,e2e}/…` 
 
 **Independent test**: a small experiment shows each arm's rate split into confirmed/suspected and a comparison with a significance indicator + small-sample caveat, never a bare %.
 
-- [ ] T025 [P] [US2] Test `tests/unit/test_experiment_honesty.py` (cites `007/FR-006`, `007/FR-007`, `007/SC-002`, `007/SC-003`): confirmed and suspected are reported separately (never one number); a small-N comparison carries the significance indicator **and** the caveat; a rate over zero scored runs is "no data", not 0%.
-- [ ] T026 [US2] Harden `src/kestrel/experiments/results.py` + `ExperimentResultOut`: distinct confirmed/suspected fields, the small-sample caveat string, and the "no data" sentinel. Make T025 pass. *(results.py — after T019)*
-- [ ] T027 [US2] Present the split + caveat in the `ui/app.py` side-by-side table; never render a bare % at small N. *(app.py — after T024)*
+- [X] T025 [P] [US2] Test `tests/unit/test_experiment_honesty.py` (cites `007/FR-006`, `007/FR-007`, `007/SC-002`, `007/SC-003`): confirmed and suspected are reported separately (never one number); a small-N comparison carries the significance indicator **and** the caveat; a rate over zero scored runs is "no data", not 0%.
+- [X] T026 [US2] Harden `src/kestrel/experiments/results.py` + `ExperimentResultOut`: distinct confirmed/suspected fields, the small-sample caveat string, and the "no data" sentinel. Make T025 pass. *(results.py — after T019)*
+- [X] T027 [US2] Present the split + caveat in the `ui/app.py` side-by-side table; never render a bare % at small N. *(app.py — after T024)*
 
 ---
 
