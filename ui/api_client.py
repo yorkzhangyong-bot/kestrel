@@ -101,3 +101,35 @@ def get_report(target_id: int, fmt: str) -> str:
             body = {}
         raise ApiError(response.status_code, body)
     return response.text
+
+
+# ---- experiments (feature 007) ----
+
+
+def create_experiment(payload: dict[str, Any]) -> dict[str, Any]:
+    return _request("POST", "/api/experiments", json=payload, timeout=30.0)
+
+
+def list_experiments() -> list[dict[str, Any]]:
+    return _request("GET", "/api/experiments")
+
+
+def experiment_status(experiment_id: int) -> dict[str, Any]:
+    return _request("GET", f"/api/experiments/{experiment_id}/status")
+
+
+def experiment_result(experiment_id: int) -> dict[str, Any]:
+    return _request("GET", f"/api/experiments/{experiment_id}/result")
+
+
+def experiment_report(experiment_id: int, fmt: str) -> str:
+    """The experiment report in the given format ('md' or 'html'), as text (feature 007, FR-014)."""
+    response = httpx.get(f"{base_url()}/api/experiments/{experiment_id}/report",
+                         params={"format": fmt}, timeout=60.0)
+    if response.status_code >= 400:
+        try:
+            body = response.json() if response.content else {}
+        except ValueError:
+            body = {}
+        raise ApiError(response.status_code, body)
+    return response.text
