@@ -23,8 +23,8 @@ Single project: `src/kestrel/…`, `ui/…`, `tests/{unit,integration,e2e}/…` 
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the `src/kestrel/experiments/` package: `__init__.py` and empty, docstring-only `engine.py`, `stats.py`, `pricing.py`, `results.py`; and a stub `src/kestrel/report/experiment.py`. Match the module roles in plan.md.
-- [ ] T002 [P] Confirm `ruff`/`pytest`/coverage already cover `src/kestrel/experiments/` and new `tests/**` (no config change expected; `src` is globbed). Record the 007 test-scoping convention (FEATURE marker / `007/FR-xxx`) at the top of each new test file as it is created.
+- [X] T001 Create the `src/kestrel/experiments/` package: `__init__.py` and empty, docstring-only `engine.py`, `stats.py`, `pricing.py`, `results.py`; and a stub `src/kestrel/report/experiment.py`. Match the module roles in plan.md.
+- [X] T002 [P] Confirm `ruff`/`pytest`/coverage already cover `src/kestrel/experiments/` and new `tests/**` (no config change expected; `src` is globbed). Record the 007 test-scoping convention (FEATURE marker / `007/FR-xxx`) at the top of each new test file as it is created.
 
 ---
 
