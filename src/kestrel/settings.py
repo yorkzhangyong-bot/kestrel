@@ -26,6 +26,10 @@ DEFAULT_ADAPTIVE_TIME_LIMIT_S = 300
 DEFAULT_CHROMA_PATH = Path("data") / "chroma"
 DEFAULT_EXPERIENCE_PATTERN_K = 5
 DEFAULT_EXPERIENCE_MEMORY_CAP = 10
+# Experiment hard-cap defaults (feature 007, Principle VIII; research R9). Finite and overridable per experiment.
+DEFAULT_EXPERIMENT_MAX_RUNS = 50
+DEFAULT_EXPERIMENT_TOKEN_BUDGET = 500_000
+DEFAULT_EXPERIMENT_WALL_CLOCK_S = 3600
 
 Mode = Literal["local", "hosted"]
 
@@ -52,6 +56,11 @@ class Settings:
     chroma_path: Path = REPO_ROOT / DEFAULT_CHROMA_PATH
     experience_pattern_k: int = DEFAULT_EXPERIENCE_PATTERN_K
     experience_memory_cap: int = DEFAULT_EXPERIENCE_MEMORY_CAP
+    # Feature 007 (A/B harness).
+    model_prices: Mapping[str, float] = field(default_factory=dict)  # USD per 1,000 tokens (FR-006)
+    experiment_max_runs: int = DEFAULT_EXPERIMENT_MAX_RUNS
+    experiment_token_budget: int = DEFAULT_EXPERIMENT_TOKEN_BUDGET
+    experiment_wall_clock_s: int = DEFAULT_EXPERIMENT_WALL_CLOCK_S
 
     @property
     def judge_configured(self) -> bool:
@@ -62,6 +71,28 @@ class Settings:
     def attacker_configured(self) -> bool:
         """Without a key there is no attacker, so an adaptive run cannot start (FR-016)."""
         return self.attacker_api_key is not None
+
+
+def _parse_prices(raw: str) -> dict[str, float]:
+    """Parse ``KESTREL_MODEL_PRICES`` ("model=price,model=price") into a mapping (feature 007, FR-006)."""
+    prices: dict[str, float] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, sep, value = entry.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise SettingsError(f"KESTREL_MODEL_PRICES entries look like 'model=price', not {entry!r}.")
+        try:
+            price = float(value.strip())
+        except ValueError:
+            raise SettingsError(
+                f"KESTREL_MODEL_PRICES price for {name!r} must be a number, not {value.strip()!r}.") from None
+        if price < 0:
+            raise SettingsError(f"KESTREL_MODEL_PRICES price for {name!r} must not be negative.")
+        prices[name] = price
+    return prices
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -118,4 +149,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     adaptive_time_limit_s=positive_int("KESTREL_ADAPTIVE_TIME_LIMIT_S", DEFAULT_ADAPTIVE_TIME_LIMIT_S),
                     chroma_path=chroma_path,
                     experience_pattern_k=positive_int("KESTREL_EXPERIENCE_PATTERN_K", DEFAULT_EXPERIENCE_PATTERN_K),
-                    experience_memory_cap=positive_int("KESTREL_EXPERIENCE_MEMORY_CAP", DEFAULT_EXPERIENCE_MEMORY_CAP))
+                    experience_memory_cap=positive_int("KESTREL_EXPERIENCE_MEMORY_CAP", DEFAULT_EXPERIENCE_MEMORY_CAP),
+                    model_prices=_parse_prices(setting("KESTREL_MODEL_PRICES")),
+                    experiment_max_runs=positive_int("KESTREL_EXPERIMENT_MAX_RUNS", DEFAULT_EXPERIMENT_MAX_RUNS),
+                    experiment_token_budget=positive_int("KESTREL_EXPERIMENT_TOKEN_BUDGET",
+                                                         DEFAULT_EXPERIMENT_TOKEN_BUDGET),
+                    experiment_wall_clock_s=positive_int("KESTREL_EXPERIMENT_WALL_CLOCK_S",
+                                                         DEFAULT_EXPERIMENT_WALL_CLOCK_S))

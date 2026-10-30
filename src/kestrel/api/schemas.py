@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Literal
+from typing import Literal, Protocol
 from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import BaseModel, Field
@@ -225,6 +225,163 @@ class ProfileOut(BaseModel):
     by_family: list[FamilyCount]
     by_verdict: list[VerdictCount]
     recent: list[RecentMemory]
+
+
+# ---- experiments (feature 007, A/B harness) ----
+
+class ArmIn(BaseModel):
+    """One arm's configuration (FR-002). Model names and settings only - never a secret (Principle IV)."""
+    attacker_model: str
+    judge_model: str
+    use_prior_experience: bool
+    turn_cap: int = 6
+    token_budget: int = 40000
+    write_back: bool = True
+
+
+class CapsIn(BaseModel):
+    """Hard caps; each None falls back to the configured default (FR-008)."""
+    max_runs: int | None = None
+    token_budget_total: int | None = None
+    wall_clock_s: int | None = None
+
+
+class CreateExperimentRequest(BaseModel):
+    target_id: int
+    mode: Literal["single_turn", "adaptive"] = "adaptive"
+    families: list[str] | None = None   # None = all families (FR-001)
+    reps: int = 3
+    caps: CapsIn = Field(default_factory=CapsIn)
+    arm_a: ArmIn
+    arm_b: ArmIn
+
+
+class RateOut(BaseModel):
+    successes: int
+    n: int
+    rate: float | None                  # None = no data (never a spurious 0%)
+    ci: tuple[float, float] | None
+
+
+class CategoryCountOut(BaseModel):
+    key: str
+    confirmed: int
+    suspected: int
+    n: int
+
+
+class ArmResultOut(BaseModel):
+    label: str
+    attacker_model: str
+    judge_model: str
+    run_order: int | None
+    completed: int
+    send_failures: int
+    confirmed: RateOut
+    suspected: RateOut
+    mean_turns_to_success: float | None
+    mean_tokens: float | None
+    cost: float | None
+    cost_note: str | None
+    by_family: list[CategoryCountOut]
+    by_owasp: list[CategoryCountOut]
+
+
+class ComparisonOut(BaseModel):
+    confirmed: dict                     # two_proportion(...) on the confirmed rate (the primary verdict)
+    suspected_diff: float | None        # descriptive only (judge opinion, Principle II)
+
+
+class ArmProgressOut(BaseModel):
+    label: str
+    run_order: int | None
+    completed: int
+    planned: int
+
+
+class ExperimentStatusOut(BaseModel):
+    id: int
+    status: str
+    stopped_reason: str | None
+    planned_runs: int
+    completed_runs: int
+    tokens_used: int
+    cost: float | None
+    arms: list[ArmProgressOut]
+
+
+class ExperimentResultOut(BaseModel):
+    id: int
+    status: str
+    stopped_reason: str | None
+    mode: str
+    families: list[str]
+    reps: int
+    diff: list[str]                     # the recorded arm diff (FR-003)
+    order: str                          # e.g. "A then B" (FR-005)
+    warming: str                        # e.g. "A cold (no write-back); B warm" (FR-005)
+    arms: list[ArmResultOut]
+    comparison: ComparisonOut
+
+
+class ExperimentSummaryOut(BaseModel):
+    id: int
+    target_id: int
+    status: str
+    mode: str
+    created_at: str
+    finished_at: str | None
+
+
+ARM_DIFF_FIELDS = ("attacker_model", "judge_model", "use_prior_experience", "turn_cap", "token_budget")
+
+
+def validate_experiment(request: CreateExperimentRequest, known_families: list[str]) -> list[dict[str, str]]:
+    """Arms must differ in >=1 field; families (if given) known and non-empty; reps/caps sane (FR-003, FR-008)."""
+    errors: list[dict[str, str]] = []
+    if all(getattr(request.arm_a, f) == getattr(request.arm_b, f) for f in ARM_DIFF_FIELDS):
+        errors.append({"field": "arm_b", "message": "The two arms must differ in at least one setting."})
+    if request.families is not None:
+        if not request.families:
+            errors.append({"field": "families", "message": "Choose at least one attack family."})
+        for i, family in enumerate(request.families):
+            if family not in known_families:
+                errors.append({"field": f"families.{i}", "message": f"Unknown attack family {family!r}."})
+    if request.reps < 1:
+        errors.append({"field": "reps", "message": "reps must be at least 1."})
+    for name in ("max_runs", "token_budget_total", "wall_clock_s"):
+        value = getattr(request.caps, name)
+        if value is not None and value < 1:
+            errors.append({"field": f"caps.{name}", "message": f"{name} must be at least 1."})
+    return errors
+
+
+class _ArmLike(Protocol):
+    """Either an ArmIn (request) or a store ExperimentArm; both carry the arm fields (read-only suffices)."""
+    @property
+    def attacker_model(self) -> str: ...
+    @property
+    def judge_model(self) -> str: ...
+    @property
+    def use_prior_experience(self) -> bool: ...
+    @property
+    def turn_cap(self) -> int: ...
+    @property
+    def token_budget(self) -> int: ...
+
+
+def experiment_diff(arm_a: _ArmLike, arm_b: _ArmLike) -> list[str]:
+    """Human-readable differences between the two arms (FR-003)."""
+    labels = {"use_prior_experience": "retrieval"}
+    out = []
+    for field in ARM_DIFF_FIELDS:
+        a, b = getattr(arm_a, field), getattr(arm_b, field)
+        if a != b:
+            name = labels.get(field, field)
+            if isinstance(a, bool):
+                a, b = ("on" if a else "off"), ("on" if b else "off")
+            out.append(f"{name}: A={a}, B={b}")
+    return out
 
 
 def validate_save(request: SaveTargetRequest, terms_version: str) -> list[dict[str, str]]:

@@ -1,6 +1,7 @@
 """Kestrel's FastAPI app. Run it with: uvicorn --factory kestrel.api.main:create_app"""
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -14,13 +15,20 @@ from fastapi.responses import JSONResponse
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
                                  ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
                                  JudgeOut, ProfileOut, RunDetail, RunRequest, RunSummary, SaveTargetRequest,
-                                 TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut, validate_canaries,
-                                 validate_save, validate_settings)
+                                 TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut,
+                                 ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
+                                 CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
+                                 ExperimentSummaryOut, RateOut, experiment_diff, validate_canaries,
+                                 validate_experiment, validate_save, validate_settings)
 from kestrel.attack.attacker import GOALS, AttackerClient
-from kestrel.attacks.library import AttackLibrary, LibraryError, load_library
+from kestrel.attacks.library import FAMILIES, AttackLibrary, LibraryError, load_library
 from kestrel.experience.hints import format_hints
 from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
 from kestrel.experience.writeback import write_back
+from kestrel.experiments import pricing as exp_pricing
+from kestrel.experiments import results as exp_results
+from kestrel.experiments.engine import run_experiment
+from kestrel.report.experiment import build_experiment_report, render_experiment_markdown
 from kestrel.report.model import build_report
 from kestrel.report.recommend import recommendations_for
 from kestrel.report.render import render_html, render_markdown
@@ -32,7 +40,8 @@ from kestrel.runs import execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
-from kestrel.store import NameTaken, Run, RunInProgress, Target, TargetNotFound, TargetStore, utc_now
+from kestrel.store import (ExperimentInProgress, NameTaken, Run, RunInProgress, Target, TargetNotFound,
+                           TargetStore, utc_now)
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
@@ -64,6 +73,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             library = load_library()
         except LibraryError as error:
             logger.warning("The attack library could not be loaded, so attacks are unavailable: %s", error)
+    # Capture any injected test doubles before defaulting: experiments build a client per arm, so in tests the
+    # injected stub is reused for every arm, while production builds a real per-arm client from settings.
+    injected_judge, injected_attacker = judge, attacker
     judge = judge or JudgeClient(model=settings.judge_model, api_key=settings.judge_api_key,
                                  base_url=settings.judge_base_url)
     attacker = attacker or AttackerClient(model=settings.attacker_model, api_key=settings.attacker_api_key,
@@ -97,6 +109,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.judge = judge
     app.state.attacker = attacker
     app.state.experience = experience
+    app.state.injected_judge = injected_judge        # feature 007: reused for every arm in tests
+    app.state.injected_attacker = injected_attacker
+    app.state.experiment_tasks = set()               # keep background experiment tasks referenced (no GC)
     app.add_exception_handler(RequestValidationError, _validation_error)
 
     @app.get("/api/config", response_model=ConfigOut)
@@ -357,6 +372,91 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                             owasp_category=p.owasp_category, source=p.source).model_dump()
                             for p in prompts]}
 
+    @app.post("/api/experiments", status_code=201)
+    async def create_experiment(body: CreateExperimentRequest, request: Request) -> Any:
+        library: AttackLibrary | None = request.app.state.library
+        if library is None:
+            return api_error(503, "library_unavailable", "The attack library is not available.")
+        try:
+            target = store.get_target(body.target_id)
+        except TargetNotFound:
+            return not_found(body.target_id)
+        if not target.permission_confirmed_at:
+            return api_error(409, "permission_missing",
+                             "Tick the permission box and save the target before attacking it.")
+        if target.terms_version != terms.version:
+            return api_error(409, "terms_outdated",
+                             "The terms of service have changed; read them and tick the box again.")
+        errors = validate_experiment(body, list(FAMILIES))
+        if errors:
+            return form_errors(errors)
+        attacker_ready = request.app.state.attacker.configured or request.app.state.injected_attacker is not None
+        if body.mode == "adaptive" and not attacker_ready:
+            return api_error(409, "attacker_unavailable",
+                             "No attacker model is configured, so an adaptive experiment can't run.")
+        families = body.families or list(FAMILIES)
+        try:
+            seed_prompt_ids = {family: library.pick(family).id for family in families}
+        except LookupError as error:
+            return form_errors([{"field": "families", "message": str(error)}])
+        try:
+            experiment = store.create_experiment(
+                target_id=target.id, mode=body.mode, families=families, reps=body.reps,
+                seed_prompt_ids=seed_prompt_ids,
+                max_runs=body.caps.max_runs or settings.experiment_max_runs,
+                token_budget_total=body.caps.token_budget_total or settings.experiment_token_budget,
+                wall_clock_s=body.caps.wall_clock_s or settings.experiment_wall_clock_s,
+                arm_a=body.arm_a.model_dump(), arm_b=body.arm_b.model_dump())
+        except ExperimentInProgress:
+            return api_error(409, "experiment_in_progress",
+                             "An experiment against this target is already running.")
+        _schedule_experiment(request.app, store, settings, experiment.id)
+        return {"id": experiment.id, "status": experiment.status}
+
+    @app.get("/api/experiments", response_model=list[ExperimentSummaryOut])
+    def list_experiments() -> Any:
+        return [_experiment_summary(experiment) for experiment in store.list_experiments()]
+
+    @app.get("/api/experiments/{experiment_id}/status", response_model=ExperimentStatusOut)
+    def experiment_status(experiment_id: int) -> Any:
+        try:
+            experiment = store.get_experiment(experiment_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No experiment with id {experiment_id}.")
+        return _experiment_status(store, settings, experiment)
+
+    @app.get("/api/experiments/{experiment_id}/result", response_model=ExperimentResultOut)
+    def experiment_result(experiment_id: int) -> Any:
+        try:
+            experiment = store.get_experiment(experiment_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No experiment with id {experiment_id}.")
+        return _experiment_result(store, settings, experiment)
+
+    @app.get("/api/experiments/{experiment_id}/report")
+    def experiment_report(experiment_id: int, format: str = "md") -> Any:
+        """The comparison report (Markdown or HTML), read-only (FR-014). Reuses the feature-005 HTML renderer."""
+        if format not in ("md", "html"):
+            return form_errors([{"field": "format", "message": "format must be 'md' or 'html'."}])
+        try:
+            experiment = store.get_experiment(experiment_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No experiment with id {experiment_id}.")
+        try:
+            target_name = store.get_target(experiment.target_id).name
+        except TargetNotFound:
+            target_name = ""
+        arm_results, comparison = _experiment_arm_results(store, settings, experiment)
+        by_label = {arm.label: arm for arm in experiment.arms}
+        model = build_experiment_report(experiment, arm_results[0], arm_results[1], comparison,
+                                        diff=experiment_diff(by_label["A"], by_label["B"]),
+                                        order=_order_text(experiment), warming=_warming_text(experiment),
+                                        now=utc_now(), target_name=target_name)
+        markdown = render_experiment_markdown(model)
+        if format == "html":
+            return Response(content=render_html(markdown), media_type="text/html; charset=utf-8")
+        return Response(content=markdown, media_type="text/markdown; charset=utf-8")
+
     return app
 
 
@@ -447,6 +547,103 @@ def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
                                     reply_truncated=t.reply_truncated, judge_verdict=t.judge_verdict,
                                     judge_reason=t.judge_reason, judge_progress=t.judge_progress)
                             for t in (turns or [])])
+
+
+def _schedule_experiment(app: FastAPI, store: TargetStore, settings: Settings, experiment_id: int) -> None:
+    """Run the experiment in the background; keep the task referenced so it is not garbage-collected (R4)."""
+    make_judge = (lambda model: app.state.injected_judge) if app.state.injected_judge is not None else None
+    make_attacker = (lambda model: app.state.injected_attacker) if app.state.injected_attacker is not None else None
+    task = asyncio.create_task(run_experiment(
+        store, experiment_id=experiment_id, settings=settings, library=app.state.library,
+        experience=app.state.experience, transport=app.state.transport, resolver=app.state.resolver,
+        make_judge=make_judge, make_attacker=make_attacker))
+    app.state.experiment_tasks.add(task)
+    task.add_done_callback(app.state.experiment_tasks.discard)
+
+
+def _experiment_summary(experiment) -> ExperimentSummaryOut:
+    return ExperimentSummaryOut(id=experiment.id, target_id=experiment.target_id, status=experiment.status,
+                                mode=experiment.mode, created_at=experiment.created_at,
+                                finished_at=experiment.finished_at)
+
+
+def _experiment_status(store: TargetStore, settings: Settings, experiment) -> ExperimentStatusOut:
+    progress = store.experiment_progress(experiment.id)
+    planned_per_arm = len(experiment.families) * experiment.reps
+    arms = [ArmProgressOut(label=arm.label, run_order=arm.run_order,
+                           completed=progress["per_arm"].get(arm.id, 0), planned=planned_per_arm)
+            for arm in experiment.arms]
+    return ExperimentStatusOut(id=experiment.id, status=experiment.status, stopped_reason=experiment.stopped_reason,
+                               planned_runs=planned_per_arm * len(experiment.arms),
+                               completed_runs=progress["completed"], tokens_used=progress["tokens"],
+                               cost=_experiment_cost(store, settings, experiment), arms=arms)
+
+
+def _experiment_cost(store: TargetStore, settings: Settings, experiment) -> float | None:
+    """Total estimated cost across arms; None (unavailable) if any arm's primary-model price is unconfigured."""
+    total = 0.0
+    for arm in experiment.arms:
+        tokens = sum(run.tokens_used or 0 for run in store.arm_runs(experiment.id, arm.id))
+        price_model = arm.attacker_model if experiment.mode == "adaptive" else arm.judge_model
+        cost = exp_pricing.arm_cost(tokens, price_model, settings.model_prices)
+        if cost is None:
+            return None
+        total += cost
+    return total
+
+
+def _experiment_arm_results(store: TargetStore, settings: Settings, experiment):
+    """The two ArmResults and their Comparison, shared by the result and report endpoints."""
+    links = store.experiment_run_links(experiment.id)
+    arm_results = []
+    for arm in sorted(experiment.arms, key=lambda a: a.label):
+        runs = store.arm_runs(experiment.id, arm.id)
+        send_failures = sum(1 for link in links if link.arm_id == arm.id and not link.send_ok)
+        arm_results.append(exp_results.arm_result(arm, runs, mode=experiment.mode,
+                                                  model_prices=settings.model_prices, send_failures=send_failures))
+    return arm_results, exp_results.build_comparison(arm_results[0], arm_results[1])
+
+
+def _experiment_result(store: TargetStore, settings: Settings, experiment) -> ExperimentResultOut:
+    arm_results, comparison = _experiment_arm_results(store, settings, experiment)
+    by_label = {arm.label: arm for arm in experiment.arms}
+    return ExperimentResultOut(
+        id=experiment.id, status=experiment.status, stopped_reason=experiment.stopped_reason,
+        mode=experiment.mode, families=list(experiment.families), reps=experiment.reps,
+        diff=experiment_diff(by_label["A"], by_label["B"]),
+        order=_order_text(experiment), warming=_warming_text(experiment),
+        arms=[_arm_result_out(result) for result in arm_results],
+        comparison=ComparisonOut(confirmed=comparison.confirmed, suspected_diff=comparison.suspected_diff))
+
+
+def _order_text(experiment) -> str:
+    ordered = sorted((arm for arm in experiment.arms if arm.run_order is not None), key=lambda a: a.run_order)
+    if ordered and len(ordered) == len(experiment.arms):
+        return " then ".join(arm.label for arm in ordered)
+    return "A then B"
+
+
+def _warming_text(experiment) -> str:
+    return "; ".join(f"{arm.label} {'warm' if arm.write_back else 'cold (no write-back)'}"
+                     for arm in sorted(experiment.arms, key=lambda a: a.label))
+
+
+def _arm_result_out(result) -> ArmResultOut:
+    return ArmResultOut(label=result.label, attacker_model=result.attacker_model, judge_model=result.judge_model,
+                        run_order=result.run_order, completed=result.completed, send_failures=result.send_failures,
+                        confirmed=_rate_out(result.confirmed), suspected=_rate_out(result.suspected),
+                        mean_turns_to_success=result.mean_turns_to_success, mean_tokens=result.mean_tokens,
+                        cost=result.cost, cost_note=result.cost_note,
+                        by_family=[_cat_out(c) for c in result.by_family],
+                        by_owasp=[_cat_out(c) for c in result.by_owasp])
+
+
+def _rate_out(rate) -> RateOut:
+    return RateOut(successes=rate.successes, n=rate.n, rate=rate.rate, ci=rate.ci)
+
+
+def _cat_out(count) -> CategoryCountOut:
+    return CategoryCountOut(key=count.key, confirmed=count.confirmed, suspected=count.suspected, n=count.n)
 
 
 def load_terms(path: Path = TERMS_PATH) -> TermsOut:

@@ -67,7 +67,7 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
                                deadline_s=send_budget, prompt=prompt.text)
         if not outcome.ok:
-            return _finish(store, run_id, prompt, failure_step=outcome.step)
+            return _finish(store, run_id, prompt, failure_step=outcome.step, tokens_used=0)
 
         reply = outcome.reply_text or ""
         truncated = outcome.reply_truncated
@@ -75,24 +75,26 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
         hit = match_canary(reply, canaries)
         if hit is not None:
             return _finish(store, run_id, prompt, verdict="succeeded", hard_evidence=True, reason=CANARY_REASON,
-                           reply_text=reply, reply_truncated=truncated)
+                           reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         if not judge.configured:
             return _finish(store, run_id, prompt, verdict="unclear", reason=NO_JUDGE_REASON,
-                           reply_text=reply, reply_truncated=truncated)
+                           reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         judge_budget = min(judge_s, deadline - clock())
         if judge_budget <= 0:
             return _finish(store, run_id, prompt, verdict="unclear", reason=DEADLINE_REASON,
-                           reply_text=reply, reply_truncated=truncated)
+                           reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         try:
             verdict = await judge.judge(attack=prompt.text, reply=reply, timeout=judge_budget)
         except JudgeError as error:
             return _finish(store, run_id, prompt, verdict="unclear", judge_used=True, judge_model=judge.model,
-                           reason=f"The judge could not decide: {error}", reply_text=reply, reply_truncated=truncated)
+                           reason=f"The judge could not decide: {error}", reply_text=reply, reply_truncated=truncated,
+                           tokens_used=0)
         return _finish(store, run_id, prompt, verdict=verdict.verdict, hard_evidence=False, judge_used=True,
-                       judge_model=judge.model, reason=verdict.reason, reply_text=reply, reply_truncated=truncated)
+                       judge_model=judge.model, reason=verdict.reason, reply_text=reply, reply_truncated=truncated,
+                       tokens_used=verdict.tokens)
     except Exception:
         # Close the row so the target is not left locked by FR-010; the start-up sweep is only a backstop.
         store.finish_run(run_id, verdict="unclear", reason="The run failed unexpectedly.")

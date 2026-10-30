@@ -689,6 +689,140 @@ def render_targets(targets: list[dict]) -> None:
                   for t in targets], hide_index=True)
 
 
+def start_experiment() -> None:
+    """Start-button callback: capture the two arms and campaign now; created on the next pass (feature 007)."""
+    clear_messages()
+    state = st.session_state
+
+    def arm(prefix: str) -> dict:
+        return {"attacker_model": (state.get(f"{prefix}_attacker") or "").strip(),
+                "judge_model": (state.get(f"{prefix}_judge") or "").strip(),
+                "use_prior_experience": bool(state.get(f"{prefix}_retrieval")),
+                "turn_cap": int(state.get(f"{prefix}_turns") or 6),
+                "token_budget": int(state.get(f"{prefix}_tokens") or 40000),
+                "write_back": bool(state.get(f"{prefix}_writeback"))}
+
+    state["pending_experiment"] = {
+        "target_id": state.get("exp_target"),
+        "mode": "adaptive" if state.get("exp_mode") == "Adaptive" else "single_turn",
+        "families": state.get("exp_families") or None,
+        "reps": int(state.get("exp_reps") or 3),
+        "caps": {"max_runs": int(state.get("exp_cap_runs") or 50),
+                 "token_budget_total": int(state.get("exp_cap_tokens") or 500000),
+                 "wall_clock_s": int(state.get("exp_cap_wall") or 3600)},
+        "arm_a": arm("arm_a"), "arm_b": arm("arm_b")}
+
+
+def run_pending_experiment() -> None:
+    payload = st.session_state.get("pending_experiment")
+    if payload is None:
+        return
+    st.session_state["pending_experiment"] = None
+    try:
+        created = api_client.create_experiment(payload)
+        st.session_state["experiment_id"] = created["id"]
+        st.session_state["experiment_notice"] = None
+    except api_client.ApiError as error:
+        st.session_state["experiment_notice"] = api_message(error)
+    st.rerun()
+
+
+def _arm_editor(column, prefix: str, title: str, attacker: str, judge: str, *, retrieval: bool,
+                write_back: bool) -> None:
+    with column:
+        st.markdown(f"**{title}**")
+        st.text_input("Attacker model", value=attacker, key=f"{prefix}_attacker")
+        st.text_input("Judge model", value=judge, key=f"{prefix}_judge")
+        st.checkbox("Retrieval on", value=retrieval, key=f"{prefix}_retrieval")
+        st.number_input("Turn cap", min_value=1, value=6, key=f"{prefix}_turns")
+        st.number_input("Token budget", min_value=1, value=40000, key=f"{prefix}_tokens")
+        st.checkbox("Write back", value=write_back, key=f"{prefix}_writeback")
+
+
+def render_experiments(config: dict, targets: list[dict], families: list[dict]) -> None:
+    st.subheader("Experiments")
+    if st.session_state.get("experiment_notice"):
+        st.error(st.session_state["experiment_notice"])
+    if not targets:
+        st.caption("Save a target first to run an A/B experiment.")
+        return
+    labels = {t["id"]: t["name"] for t in targets}
+    st.selectbox("Experiment target", list(labels), key="exp_target", format_func=lambda i: labels[i])
+    st.radio("Mode", ["Adaptive", "Single-turn"], key="exp_mode", horizontal=True)
+    st.multiselect("Attack families (default: all)", [f["key"] for f in families], key="exp_families")
+    st.number_input("Repetitions per family", min_value=1, value=3, key="exp_reps")
+    with st.expander("Hard caps"):
+        st.number_input("Max runs", min_value=1, value=50, key="exp_cap_runs")
+        st.number_input("Total token budget", min_value=1, value=500000, key="exp_cap_tokens")
+        st.number_input("Wall-clock seconds", min_value=1, value=3600, key="exp_cap_wall")
+    attacker = (config.get("attacker") or {}).get("model", "")
+    judge = (config.get("judge") or {}).get("model", "")
+    col_a, col_b = st.columns(2)
+    _arm_editor(col_a, "arm_a", "Arm A", attacker, judge, retrieval=False, write_back=False)
+    _arm_editor(col_b, "arm_b", "Arm B", attacker, judge, retrieval=True, write_back=True)
+    st.caption("Retrieval on/off only affects adaptive mode.")
+    st.button("Start experiment", key="exp_start", type="primary", on_click=start_experiment,
+              disabled=st.session_state.get("exp_target") is None)
+    _render_experiment_run()
+
+
+def _render_experiment_run() -> None:
+    experiment_id = st.session_state.get("experiment_id")
+    if experiment_id is None:
+        return
+    try:
+        status = api_client.experiment_status(experiment_id)
+    except api_client.ApiError as error:
+        st.error(api_message(error))
+        return
+    st.write(f"Experiment #{experiment_id}: **{status['status']}** — "
+             f"{status['completed_runs']}/{status['planned_runs']} runs")
+    st.button("Refresh", key="exp_refresh")   # a rerun re-polls the status/result
+    if status["status"] == "running":
+        st.caption("Running… click Refresh to update.")
+        return
+    try:
+        result = api_client.experiment_result(experiment_id)
+    except api_client.ApiError as error:
+        st.error(api_message(error))
+        return
+    _render_comparison(result)
+
+
+def _render_comparison(result: dict) -> None:
+    arms = {a["label"]: a for a in result["arms"]}
+    if "A" not in arms or "B" not in arms:
+        return
+    a, b = arms["A"], arms["B"]
+
+    def rate(cell: dict) -> str:   # never a bare %: always shows the n it is over, or "no data" (SC-003)
+        return "no data" if cell["rate"] is None else f"{cell['rate'] * 100:.0f}% ({cell['successes']}/{cell['n']})"
+
+    def cost(arm: dict) -> str:
+        return arm["cost_note"] if arm["cost"] is None else f"${arm['cost']:.2f}"
+
+    def tokens(arm: dict) -> str:
+        return "—" if arm["mean_tokens"] is None else f"{arm['mean_tokens']:.0f}"
+
+    rows = [{"Metric": "Confirmed success", "Arm A": rate(a["confirmed"]), "Arm B": rate(b["confirmed"])},
+            {"Metric": "Suspected success", "Arm A": rate(a["suspected"]), "Arm B": rate(b["suspected"])},
+            {"Metric": "Mean tokens", "Arm A": tokens(a), "Arm B": tokens(b)},
+            {"Metric": "Cost", "Arm A": cost(a), "Arm B": cost(b)}]
+    st.dataframe(rows, hide_index=True)
+    st.caption(f"Diff: {'; '.join(result['diff'])} · {result['order']} · {result['warming']}")
+    caveat = result["comparison"]["confirmed"].get("caveat")
+    if caveat:
+        st.warning(caveat)
+    stopped = result.get("stopped_reason")
+    if stopped not in ("completed", None):
+        st.info(f"Stopped early: {stopped}. Showing partial results.")
+    try:
+        st.download_button("Download report (Markdown)", data=api_client.experiment_report(result["id"], "md"),
+                           file_name=f"experiment-{result['id']}.md", mime="text/markdown", key="exp_download")
+    except api_client.ApiError:
+        st.caption("Report unavailable.")
+
+
 def main() -> None:
     st.set_page_config(page_title="Kestrel", layout="wide")
     st.sidebar.title("Kestrel")
@@ -711,11 +845,13 @@ def main() -> None:
         st.caption(MODE_CAPTIONS.get(config["mode"], config["mode"]))
     run_pending_test()
     run_pending_run()
+    run_pending_experiment()
     render_attack(config, families)
     render_runs(config)
     render_profile()
     render_report()
     render_result()
+    render_experiments(config, targets, families)
     render_targets(targets)
 
 
