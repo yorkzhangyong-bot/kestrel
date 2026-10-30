@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Literal
+from typing import Literal, Protocol
 from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import BaseModel, Field
@@ -356,7 +356,21 @@ def validate_experiment(request: CreateExperimentRequest, known_families: list[s
     return errors
 
 
-def experiment_diff(arm_a: ArmIn, arm_b: ArmIn) -> list[str]:
+class _ArmLike(Protocol):
+    """Either an ArmIn (request) or a store ExperimentArm; both carry the arm fields (read-only suffices)."""
+    @property
+    def attacker_model(self) -> str: ...
+    @property
+    def judge_model(self) -> str: ...
+    @property
+    def use_prior_experience(self) -> bool: ...
+    @property
+    def turn_cap(self) -> int: ...
+    @property
+    def token_budget(self) -> int: ...
+
+
+def experiment_diff(arm_a: _ArmLike, arm_b: _ArmLike) -> list[str]:
     """Human-readable differences between the two arms (FR-003)."""
     labels = {"use_prior_experience": "retrieval"}
     out = []

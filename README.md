@@ -2,7 +2,7 @@
 
 Kestrel is an autonomous red-teaming agent for tool-using AI agents. You register a target (any HTTP chat endpoint you own), pick an attack family, and Kestrel's attacker agent plans and runs a multi-turn attack against it: it sends messages, inspects the replies and any tool activity for hard evidence, judges each turn, and adapts its next move. Across runs it builds a memory of what worked on each target and reuses successful attack patterns. You don't chat with Kestrel; you configure it and watch the attacker's conversation with your target unfold turn by turn in the Streamlit UI. Built for vibe coders who ship agents with tools but have no security testing in place.
 
-**Status**: features 001–005 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. Kestrel learns from every run: a local ChromaDB store keeps attack patterns and per-target memory, and a warm run primes the attacker with what worked before. And it writes a report (005): an OWASP-mapped, fix-ready summary of a target's runs, with model-generated fix suggestions, in Markdown or HTML. The human-approved spec workflow (006) comes next, then the A/B harness (007). Every pull request runs a four-gate QA pipeline — traceability, quality (ruff, mypy, tests with coverage, gitleaks, pip-audit), a Claude Code review, and a failure notifier — described in [the QA pipeline docs](docs/qa-pipeline.md). Each feature's spec is approved by a human on GitHub before implementation begins (006): specify → clarify → spec PR → human approval → plan/tasks/implement → implementation PR → four gates → human merge. The project's rules are in the [constitution](.specify/memory/constitution.md).
+**Status**: features 001–007 are done. You can register an agent, run a single-turn attack from the built-in library, or run a multi-turn adaptive attack driven by an attacker model, and read the judged result and the full conversation. Kestrel learns from every run: a local ChromaDB store keeps attack patterns and per-target memory, and a warm run primes the attacker with what worked before. And it writes a report (005): an OWASP-mapped, fix-ready summary of a target's runs, with model-generated fix suggestions, in Markdown or HTML. The human-approved spec workflow (006) and the A/B harness (007) are done too: an experiment runs one campaign under two arms (for example retrieval off vs on) against a target and compares the outcomes with honest statistics — Wilson intervals and a two-proportion test, with confirmed (hard-evidence) and suspected (judge) success kept separate. Every pull request runs a four-gate QA pipeline — traceability, quality (ruff, mypy, tests with coverage, gitleaks, pip-audit), a Claude Code review, and a failure notifier — described in [the QA pipeline docs](docs/qa-pipeline.md). Each feature's spec is approved by a human on GitHub before implementation begins (006): specify → clarify → spec PR → human approval → plan/tasks/implement → implementation PR → four gates → human merge. The project's rules are in the [constitution](.specify/memory/constitution.md).
 
 ## Run it on your own machine
 
@@ -60,6 +60,15 @@ The **Report** panel (after a target's Profile) turns a target's runs into an OW
 
 It is served by `GET /api/targets/{id}/report?format=md|html`, which reads the target's stored runs and turns. The only new dependency is `markdown-it-py` (the HTML is derived from the Markdown with raw HTML escaped), and the database moves to schema v5 — a `report_recommendations` cache; existing databases migrate automatically.
 
+## A/B experiments
+
+The **Experiments** screen runs one campaign under two **arms** that differ in exactly the thing you are testing — a different attacker or judge model, retrieval on vs off, a bigger turn or token budget — against a single owned target, and compares the outcomes (feature 007):
+
+- An arm holds only model names and settings, never a secret. The two arms must differ in at least one field; Kestrel runs arm A's whole campaign, then arm B's, as ordinary feature-002/003/004 runs. A **cold** arm can disable write-back so arm B is not warmed by arm A, and the experiment records the order and warming applied.
+- Each arm reports success split into **confirmed** (hard evidence) and **suspected** (judge opinion), plus mean turns, mean tokens and estimated cost, and per-family and per-OWASP breakdowns. The comparison carries a significance indicator (a Wilson interval per rate and a two-proportion test) and a small-sample caveat — never a bare percentage at small N.
+- Hard caps bound every experiment — `KESTREL_EXPERIMENT_MAX_RUNS` (default 50), `KESTREL_EXPERIMENT_TOKEN_BUDGET` (default 500000) and `KESTREL_EXPERIMENT_WALL_CLOCK_S` (default 3600) — and a cap stops it cleanly with usable partial results. Cost is estimated from tokens and a configured per-model price, set with `KESTREL_MODEL_PRICES` (for example `deepseek/deepseek-v4.1-flash=0.30,google/gemini-3.8-flash=0.20`, USD per 1,000 tokens); tokens are always shown, and cost reads "unavailable" when a model has no configured price.
+- `POST /api/experiments` starts one in the background; `GET /api/experiments/{id}/status` and `/result` report progress and the comparison; `/report?format=md|html` downloads it in the feature-005 formats. The database moves to schema v6 (three new tables); existing databases migrate automatically.
+
 ## Your encryption key
 
 Kestrel encrypts auth header values with a key. On first start, the API creates `~/.kestrel/secret.key` and logs where it is. **Back that file up.** Without it, saved header values can't be read, and you'll have to type them in again; everything else about your targets is kept.
@@ -88,6 +97,8 @@ The end-to-end tests need `OPENROUTER_API_KEY`, because the [sacrificial HS-code
 - [Feature 003 spec, plan and tasks](specs/003-adaptive-attack/)
 - [Feature 004 spec, plan and tasks](specs/004-attack-pattern-memory/)
 - [Feature 005 spec, plan and tasks](specs/005-owasp-report/)
+- [Feature 006 spec, plan and tasks](specs/006-human-approved-spec/)
+- [Feature 007 spec, plan and tasks](specs/007-ab-harness/)
 
 ## License
 

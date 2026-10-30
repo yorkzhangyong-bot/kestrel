@@ -128,10 +128,10 @@ Single project: `src/kestrel/…`, `ui/…`, `tests/{unit,integration,e2e}/…` 
 
 ## Phase 8: Polish & cross-cutting
 
-- [ ] T040 [P] [Polish] e2e `tests/e2e/test_us1_ab_experiment.py` (cites `007/SC-009`, `007/FR-003`, `007/FR-005`, `007/FR-006`): a 2-arm experiment vs the HS-code target, N=1, retrieval **off** (arm A, cold) vs **on** (arm B, warm), polled to finished, asserting a comparison with split rates, a significance caveat, the recorded diff/order/warming, and arm A's `memory_written = null`.
-- [ ] T041 [P] [Polish] Document the A/B harness in `README.md` (status + Experiments screen) and note the `KESTREL_MODEL_PRICES` setting.
-- [ ] T042 [Polish] `uv run ruff check src ui tests`; `uv run mypy src` (advisory); full suite with `--cov=src --cov-fail-under=85`.
-- [ ] T043 [Polish] Run `scripts/check_spec.py` and `scripts/check_traceability.py`; confirm every 007 FR/SC is cited by a 007-scoped test, or add a `specs/007-ab-harness/traceability.md` justification (scoped `007/FR-0xx:`); run the quickstart.md walkthrough.
+- [X] T040 [P] [Polish] e2e `tests/e2e/test_us1_ab_experiment.py` (cites `007/SC-009`, `007/FR-003`, `007/FR-005`, `007/FR-006`): a 2-arm experiment vs the HS-code target, N=1, retrieval **off** (arm A, cold) vs **on** (arm B, warm), polled to finished, asserting a comparison with split rates, a significance caveat, the recorded diff/order/warming, and arm A's `memory_written = null`.
+- [X] T041 [P] [Polish] Document the A/B harness in `README.md` (status + Experiments screen) and note the `KESTREL_MODEL_PRICES` setting.
+- [X] T042 [Polish] `uv run ruff check src ui tests`; `uv run mypy src` (advisory); full suite with `--cov=src --cov-fail-under=85`.
+- [X] T043 [Polish] Run `scripts/check_spec.py` and `scripts/check_traceability.py`; confirm every 007 FR/SC is cited by a 007-scoped test, or add a `specs/007-ab-harness/traceability.md` justification (scoped `007/FR-0xx:`); run the quickstart.md walkthrough.
 
 ---
 

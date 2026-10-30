@@ -45,7 +45,9 @@ def _tokens(result: ArmResult) -> str:
 
 
 def _cost(result: ArmResult) -> str:
-    return result.cost_note if result.cost is None else f"${result.cost:.2f}"
+    if result.cost is None:
+        return result.cost_note or "unavailable"
+    return f"${result.cost:.2f}"
 
 
 def _turns(result: ArmResult) -> str:
@@ -86,7 +88,7 @@ def render_experiment_markdown(model: ExperimentReportModel) -> str:
     if confirmed.get("no_data"):
         lines += ["Confirmed-rate comparison: no data in at least one arm.", ""]
     else:
-        diff = confirmed.get("diff")
+        diff = confirmed["diff"]
         p_value = confirmed.get("p_value")
         lines.append("Confirmed-rate difference (B − A): "
                      f"{diff * 100:+.0f} percentage points"
