@@ -120,8 +120,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Temporary escape hatch: set repo variable SKIP_AI_REVIEW=true to bypass the reviewer and pass the gate.
+      # Delete the variable to restore the normal fail-closed behaviour. See docs/qa-pipeline.md.
+      - name: AI review bypass (temporary, via SKIP_AI_REVIEW)
+        if: vars.SKIP_AI_REVIEW == 'true'
+        run: echo "AI review BYPASSED via SKIP_AI_REVIEW (temporary)"
       - name: Spec review (spec-only PR -> spec-checklist)
-        if: needs.classify.outputs.spec_only == 'true'
+        if: vars.SKIP_AI_REVIEW != 'true' && needs.classify.outputs.spec_only == 'true'
         uses: anthropics/claude-code-action@v1
         continue-on-error: true   # the verdict step below is the gate, so the review blocks on a severe finding only
         with:
@@ -149,7 +154,7 @@ jobs:
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
       - name: Code review (implementation PR -> checklist)
-        if: needs.classify.outputs.spec_only != 'true'
+        if: vars.SKIP_AI_REVIEW != 'true' && needs.classify.outputs.spec_only != 'true'
         uses: anthropics/claude-code-action@v1
         continue-on-error: true   # the verdict step below is the gate, so the review blocks on a severe finding only
         with:
@@ -180,6 +185,7 @@ jobs:
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Bash(uv run pytest:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
       - name: Enforce the review verdict (fails on a severe finding or a missing verdict)
+        if: vars.SKIP_AI_REVIEW != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

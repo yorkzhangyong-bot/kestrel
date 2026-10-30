@@ -31,3 +31,19 @@ every PR genuinely requires a second person's approval.
   running its heavy steps on a spec-only PR), so protection is never left pending (FR-006).
 - **SC-004's guarantee — no change reaches `master` without a code-owner approval — holds only once these
   settings have been applied by the owner.** Until then the repo cannot enforce or verify it.
+
+## Temporary AI review bypass and workflow-editing PRs
+
+The required **`review`** check is **fail-closed**: when the Claude Code Action cannot run (no API credit, an API
+error, or an outage) it posts no verdict and the check fails (see [qa-pipeline.md](qa-pipeline.md)). Two consequences
+the owner needs to know:
+
+- **Temporary bypass.** While the reviewer's `ANTHROPIC_API_KEY` has no credit, set the repository **variable**
+  `SKIP_AI_REVIEW` to `true` (Settings → Secrets and variables → Actions → **Variables**, *not* Secrets). The
+  `review` job then skips the reviewer and reports success with `AI review BYPASSED via SKIP_AI_REVIEW (temporary)`.
+  **Delete the variable to restore the gate.** It exists only because the reviewer has no credit and is meant to be
+  temporary.
+- **Workflow-editing PRs.** The Claude Code Action refuses to run when a pull request changes a workflow file (it
+  requires the workflow to match the default branch), so a PR that edits `.github/workflows/` cannot be reviewed by
+  the action; with the gate fail-closed its `review` check fails. Merge such a PR by setting `SKIP_AI_REVIEW=true`
+  (the check then passes) or by temporarily relaxing **Do not allow bypassing** for an administrator merge.
