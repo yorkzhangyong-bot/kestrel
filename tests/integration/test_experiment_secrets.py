@@ -8,7 +8,7 @@ from tests.support import StubJudge, fixture_library
 
 FEATURE = "007"
 
-SECRET = "super-secret-key-value-9999"
+SECRET = "FAKE-NOT-A-REAL-KEY-000000"   # a deliberately fake header value, allowlisted in .gitleaks.toml
 ARM_A = {"attacker_model": "m-a", "judge_model": "j", "use_prior_experience": False,
          "turn_cap": 6, "token_budget": 40000, "write_back": False}
 ARM_B = {"attacker_model": "m-b", "judge_model": "j", "use_prior_experience": True,
