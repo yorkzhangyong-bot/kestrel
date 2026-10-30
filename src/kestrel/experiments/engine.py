@@ -76,7 +76,8 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
         return None
     store.add_experiment_run(experiment_id=experiment.id, arm_id=arm.id, rep_index=rep, family=family,
                              run_id=run.id, send_ok=run.failure_step is None)
-    write_back(experience, store, run, store.list_turns(run.id))   # by default every run writes back (Principle V)
+    if arm.write_back:   # a cold arm skips write-back so the other arm is not warmed by it (FR-005);
+        write_back(experience, store, run, store.list_turns(run.id))   # otherwise learn from the run (Principle V)
     return run
 
 

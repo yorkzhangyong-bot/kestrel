@@ -93,9 +93,9 @@ Single project: `src/kestrel/…`, `ui/…`, `tests/{unit,integration,e2e}/…` 
 
 **Independent test**: run with one arm cold → that arm's runs did not write back; the experiment records the order and which arm(s) wrote back.
 
-- [ ] T028 [P] [US3] Test `tests/unit/test_experiment_warming.py` (cites `007/FR-005`, `007/SC-005`): a cold arm's runs keep `memory_written = null` (write_back not called); the warm default writes back; `run_order` is recorded (A=1, B=2).
-- [ ] T029 [US3] Engine: call `write_back(...)` only when `arm.write_back`; set `run_order` as each arm starts; carry the warming summary into the result. `src/kestrel/experiments/engine.py`. Make T028 pass. *(after T020)*
-- [ ] T030 [US3] Surface `order` + `warming` in `ExperimentResultOut` / result aggregation. `src/kestrel/experiments/results.py`. *(after T026)*
+- [X] T028 [P] [US3] Test `tests/unit/test_experiment_warming.py` (cites `007/FR-005`, `007/SC-005`): a cold arm's runs keep `memory_written = null` (write_back not called); the warm default writes back; `run_order` is recorded (A=1, B=2).
+- [X] T029 [US3] Engine: call `write_back(...)` only when `arm.write_back`; set `run_order` as each arm starts; carry the warming summary into the result. `src/kestrel/experiments/engine.py`. Make T028 pass. *(after T020)*
+- [X] T030 [US3] Surface `order` + `warming` in `ExperimentResultOut` / result aggregation. `src/kestrel/experiments/results.py`. *(after T026)*
 
 ---
 
