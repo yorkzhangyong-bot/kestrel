@@ -11,4 +11,6 @@ description = "Test fixtures are deliberately fake sample secrets, not real cred
 paths = [
     '''tests/unit/test_ai_review\.py''',
     '''tests/integration/test_experiment_secrets\.py''',
+    # The judge-accuracy golden set: synthetic target replies with a placeholder canary, no real credentials.
+    '''tests/eval/judge_samples\.json''',
 ]
