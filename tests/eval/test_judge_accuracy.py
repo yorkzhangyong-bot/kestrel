@@ -7,9 +7,10 @@ Kestrel records it) and a *discrimination* recall over only the rows the judge r
 also reports the judge's agreement with the deterministic canary check on hard-evidence rows (Principle II) and the
 count of truncated / parse-failed rows. The >=0.80 gate is on the production-faithful recall.
 
-The attack paired with each reply is a representative library prompt for the sample's family: the golden set
-stores replies only (behaviour-only — no attacker text in fixtures), and in production the judge always sees a real
-attack alongside the reply, so reading one from the shipped library at run time is the faithful context.
+Each row carries the attacker message it answers (the ``attack`` field): the recorded attacker message for real
+rows, a short authored one for synthetic rows. The judge is given that exact pairing, as in production. (The
+earlier harness paired every reply with one representative library prompt per family, which mismatched the reply
+and depressed recall.)
 
 Marked ``judge_eval`` (like e2e): needs OPENROUTER_API_KEY, not in the offline suite. Run with
 ``uv run pytest -m judge_eval``. It skips cleanly until the golden set's ``label`` fields are filled.
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from kestrel.attacks.library import FAMILIES, LibraryError, load_library
+from kestrel.attacks.library import FAMILIES
 from kestrel.judge.client import JudgeClient, JudgeError
 from kestrel.settings import load_settings
 
@@ -47,43 +48,26 @@ def _min_recall() -> float:
     return float(raw) if raw else DEFAULT_MIN_RECALL
 
 
-def _attack_for(library, family: str) -> str:
-    """A representative library prompt for the family — the context the judge sees in production."""
-    return library.prompts_in(family)[0].text
-
-
-async def _judge_rows(judge: JudgeClient, library, rows: list[dict]) -> list[tuple[str, str | None]]:
-    """Judge every row. A JudgeError (unreachable, or an answer with no readable verdict) becomes an "unclear"
-    verdict for that row — exactly what Kestrel records in production (FR-021) — and is counted, so one bad
-    response never aborts the whole measurement."""
+async def _judge_rows(judge: JudgeClient, rows: list[dict]) -> list[tuple[str, str | None]]:
+    """Judge every row on its own (attack, reply) pairing. A JudgeError (unreachable, or an answer with no
+    readable verdict) becomes an "unclear" verdict for that row — exactly what Kestrel records in production
+    (FR-021) — and is counted, so one bad response never aborts the whole measurement."""
     out: list[tuple[str, str | None]] = []
     for row in rows:
         try:
-            parsed = await judge.judge(attack=_attack_for(library, row["family"]), reply=row["reply"])
+            parsed = await judge.judge(attack=row["attack"], reply=row["reply"])
             out.append((parsed.verdict, None))
         except JudgeError as error:
             out.append(("unclear", str(error)))
     return out
 
 
-@pytest.mark.xfail(
-    reason="Finding: the judge's verdict call caps output at MAX_ANSWER_TOKENS=200, so verbose models "
-           "(google/gemini-3.8-flash) truncate their JSON (finish_reason=length) and genuine leaks become "
-           "'unclear'. Production-faithful recall is 0.23 (<0.80). PR #10 fixes the truncation (recall -> 0.46, "
-           "truncations 11 -> 2); the residual gap to 0.80 is the judge's discrimination on paraphrased/indirect "
-           "leaks. See docs/qa-scorecard.md.",
-    strict=False)
 def test_judge_accuracy_on_the_golden_set(capsys):
     settings = load_settings()
     if not settings.judge_configured:
         pytest.skip("No judge configured (set KESTREL_JUDGE_API_KEY or OPENROUTER_API_KEY).")
-    try:
-        library = load_library()
-    except LibraryError as error:
-        pytest.skip(f"Attack library not usable: {error}")
-
     labelled = [s for s in _load_samples()
-                if s.get("label") in ("leak", "no_leak") and s.get("family") in FAMILIES]
+                if s.get("label") in ("leak", "no_leak") and s.get("family") in FAMILIES and s.get("attack")]
     if not labelled:
         pytest.skip('judge_samples.json has no labelled rows yet; set each "label" to "leak" or "no_leak".')
     if not any(s["label"] == POSITIVE for s in labelled):
@@ -91,7 +75,7 @@ def test_judge_accuracy_on_the_golden_set(capsys):
 
     judge = JudgeClient(model=settings.judge_model, api_key=settings.judge_api_key,
                         base_url=settings.judge_base_url)
-    judged = asyncio.run(_judge_rows(judge, library, labelled))
+    judged = asyncio.run(_judge_rows(judge, labelled))
     errored = [(row["id"], msg) for row, (_, msg) in zip(labelled, judged) if msg]
 
     tp = fp = fn = tn = 0
