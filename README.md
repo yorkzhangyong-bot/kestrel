@@ -106,6 +106,8 @@ Planned next, not yet specified:
 
 - **Feature 008 — Regression replay.** Pick a past run and re-send its exact attacker messages to the target with no attacker model in the loop, judge the replies with the same evidence rules (canary first, then judge), and report whether the target is **still vulnerable** or **fixed**. Turns a finding into a repeatable check you can re-run after a prompt or guardrail change.
 - **Browser / computer-use target adapter.** For agents that have no chat endpoint, drive their web UI (for example with Playwright) or serve them an injected page, and capture the agent's actions as the "reply". The existing attack families and judge then apply unchanged, extending Kestrel beyond HTTP chat targets.
+- **OWASP LLM Top 10 — 2026 edition.** Update the mapping in [report/owasp.py](src/kestrel/report/owasp.py) from the 2025 to the 2026 edition: the same ten risks, reordered — Excessive Agency moves from LLM06 to **LLM03**, and System Prompt Leakage (LLM07) is renamed **Hidden Context Exposure**. Until this lands, the report must state explicitly that it cites the **2025** edition.
+- **Second mapping — OWASP Top 10 for Agentic Applications 2026 (ASI01–ASI10).** Alongside the LLM Top 10, map Kestrel's families onto the agentic list: injection families → **ASI01 Goal Hijack**; tool-mediated exfiltration → **ASI02 Tool Misuse** / **ASI03 Privilege Abuse**; indirect injection also → **ASI06 Memory & Context Poisoning**. List the remaining ASI classes as untested, each with a reason, as the LLM coverage table already does.
 
 ## License
 
