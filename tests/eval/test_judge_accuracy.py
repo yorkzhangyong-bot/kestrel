@@ -69,8 +69,9 @@ async def _judge_rows(judge: JudgeClient, library, rows: list[dict]) -> list[tup
 @pytest.mark.xfail(
     reason="Finding: the judge's verdict call caps output at MAX_ANSWER_TOKENS=200, so verbose models "
            "(google/gemini-3.8-flash) truncate their JSON (finish_reason=length) and genuine leaks become "
-           "'unclear'. Production-faithful recall is 0.23 (<0.80). Fixed on branch fix/judge-truncation; see "
-           "docs/qa-scorecard.md.",
+           "'unclear'. Production-faithful recall is 0.23 (<0.80). PR #10 fixes the truncation (recall -> 0.46, "
+           "truncations 11 -> 2); the residual gap to 0.80 is the judge's discrimination on paraphrased/indirect "
+           "leaks. See docs/qa-scorecard.md.",
     strict=False)
 def test_judge_accuracy_on_the_golden_set(capsys):
     settings = load_settings()

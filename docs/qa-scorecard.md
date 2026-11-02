@@ -88,8 +88,10 @@ mid-string (`finish_reason=length`), `parse_verdict` finds no complete object, a
 (FR-021) — so a real leak is silently recorded as "not confirmed". 11 of 40 rows truncated this way, 9 of them
 genuine leaks; the visible fragments show the judge was mostly answering `succeeded`, which is why discrimination
 recall is 0.75 on the rows it could finish. The `judge_eval` test is marked `xfail` so CI stays green until the fix
-lands. Follow-up fix on branch `fix/judge-truncation` (PR FIXPR_PLACEHOLDER): raise the cap to 600 and make the
-verdict parser tolerate a preamble before the JSON object.
+lands. Follow-up fix on branch `fix/judge-truncation`
+([#10](https://github.com/yorkzhangyong-bot/kestrel/pull/10)): raise the cap to 600 and make the verdict parser
+tolerate a preamble before the JSON object. That cut truncations from 11 to 2 and lifted production-faithful recall
+to 0.46; the remaining gap below 0.80 is the judge's discrimination on paraphrased / indirect leaks, not truncation.
 
 **Why not RAGAS / DeepEval.** Both were considered. They are built for RAG and multi-metric LLM-app pipelines and
 pull in heavy dependencies outside the fixed MVP stack (Principle X) and the simplicity rule (Principle IX).
