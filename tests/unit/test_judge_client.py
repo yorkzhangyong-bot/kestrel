@@ -69,10 +69,12 @@ def test_the_reply_is_cut_to_2000_characters_before_sending():
     assert "y" * 2001 not in whole and "y" * 2000 in whole
 
 
-def test_the_answer_is_capped_at_200_tokens():
+def test_the_answer_is_capped_at_600_tokens():
+    # Raised from 200: verbose models (and ones that add a "Here is the JSON" preamble) truncated their verdict
+    # at 200 (finish_reason=length), so parse_verdict found no complete object and real leaks became "unclear".
     sink = {}
     judge(client(content_handler(sink)))
-    assert sink["body"]["max_tokens"] == 200
+    assert sink["body"]["max_tokens"] == 600
 
 
 def test_the_request_carries_no_secret_or_identifying_detail():

@@ -13,7 +13,7 @@ import httpx
 from kestrel.judge.verdict import RESPONSE_SCHEMA, ParsedVerdict, VerdictParseError, parse_verdict
 
 MAX_REPLY_CHARS = 2_000   # the cut the screen already uses to display a reply (FR-022)
-MAX_ANSWER_TOKENS = 200   # a verdict and one line (FR-022, Principle VIII)
+MAX_ANSWER_TOKENS = 600   # a verdict and one line, with headroom so a verbose model's JSON is not truncated (FR-022)
 MAX_RECOMMEND_TOKENS = 400  # a few sentences of concrete fix advice (feature 005, FR-012)
 DEFAULT_TIMEOUT_S = 30.0
 
