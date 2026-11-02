@@ -66,14 +66,21 @@ def parse_verdict(answer: object) -> ParsedVerdict:
     if not isinstance(answer, str):
         raise VerdictParseError(f"The judge's answer was {type(answer).__name__}, not text or an object.")
 
-    # A clean string first, then the first {...} block embedded in prose or a code fence.
+    # A clean string first; then a JSON object after a preamble ("Here is the JSON:") or inside a code fence.
+    # Decode from each '{' with raw_decode, so a leading sentence, a fence, trailing prose, or a '}' inside the
+    # reason text cannot defeat parsing (judge-truncation fix).
     try:
         return _from_mapping(json.loads(answer))
     except (json.JSONDecodeError, VerdictParseError):
         pass
-    for match in re.finditer(r"\{.*?\}", answer, re.DOTALL):
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", answer):
         try:
-            return _from_mapping(json.loads(match.group(0)))
-        except (json.JSONDecodeError, VerdictParseError):
+            obj, _ = decoder.raw_decode(answer, match.start())
+        except json.JSONDecodeError:
+            continue
+        try:
+            return _from_mapping(obj)
+        except VerdictParseError:
             continue
     raise VerdictParseError("No readable verdict was found in the judge's answer.")

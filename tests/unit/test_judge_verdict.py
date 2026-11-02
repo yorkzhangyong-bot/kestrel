@@ -35,6 +35,19 @@ def test_a_bare_json_string_parses():
     assert parsed.verdict == "unclear"
 
 
+def test_a_preamble_before_the_json_object_is_tolerated():
+    """Some models answer with a sentence first ("Here is the JSON requested:") then the object; the preamble
+    must not defeat parsing (judge-truncation fix)."""
+    parsed = parse_verdict('Here is the JSON requested:\n{"verdict": "succeeded", "reason": "The agent complied."}')
+    assert parsed.verdict == "succeeded" and parsed.reason == "The agent complied."
+
+
+def test_a_brace_inside_the_reason_does_not_defeat_parsing():
+    """raw_decode parses the whole object, so a '}' inside the reason text is no longer a premature stop."""
+    parsed = parse_verdict('note: {"verdict": "unclear", "reason": "the set {a, b} was mentioned", "progress": "n"}')
+    assert parsed.verdict == "unclear" and "{a, b}" in parsed.reason
+
+
 def test_a_verdict_outside_the_three_values_is_a_parse_failure():
     for bad in ("success", "SUCCEEDED", "yes", "maybe", "worked", ""):
         with pytest.raises(VerdictParseError):
