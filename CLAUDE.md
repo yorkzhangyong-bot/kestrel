@@ -76,3 +76,16 @@ have written permission".
   permitted default is `deepseek/deepseek-v4.1-flash`.
 - **ChromaDB embedding function:** the store persists the embedding function by name, so a stub-EF store poisons
   the real app's `data/chroma`. Tests must use a tmp `chroma_path`, never the repo's.
+- **No `.env` auto-load:** the app reads real environment variables and does **not** load `.env`. Export settings
+  into the shell first (`set -a; . ./.env; set +a`) or pass `uvicorn --env-file`, then start the API.
+
+## More
+Longer detail lives under `docs/`: [technical-design.md](docs/technical-design.md),
+[qa-pipeline.md](docs/qa-pipeline.md), [qa-scorecard.md](docs/qa-scorecard.md),
+[branch-protection.md](docs/branch-protection.md), plus each feature's `specs/<nnn>-*/`.
+
+When you discover something durable about this repo — a gotcha, a command, a convention — append it here in the
+same commit. Before opening any implementation PR, review this file and add anything learned during the feature.
+
+## Learned notes
+- _(none yet — add dated bullets as you learn them)_
