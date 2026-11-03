@@ -22,6 +22,54 @@ uv run streamlit run ui/app.py
 
 Saved targets live in `data/kestrel.db` under the repo root. Other settings are listed in [.env.example](.env.example).
 
+### Live demo (three terminals)
+
+To attack the bundled sacrificial [HS-code target](targets/hs_code/README.md) end-to-end, run three terminals from the repo root. The first `uv run --directory targets/hs_code …` installs the target's own dependencies.
+
+**bash**
+
+```bash
+# terminal 1 — sacrificial HS-code target (http://127.0.0.1:8001)
+HS_TARGET_API_KEY=test-key-123 \
+  OPENROUTER_API_KEY=sk-or-... \
+  HS_TARGET_CANARY=KESTREL-CANARY-demo \
+  uv run --directory targets/hs_code uvicorn app:app --host 127.0.0.1 --port 8001
+
+# terminal 2 — Kestrel API (http://127.0.0.1:8000)
+KESTREL_MODE=local uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000
+
+# terminal 3 — Streamlit UI (http://localhost:8501)
+uv run streamlit run ui/app.py
+```
+
+**PowerShell**
+
+```powershell
+# terminal 1 — sacrificial HS-code target (http://127.0.0.1:8001)
+$env:HS_TARGET_API_KEY="test-key-123"; $env:OPENROUTER_API_KEY="sk-or-..."; $env:HS_TARGET_CANARY="KESTREL-CANARY-demo"
+uv run --directory targets/hs_code uvicorn app:app --host 127.0.0.1 --port 8001
+
+# terminal 2 — Kestrel API (http://127.0.0.1:8000)
+$env:KESTREL_MODE="local"; uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000
+
+# terminal 3 — Streamlit UI (http://localhost:8501)
+uv run streamlit run ui/app.py
+```
+
+Then open http://localhost:8501 and register the target with these values (they match the form's defaults):
+
+| Field | Value |
+|---|---|
+| Endpoint URL | `http://127.0.0.1:8001/chat` |
+| Method | `POST` |
+| Auth header | `X-API-Key` = the `HS_TARGET_API_KEY` value (`test-key-123`) |
+| Request body template | `{"message": "{{prompt}}"}` |
+| Response path | `$.reply` |
+| Canary | the `HS_TARGET_CANARY` value (`KESTREL-CANARY-demo`) |
+| Ownership | tick **"I own this agent or have written permission"** |
+
+A system-prompt-leak run that surfaces the canary is then **confirmed** by hard evidence; see [Running an attack](#running-an-attack).
+
 ## Running an attack
 
 Once a target is saved, declare any **canary strings** you have placed in your agent (for example a secret marker in its system prompt). If a canary turns up in a reply, the attack is **confirmed** by hard evidence, with no model involved. Otherwise a **judge** model reads the attack and the reply and returns succeeded, failed or unclear — always marked "suspected", never confirmed.
