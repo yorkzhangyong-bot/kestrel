@@ -11,6 +11,9 @@ on:
 
 jobs:
   qa:
+    permissions:
+      contents: write
+      pull-requests: write
     uses: yorkzhangyong-bot/agentic-qa-platform/.github/workflows/test-and-heal.yml@main
     with:
       framework: playwright
