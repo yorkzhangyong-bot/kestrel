@@ -12,6 +12,10 @@ on:
 jobs:
   generate:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-tests'
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
     uses: yorkzhangyong-bot/agentic-qa-platform/.github/workflows/generate-tests.yml@main
     with:
       framework: playwright
