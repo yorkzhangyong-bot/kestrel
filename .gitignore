@@ -31,3 +31,8 @@ targets/hs_code/.env
 Thumbs.db
 *.tmp
 *.swp
+
+node_modules/
+playwright-report/
+test-results/
+results/
