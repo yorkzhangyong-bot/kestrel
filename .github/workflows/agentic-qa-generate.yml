@@ -20,7 +20,7 @@ jobs:
     with:
       framework: playwright
       engine: opencode
-      opencode_model: deepseek/deepseek-chat
+      opencode_model: deepseek/deepseek-flash
       test_dir: tests/e2e-browser
       app_url: ${{ vars.APP_URL }}
       spec_path: ${{ inputs.spec_path }}
