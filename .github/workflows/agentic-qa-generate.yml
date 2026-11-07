@@ -1,0 +1,25 @@
+name: Agentic QA – generate browser tests
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      spec_path:
+        description: "Spec file or Spec Kit folder, e.g. specs/003-adaptive-attack"
+        required: false
+
+jobs:
+  generate:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-tests'
+    uses: yorkzhangyong-bot/agentic-qa-platform/.github/workflows/generate-tests.yml@main
+    with:
+      framework: playwright
+      engine: opencode
+      opencode_model: deepseek/deepseek-chat
+      test_dir: tests/e2e-browser
+      app_url: ${{ vars.APP_URL }}
+      spec_path: ${{ inputs.spec_path }}
+      issue_number: ${{ github.event.issue.number }}
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

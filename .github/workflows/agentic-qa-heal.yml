@@ -1,0 +1,22 @@
+name: Agentic QA – test and heal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tests/e2e-browser/**"
+      - "ui/**"
+      - "src/**"
+  workflow_dispatch:
+
+jobs:
+  qa:
+    uses: yorkzhangyong-bot/agentic-qa-platform/.github/workflows/test-and-heal.yml@main
+    with:
+      framework: playwright
+      engine: opencode
+      opencode_model: deepseek/deepseek-chat
+      test_dir: tests/e2e-browser
+      app_url: ${{ vars.APP_URL }}
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
