@@ -158,6 +158,9 @@ class RunDetail(RunSummary):
     time_limit_s: int | None = None
     stopping_condition: str | None = None
     succeeded_turn: int | None = None
+    # Feature 001 wording for a send/connection failure step (e.g. unreachable), so the UI shows Kestrel's own
+    # message instead of the raw step key; null when the run did not fail to send.
+    failure_message: str | None = None
     turns: list[TurnOut] = Field(default_factory=list)
 
 
