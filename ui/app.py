@@ -503,7 +503,9 @@ def render_run_result(run: dict | None, judge: dict) -> None:
     if not run:
         return
     if run.get("failure_step"):
-        st.error(f"The attack could not be sent: {run.get('reason') or run['failure_step']}.")
+        # Prefer Kestrel's own wording for the step (feature 001); fall back for any unmapped step.
+        fallback = f"The attack could not be sent: {run.get('reason') or run['failure_step']}."
+        st.error(run.get("failure_message") or fallback)
         return
     verdict, by_judge = run["verdict"], run["judge_used"]
     model = run.get("judge_model") or judge.get("model") or "the judge"
@@ -844,9 +846,12 @@ def main() -> None:
             st.caption("No judge configured: only canary evidence can decide a run")
         st.caption(MODE_CAPTIONS.get(config["mode"], config["mode"]))
     run_pending_test()
-    run_pending_run()
     run_pending_experiment()
+    # Draw the attack panel (and its Run button) before executing a pending run, so the button shows disabled
+    # while the run blocks — mirroring how the sidebar's Test-connection button is drawn before run_pending_test
+    # (FR-010).
     render_attack(config, families)
+    run_pending_run()
     render_runs(config)
     render_profile()
     render_report()
