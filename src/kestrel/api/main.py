@@ -34,7 +34,7 @@ from kestrel.report.recommend import recommendations_for
 from kestrel.report.render import render_html, render_markdown
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
-from kestrel.connection.tester import ResolvedSettings, refused, run_test
+from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
 from kestrel.runs import execute_run, execute_adaptive_run
 from kestrel.store import Turn
@@ -539,6 +539,7 @@ def run_summary(run: Run) -> RunSummary:
 def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
     return RunDetail(**run_summary(run).model_dump(), status=run.status, prompt_text=run.prompt_text,
                      reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
+                     failure_message=STEP_MESSAGES.get(run.failure_step) if run.failure_step else None,
                      attacker_source=run.attacker_source, attacker_model=run.attacker_model,
                      turn_budget=run.turn_budget, turns_used=run.turns_used, token_budget=run.token_budget,
                      tokens_used=run.tokens_used, time_limit_s=run.time_limit_s,

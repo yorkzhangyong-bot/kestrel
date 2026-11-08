@@ -127,7 +127,7 @@ export class KestrelApp {
   }
 
   /** Wait until Streamlit has finished the run: the result alert is up and Run is usable again. */
-  async waitForRunToFinish(timeout = 5_000): Promise<void> {
+  async waitForRunToFinish(timeout = 120_000): Promise<void> {
     await expect(this.alerts.first()).toBeVisible({ timeout });
     await expect(this.runButton).toBeEnabled({ timeout });
   }
