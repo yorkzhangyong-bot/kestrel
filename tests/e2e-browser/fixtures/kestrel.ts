@@ -6,8 +6,22 @@ const API_URL = (process.env.KESTREL_API_URL ?? 'http://127.0.0.1:8000').replace
 
 export interface KestrelConfig {
   mode: string;
+  defaults: { method: string; body_template: string; response_path: string };
   terms: { version: string; text: string };
   judge: { model: string; configured: boolean };
+  attacker: { model: string; configured: boolean };
+  adaptive: { max_turns: number; token_budget: number; time_limit_s: number };
+  experience: { pattern_k: number; memory_cap: number; use_prior_experience_default: boolean };
+}
+
+export interface TurnDetail {
+  position: number;
+  attacker_message: string;
+  reply_text: string | null;
+  reply_truncated: boolean;
+  judge_verdict: string | null;
+  judge_reason: string | null;
+  judge_progress: string | null;
 }
 
 export interface TargetDetail {
@@ -42,8 +56,21 @@ export interface RunDetail {
   judge_model: string | null;
   attacker_source: string;
   failure_step: string | null;
+  failure_message: string | null;
   started_at: string;
   finished_at: string | null;
+  memory_written: boolean | null;
+  use_prior_experience: boolean;
+  // Adaptive runs (feature 003); null/empty for single-turn.
+  attacker_model: string | null;
+  turn_budget: number | null;
+  turns_used: number | null;
+  token_budget: number | null;
+  tokens_used: number | null;
+  time_limit_s: number | null;
+  stopping_condition: string | null;
+  succeeded_turn: number | null;
+  turns: TurnDetail[];
 }
 
 export interface AttackPrompt {
@@ -58,6 +85,7 @@ export interface AttackPrompt {
 export interface CreateTargetOptions {
   canaries?: string[];
   permission?: boolean;
+  headers?: Array<{ name: string; value: string }>;
 }
 
 /** The label Streamlit renders for a run in "Open a run": started_at to the second, then the prompt title. */
@@ -91,7 +119,7 @@ export class KestrelApi {
     const settings = {
       url: stub.url,
       method: 'POST',
-      headers: [],
+      headers: options.headers ?? [],
       body_template: '{"message": "{{prompt}}"}',
       response_path: '$.reply',
     };
@@ -118,13 +146,17 @@ export class KestrelApi {
     return target;
   }
 
-  async createRun(targetId: number, options: { family: string; promptId?: string }): Promise<RunDetail> {
+  async createRun(
+    targetId: number,
+    options: { family: string; promptId?: string; mode?: 'single_turn' | 'adaptive'; usePriorExperience?: boolean },
+  ): Promise<RunDetail> {
     const response = await this.request.post(`${API_URL}/api/runs`, {
       data: {
         target_id: targetId,
         family: options.family,
         prompt_id: options.promptId ?? null,
-        mode: 'single_turn',
+        mode: options.mode ?? 'single_turn',
+        use_prior_experience: options.usePriorExperience ?? true,
       },
     });
     expect(response.status(), `POST /api/runs returned ${response.status()}: ${await response.text()}`).toBe(201);
@@ -157,6 +189,11 @@ export class KestrelApi {
     const response = await this.request.get(`${API_URL}/api/runs/${runId}`);
     expect(response.ok(), `GET /api/runs/${runId} returned ${response.status()}`).toBe(true);
     return (await response.json()) as RunDetail;
+  }
+
+  async getRunStatus(runId: number): Promise<number> {
+    const response = await this.request.get(`${API_URL}/api/runs/${runId}`);
+    return response.status();
   }
 
   async attackPrompts(family: string): Promise<AttackPrompt[]> {
