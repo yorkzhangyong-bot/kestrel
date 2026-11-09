@@ -9,7 +9,7 @@ export default defineConfig({
   reporter: isCI ? [["junit"], ["list"]] : [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: process.env.APP_URL ?? "http://localhost:8501",
-    trace: "retain-on-failure",
+    trace: isCI ? "retain-on-failure" : "on",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 
@@ -31,7 +31,9 @@ export default defineConfig({
       command:
         "uv run uvicorn --factory kestrel.api.main:create_app --host 127.0.0.1 --port 8000",
       port: 8000,
-      env: { KESTREL_MODE: "local" },
+      // The app reads KESTREL_ATTACKER_API_KEY or OPENROUTER_API_KEY (src/kestrel/settings.py); CI supplies
+      // OPENROUTER_API_KEY via the workflow's APP_ENV. Pass it through so the attacker (and judge) are configured.
+      env: { KESTREL_MODE: "local", OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ?? "" },
       reuseExistingServer: !isCI,
       timeout: 180_000,
     },

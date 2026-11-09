@@ -27,3 +27,5 @@ jobs:
       issue_number: ${{ github.event.issue.number }}
     secrets:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      APP_ENV: |
+        OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
