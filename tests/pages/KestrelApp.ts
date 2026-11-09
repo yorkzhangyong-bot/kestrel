@@ -14,10 +14,14 @@ export interface SelectableTarget {
 export class KestrelApp {
   readonly page: Page;
   readonly targetSelect: Locator;
+  readonly modeGroup: Locator;
   readonly attackFamily: Locator;
   readonly promptSelect: Locator;
   readonly openRunSelect: Locator;
   readonly runButton: Locator;
+  readonly captions: Locator;
+  readonly texts: Locator;
+  readonly adaptiveCaption: Locator;
   readonly displayName: Locator;
   readonly endpointUrl: Locator;
   readonly bodyTemplate: Locator;
@@ -33,10 +37,18 @@ export class KestrelApp {
 
   constructor(readonly page: Page) {
     this.targetSelect = page.getByRole('combobox', { name: 'Target', exact: true });
+    // Streamlit renders two "Mode" radio groups with the same accessible name: the Attack panel's and the
+    // Experiments panel's. Only the Attack one is keyed `attack_mode`, and Streamlit puts that key on the
+    // widget container as `st-key-attack_mode` (no data-testid is emitted for it), so this is the one stable
+    // way to scope the radio group at the top of the page.
+    this.modeGroup = page.locator('.st-key-attack_mode');
     this.attackFamily = page.getByRole('combobox', { name: 'Attack family', exact: true });
     this.promptSelect = page.getByRole('combobox', { name: 'Prompt', exact: true });
     this.openRunSelect = page.getByRole('combobox', { name: 'Open a run', exact: true });
     this.runButton = page.getByRole('button', { name: 'Run attack', exact: true });
+    this.captions = page.getByTestId('stCaptionContainer');
+    this.texts = page.getByTestId('stText');
+    this.adaptiveCaption = this.captions.filter({ hasText: 'Adaptive: attacker' });
     this.displayName = page.getByRole('textbox', { name: 'Display name', exact: true });
     this.endpointUrl = page.getByRole('textbox', { name: 'Endpoint URL', exact: true });
     this.bodyTemplate = page.getByRole('textbox', { name: 'Request body template', exact: true });
@@ -54,6 +66,21 @@ export class KestrelApp {
 
   get canaryInputs(): Locator {
     return this.page.getByRole('textbox', { name: 'Canary', exact: true });
+  }
+
+  /** The "Turn N · attacker" captions that head each turn of an adaptive conversation. */
+  get turnCaptions(): Locator {
+    return this.captions.filter({ hasText: /^Turn \d+ · attacker$/ });
+  }
+
+  /** The "agent" caption that heads each stored target reply in an adaptive conversation. */
+  get agentCaptions(): Locator {
+    return this.captions.filter({ hasText: /^agent$/ });
+  }
+
+  async selectMode(mode: 'Single-turn' | 'Adaptive'): Promise<void> {
+    await this.modeGroup.getByText(mode, { exact: true }).click();
+    await expect(this.modeGroup.getByRole('radio', { name: mode })).toBeChecked();
   }
 
   async goto(): Promise<void> {
