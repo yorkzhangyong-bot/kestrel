@@ -107,9 +107,12 @@ def test_a_second_test_for_the_same_form_gets_409(make_client):
 
 
 def test_hosted_mode_refuses_a_name_that_resolves_to_a_private_address(make_client, hosted_settings):
+    import dataclasses
     seen = []
-    client = make_client(hosted_settings, transport=replying({"reply": "x"}, seen=seen), resolver=lambda host: ["10.0.0.5"])
-    body = client.post("/api/connection-tests", json=payload(url="http://internal.example/chat")).json()
+    settings = dataclasses.replace(hosted_settings, api_token="hosted-token")  # hosted requires a token (item 5)
+    client = make_client(settings, transport=replying({"reply": "x"}, seen=seen), resolver=lambda host: ["10.0.0.5"])
+    body = client.post("/api/connection-tests", json=payload(url="http://internal.example/chat"),
+                       headers={"X-Kestrel-Token": "hosted-token"}).json()
     assert body["step"] == "address_not_allowed"
     assert seen == []
 

@@ -132,3 +132,15 @@ def test_a_non_numeric_cap_is_refused():
 def test_a_non_positive_cap_is_refused():
     with pytest.raises(SettingsError, match="KESTREL_ADAPTIVE_MAX_TURNS"):
         load_settings({"KESTREL_ADAPTIVE_MAX_TURNS": "0"})
+
+
+# --- hardening: the hosted API token (item 5) ---
+
+def test_api_token_is_optional_and_read_from_the_environment():
+    assert load_settings({}).api_token is None
+    assert load_settings({"KESTREL_API_TOKEN": "tok"}).api_token == "tok"
+    assert load_settings({"KESTREL_API_TOKEN": "   "}).api_token is None   # blank counts as unset
+
+
+def test_the_api_token_stays_out_of_the_repr():
+    assert "tok-secret" not in repr(load_settings({"KESTREL_API_TOKEN": "tok-secret"}))

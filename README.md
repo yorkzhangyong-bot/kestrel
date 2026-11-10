@@ -22,6 +22,8 @@ uv run streamlit run ui/app.py
 
 `KESTREL_MODE=local` matters. Without it, Kestrel assumes it runs on a server and refuses agents on `localhost` or a private network.
 
+**Hosted mode needs an API token.** When `KESTREL_MODE` is unset or `hosted`, the API is fail-closed: every request must carry an `X-Kestrel-Token` header that matches `KESTREL_API_TOKEN` (constant-time compare). So a fresh clone needs either `KESTREL_API_TOKEN` set — the Streamlit UI reads the same variable and sends it automatically — or `KESTREL_MODE=local` for local use. Local mode is unauthenticated because it runs on your own machine.
+
 Saved targets live in `data/kestrel.db` under the repo root. Other settings are listed in [.env.example](.env.example).
 
 ### Live demo (three terminals)

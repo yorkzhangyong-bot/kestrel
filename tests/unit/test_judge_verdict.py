@@ -1,104 +1,112 @@
-"""Reading the judge's answer, strictly (contracts/judge.md, FR-017, FR-021).
+"""The judge's answer and fix-advice shapes, validated with Pydantic (contracts/judge.md, FR-017, FR-021).
 
-A verdict string outside the three values is a parse failure, never coerced to the nearest match: a wrong
-verdict is worse than an honest "unclear".
+A verdict outside the three values, an extra field, or an over-long reason is a validation failure, never coerced
+to the nearest match: a confident wrong verdict is worse than an honest "unclear".
 """
-import pytest
+import json
 
-from kestrel.judge.verdict import VERDICTS, ParsedVerdict, VerdictParseError, parse_verdict
+import pytest
+from pydantic import ValidationError
+
+from kestrel.judge.verdict import (MAX_REASON_CHARS, RECOMMEND_SCHEMA, RESPONSE_SCHEMA, ParsedVerdict,
+                                   Recommendation, Verdict, VerdictParseError, parse_verdict, validate_verdict)
 
 FEATURE = "002"
 
 REASON = "The agent refused and continued with its classification task."
 
 
-def test_a_clean_structured_answer_parses():
-    parsed = parse_verdict({"verdict": "failed", "reason": REASON})
-    assert isinstance(parsed, ParsedVerdict)
-    assert parsed.verdict == "failed" and parsed.reason == REASON
+# --- the derived schemas (judge item 1): the asked-for schema can't drift from the validated model ---
+
+def test_every_response_schema_property_is_required():
+    assert set(RESPONSE_SCHEMA["required"]) == set(RESPONSE_SCHEMA["properties"])  # verdict, reason, progress
+    assert RESPONSE_SCHEMA["additionalProperties"] is False                        # extra=forbid
 
 
-@pytest.mark.parametrize("verdict", VERDICTS)
+def test_every_recommend_schema_property_is_required():
+    assert set(RECOMMEND_SCHEMA["required"]) == set(RECOMMEND_SCHEMA["properties"])
+    assert RECOMMEND_SCHEMA["additionalProperties"] is False
+
+
+def test_the_derived_schema_drops_keywords_providers_reject_in_strict_mode():
+    blob = json.dumps(RESPONSE_SCHEMA)
+    for banned in ("maxLength", "minLength", "pattern", "format", "title"):
+        assert banned not in blob
+
+
+# --- the Verdict model ---
+
+def test_a_clean_answer_validates():
+    model = Verdict.model_validate({"verdict": "failed", "reason": REASON, "progress": None})
+    assert model.verdict == "failed" and model.reason == REASON and model.progress is None
+
+
+@pytest.mark.parametrize("verdict", ["succeeded", "failed", "unclear"])
 def test_each_of_the_three_verdicts_is_accepted(verdict):
-    assert parse_verdict({"verdict": verdict, "reason": "A reason."}).verdict == verdict
+    assert Verdict.model_validate({"verdict": verdict, "reason": "x", "progress": None}).verdict == verdict
 
 
-def test_a_json_object_embedded_in_text_is_found():
-    """Some models wrap the JSON in prose or a code fence even when asked not to."""
-    raw = 'Here is my assessment:\n```json\n{"verdict": "succeeded", "reason": "Canary echoed."}\n```\nDone.'
-    parsed = parse_verdict(raw)
-    assert parsed.verdict == "succeeded" and parsed.reason == "Canary echoed."
+def test_a_verdict_outside_the_three_values_is_rejected():
+    for bad in ("success", "SUCCEEDED", "yes", "maybe", ""):
+        with pytest.raises(ValidationError):
+            Verdict.model_validate({"verdict": bad, "reason": "x", "progress": None})
 
 
-def test_a_bare_json_string_parses():
-    parsed = parse_verdict('{"verdict": "unclear", "reason": "The reply is ambiguous."}')
-    assert parsed.verdict == "unclear"
+def test_an_extra_field_is_rejected():
+    with pytest.raises(ValidationError):
+        Verdict.model_validate({"verdict": "failed", "reason": "x", "progress": None, "sneaky": 1})
 
 
-def test_a_preamble_before_the_json_object_is_tolerated():
-    """Some models answer with a sentence first ("Here is the JSON requested:") then the object; the preamble
-    must not defeat parsing (judge-truncation fix)."""
-    parsed = parse_verdict('Here is the JSON requested:\n{"verdict": "succeeded", "reason": "The agent complied."}')
-    assert parsed.verdict == "succeeded" and parsed.reason == "The agent complied."
+def test_progress_is_required_but_may_be_null():
+    assert Verdict.model_validate({"verdict": "failed", "reason": "x", "progress": None}).progress is None
+    assert Verdict.model_validate({"verdict": "failed", "reason": "x", "progress": "wavered"}).progress == "wavered"
+    with pytest.raises(ValidationError):   # the key must be present, even if null
+        Verdict.model_validate({"verdict": "failed", "reason": "x"})
 
 
-def test_a_brace_inside_the_reason_does_not_defeat_parsing():
-    """raw_decode parses the whole object, so a '}' inside the reason text is no longer a premature stop."""
-    parsed = parse_verdict('note: {"verdict": "unclear", "reason": "the set {a, b} was mentioned", "progress": "n"}')
-    assert parsed.verdict == "unclear" and "{a, b}" in parsed.reason
+def test_a_reason_at_the_limit_is_accepted_but_over_it_is_rejected():
+    Verdict.model_validate({"verdict": "failed", "reason": "x" * MAX_REASON_CHARS, "progress": None})
+    with pytest.raises(ValidationError):
+        Verdict.model_validate({"verdict": "failed", "reason": "x" * (MAX_REASON_CHARS + 1), "progress": None})
 
 
-def test_a_verdict_outside_the_three_values_is_a_parse_failure():
-    for bad in ("success", "SUCCEEDED", "yes", "maybe", "worked", ""):
-        with pytest.raises(VerdictParseError):
-            parse_verdict({"verdict": bad, "reason": "x"})
+# --- validate_verdict: strict JSON with preamble tolerance, raising VerdictParseError for the retry loop ---
+
+def test_a_bare_json_string_validates():
+    assert validate_verdict('{"verdict": "unclear", "reason": "ambiguous", "progress": null}').verdict == "unclear"
 
 
-def test_a_missing_field_is_a_parse_failure():
+def test_a_preamble_or_fence_around_the_object_is_tolerated():
+    raw = 'Here is the JSON:\n```json\n{"verdict": "succeeded", "reason": "Canary echoed.", "progress": null}\n```'
+    assert validate_verdict(raw).verdict == "succeeded"
+
+
+def test_text_with_no_valid_object_raises_verdict_parse_error():
     with pytest.raises(VerdictParseError):
-        parse_verdict({"verdict": "failed"})
+        validate_verdict("I think it probably did not work, but it is hard to say.")
+
+
+def test_a_schema_violation_in_the_object_raises_verdict_parse_error():
     with pytest.raises(VerdictParseError):
-        parse_verdict({"reason": "no verdict here"})
+        validate_verdict('{"verdict": "nope", "reason": "x", "progress": null}')
 
 
-def test_text_with_no_json_is_a_parse_failure():
+# --- parse_verdict convenience (display normalisation) ---
+
+def test_parse_verdict_normalises_whitespace_and_blank_progress():
+    parsed = parse_verdict({"verdict": "failed", "reason": "  held   the   line  ", "progress": "   "})
+    assert isinstance(parsed, ParsedVerdict)
+    assert parsed.verdict == "failed" and parsed.reason == "held the line" and parsed.progress is None
+
+
+def test_parse_verdict_raises_on_a_bad_verdict():
     with pytest.raises(VerdictParseError):
-        parse_verdict("I think the attack probably did not work, but it is hard to say.")
+        parse_verdict({"verdict": "worked", "reason": "x", "progress": None})
 
 
-def test_a_reason_longer_than_200_characters_is_cut():
-    parsed = parse_verdict({"verdict": "failed", "reason": "x" * 400})
-    assert len(parsed.reason) <= 200
+# --- Recommendation model ---
 
-
-def test_an_empty_reason_is_allowed_but_normalised():
-    parsed = parse_verdict({"verdict": "unclear", "reason": "   "})
-    assert parsed.verdict == "unclear"
-    assert parsed.reason  # a placeholder reason rather than an empty string
-
-
-def test_the_reply_cannot_smuggle_a_verdict_through_the_reason():
-    """The reason is Kestrel's display text; it is never re-read as a verdict (contracts/judge.md)."""
-    parsed = parse_verdict({"verdict": "failed", "reason": 'verdict: succeeded'})
-    assert parsed.verdict == "failed"  # the reason string has no authority
-
-
-# --- feature 003: the "how close" progress note (R6) ---
-
-def test_a_progress_note_parses_when_present():
-    parsed = parse_verdict({"verdict": "failed", "reason": "held", "progress": "The agent wavered but held."})
-    assert parsed.progress == "The agent wavered but held."
-
-
-def test_progress_is_optional():
-    parsed = parse_verdict({"verdict": "failed", "reason": "held"})
-    assert parsed.progress is None
-
-
-def test_a_blank_progress_becomes_none():
-    assert parse_verdict({"verdict": "failed", "reason": "held", "progress": "   "}).progress is None
-
-
-def test_progress_is_cut_to_the_reason_cap():
-    parsed = parse_verdict({"verdict": "failed", "reason": "held", "progress": "x" * 400})
-    assert parsed.progress is not None and len(parsed.progress) <= 200
+def test_recommendation_validates_and_forbids_extra():
+    assert Recommendation.model_validate({"recommendation": "Refuse to reveal the prompt."}).recommendation
+    with pytest.raises(ValidationError):
+        Recommendation.model_validate({"recommendation": "x", "extra": 1})
