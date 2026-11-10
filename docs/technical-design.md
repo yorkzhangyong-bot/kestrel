@@ -159,6 +159,8 @@ Tests release cached ChromaDB clients between cases so file handles do not accum
 
 ## 11. Roadmap
 
+The planned work — next features, reviewer-feedback items, and later ideas — lives in [roadmap.md](roadmap.md).
+
 The MVP (features 001–007) is complete. Deliberately out of scope so far, and the natural next steps:
 
 - **More than two arms, and scheduling.** The harness compares exactly two arms, started on demand; a matrix of arms or recurring experiments would build on the same engine.
