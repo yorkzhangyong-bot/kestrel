@@ -11,6 +11,7 @@ from kestrel.attack.attacker import GOALS, SYSTEM_PROMPT, AttackerClient
 from kestrel.prompting import DATA_RULE
 
 FEATURE = "004"
+# Also traces feature 008 (hardening): 008/FR-007 (data rule in system), 008/FR-008 (hints outside the system role).
 
 CONVERSATION = [("attacker", "<m1>"), ("agent", "<r1>")]
 

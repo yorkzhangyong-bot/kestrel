@@ -8,6 +8,7 @@ import dataclasses
 from kestrel.settings import Settings
 
 FEATURE = "001"
+# Also traces feature 008 (hardening): 008/FR-011 (hosted token, fail-closed), 008/FR-012 (local open, never logged), 008/FR-013 (UI sends it).
 
 TOKEN = "s3cret-hosted-token"
 

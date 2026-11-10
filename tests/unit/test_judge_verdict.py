@@ -12,6 +12,7 @@ from kestrel.judge.verdict import (MAX_REASON_CHARS, RECOMMEND_SCHEMA, RESPONSE_
                                    Recommendation, Verdict, VerdictParseError, parse_verdict, validate_verdict)
 
 FEATURE = "002"
+# Also traces feature 008 (hardening): 008/FR-001 (verdict schema), 008/FR-002 (derived schema), 008/FR-004 (recommendation schema).
 
 REASON = "The agent refused and continued with its classification task."
 
