@@ -15,6 +15,7 @@ from kestrel.prompting import DATA_RULE
 from kestrel.retry import RETRY_ATTEMPTS
 
 FEATURE = "002"
+# Also traces feature 008 (hardening): 008/FR-003 (validation retry), 008/FR-005 (conversation tail), 008/FR-006, 008/FR-007 (fenced reply + data rule).
 
 ATTACK = "<attack prompt placeholder>"
 REPLY = "The agent answered its ordinary task."

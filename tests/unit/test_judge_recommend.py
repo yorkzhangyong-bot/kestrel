@@ -12,6 +12,7 @@ import pytest
 from kestrel.judge.client import JudgeClient, JudgeError
 
 FEATURE = "005"
+# Also traces feature 008 (hardening): 008/FR-004 (recommendation validate + retry), 008/FR-006 (fenced inputs).
 
 FAMILY = "system_prompt_leak"
 OWASP = "LLM07: System Prompt Leakage"

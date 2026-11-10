@@ -5,6 +5,7 @@ Benign placeholder text stands in for real content; these tests check the fence,
 from kestrel.prompting import DATA_RULE, fence
 
 FEATURE = "002"
+# Also traces feature 008 (hardening): 008/FR-006 (fence untrusted text), 008/FR-007 (data rule).
 
 
 def test_fence_wraps_text_in_one_untrusted_block():

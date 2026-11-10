@@ -7,6 +7,7 @@ import pytest
 from kestrel.retry import RETRY_ATTEMPTS, RETRYABLE_STATUSES, post_with_retry
 
 FEATURE = "003"
+# Also traces feature 008 (hardening): 008/FR-009 (retry transient statuses), 008/FR-010 (deadline, tokens).
 
 
 async def _noop(_delay: float) -> None:   # never actually sleep in tests

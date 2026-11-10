@@ -13,6 +13,8 @@ import pytest
 from kestrel.attack.attacker import GOALS, MAX_MESSAGE_CHARS, AttackerClient, AttackerError
 from kestrel.retry import RETRY_ATTEMPTS
 
+# Traces feature 008 (hardening): 008/FR-009 (retry transient statuses), 008/FR-010 (deadline, tokens).
+
 CONVERSATION = [("attacker", "<opening message>"), ("agent", "<agent reply one>")]
 
 
