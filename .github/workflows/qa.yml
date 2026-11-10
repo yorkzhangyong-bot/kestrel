@@ -57,6 +57,7 @@ jobs:
           else
             echo "Implementation PR -> tests-traceability + Spec-PR / spec-change rules."
             python scripts/check_traceability.py 2>&1 | tee qa-traceability.log
+            exit "${PIPESTATUS[0]}"   # the tee pipe would otherwise mask check_traceability's exit code
           fi
       - uses: actions/upload-artifact@v4
         if: failure()

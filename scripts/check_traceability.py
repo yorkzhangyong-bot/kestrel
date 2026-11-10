@@ -8,12 +8,13 @@ Two things, both on implementation PRs (the workflow runs ``check_spec.py`` inst
    ``<nnn>-FR-001`` anywhere, or a bare ``FR-001`` in a file carrying a module-level ``FEATURE = "<nnn>"`` marker —
    or (b) be justified in ``specs/<nnn>-*/traceability.md`` as a line ``<nnn>/FR-00x: <justification>``. Scoping
    stops one feature's tests from accidentally "covering" another feature's same-numbered id.
-2. **Implementation-PR rules** (feature 006) — the PR description must carry a ``Spec-PR: #<n>`` reference
-   (FR-009), and a PR that edits a spec file alongside a ``src/`` change must carry a ``spec-change:`` note
-   (FR-010/FR-011).
+2. **Implementation-PR rules** (feature 006) — a PR that changes ``src/`` or ``ui/`` (on **any** branch) must
+   carry a ``Spec-PR: #<n>`` reference in its description (FR-009), and a PR that edits a spec file alongside a
+   ``src/`` change must carry a ``spec-change:`` note (FR-010/FR-011).
 
 Untraced ids or a broken rule are printed and the script exits 1. A branch with no numeric feature prefix skips
-tests-traceability; a PR with no code-directory change is not an implementation PR and skips the rules.
+tests-traceability (that part stays feature-scoped); the Spec-PR rule, though, fires for any PR that changes
+``src/`` or ``ui/`` whatever the branch is named.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = ROOT / "tests"
 ID_RE = re.compile(r"\b(?:FR|SC)-\d+\b")
 CODE_DIRS = ("src/", "tests/", "ui/", "scripts/")
+APP_DIRS = ("src/", "ui/")   # application code: a change here needs a Spec-PR reference (FR-009), on any branch
 SPEC_CHANGE_RE = re.compile(r"(?im)^spec-change:\s*\S")
 SPEC_PR_RE = re.compile(r"(?im)^Spec-PR:\s*#\d+")
 
@@ -124,6 +126,13 @@ def is_spec_only(files: list[str]) -> bool:
     return not any(path.startswith(CODE_DIRS) for path in files)
 
 
+def changes_app_code(files: list[str]) -> bool:
+    """True when the PR changes application code (src/ or ui/). Such a PR MUST carry a Spec-PR reference (FR-009),
+    regardless of the branch name, so bugfix and infrastructure branches (fix/*, chore/*, eval/*) meet the same
+    bar as a feature branch."""
+    return any(path.startswith(APP_DIRS) for path in files)
+
+
 def needs_spec_change_note(files: list[str]) -> bool:
     """True when the PR edits a spec file in the same change as a src/ file (FR-010)."""
     return any(p.startswith("specs/") for p in files) and any(p.startswith("src/") for p in files)
@@ -144,8 +153,8 @@ def _pr_rule_problems() -> list[str]:
         return []   # not an implementation PR (or no PR context)
     pr_body = os.environ.get("PR_BODY", "")
     problems: list[str] = []
-    if not has_spec_pr_reference(pr_body):
-        problems.append("implementation PR description lacks a 'Spec-PR: #<n>' reference line (FR-009)")
+    if changes_app_code(files) and not has_spec_pr_reference(pr_body):
+        problems.append("a PR that changes src/ or ui/ must carry a 'Spec-PR: #<n>' reference line (FR-009)")
     if not spec_change_ok(files, pr_body):
         problems.append("a spec file changed alongside a src/ change without a 'spec-change:' note (FR-010/FR-011)")
     return problems

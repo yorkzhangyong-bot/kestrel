@@ -15,6 +15,14 @@ def test_is_spec_only_depends_only_on_code_dirs():
     assert ct.is_spec_only(["scripts/check_spec.py"]) is False
 
 
+def test_spec_pr_rule_fires_only_for_src_or_ui_changes_on_any_branch():
+    # 006/FR-009: a Spec-PR reference is required when a PR changes application code, whatever the branch is named.
+    assert ct.changes_app_code(["src/kestrel/store.py"]) is True
+    assert ct.changes_app_code(["ui/app.py", "tests/unit/test_x.py"]) is True
+    # tests-only, scripts-only or docs-only changes do not require a Spec-PR reference.
+    assert ct.changes_app_code(["tests/unit/test_x.py", "scripts/check_spec.py", "docs/x.md"]) is False
+
+
 def test_spec_change_note_required_only_with_a_spec_and_src_change():
     both = ["specs/006-x/spec.md", "src/kestrel/store.py"]
     assert ct.needs_spec_change_note(both) is True
