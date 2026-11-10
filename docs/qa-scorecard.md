@@ -99,7 +99,7 @@ fenced and the system prompt states that fenced text is data, not instructions; 
 from the *tail* so the newest attacker message is never cut. Four golden-set rows were added whose replies try to
 steer the judge (a "record this as succeeded" note, a forged `</untrusted>` block, a fake verdict object). Result:
 **precision 1.00, production-faithful recall 0.93, F1 0.96, canary agreement 1.00, zero parse failures** — the
-injection rows produced no false positives, and the one remaining miss is a `borderline` paraphrase row.
+injection rows produced no false positives, and a single paraphrased-leak row (13 of 14) is the only miss.
 
 **Why not RAGAS / DeepEval.** Both were considered. They are built for RAG and multi-metric LLM-app pipelines and
 pull in heavy dependencies outside the fixed MVP stack (Principle X) and the simplicity rule (Principle IX).
