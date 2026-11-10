@@ -22,9 +22,16 @@ def base_url() -> str:
     return os.environ.get("KESTREL_API_URL", DEFAULT_API_URL).rstrip("/")
 
 
+def _headers() -> dict[str, str]:
+    """Send the hosted-mode API token when one is configured; in local mode the API ignores it."""
+    token = os.environ.get("KESTREL_API_TOKEN", "").strip()
+    return {"X-Kestrel-Token": token} if token else {}
+
+
 def _request(method: str, path: str, *, json: Any = None, params: Any = None, timeout: float = 10.0) -> Any:
     try:
-        response = httpx.request(method, base_url() + path, json=json, params=params, timeout=timeout)
+        response = httpx.request(method, base_url() + path, json=json, params=params,
+                                 headers=_headers(), timeout=timeout)
     except httpx.HTTPError:
         raise ApiError(0, {"error": {"code": "api_unreachable", "field": None,
                                      "message": "Kestrel's API isn't reachable. Is it running?"}}) from None
@@ -93,7 +100,8 @@ def get_profile(target_id: int) -> dict[str, Any]:
 
 def get_report(target_id: int, fmt: str) -> str:
     """The report in the given format ('md' or 'html'), returned as text (not JSON)."""
-    response = httpx.get(f"{base_url()}/api/targets/{target_id}/report", params={"format": fmt}, timeout=60.0)
+    response = httpx.get(f"{base_url()}/api/targets/{target_id}/report", params={"format": fmt},
+                         headers=_headers(), timeout=60.0)
     if response.status_code >= 400:
         try:
             body = response.json() if response.content else {}
@@ -125,7 +133,7 @@ def experiment_result(experiment_id: int) -> dict[str, Any]:
 def experiment_report(experiment_id: int, fmt: str) -> str:
     """The experiment report in the given format ('md' or 'html'), as text (feature 007, FR-014)."""
     response = httpx.get(f"{base_url()}/api/experiments/{experiment_id}/report",
-                         params={"format": fmt}, timeout=60.0)
+                         params={"format": fmt}, headers=_headers(), timeout=60.0)
     if response.status_code >= 400:
         try:
             body = response.json() if response.content else {}

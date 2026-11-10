@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -48,6 +49,31 @@ DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}'
 TERMS_PATH = Path(__file__).with_name("terms.md")
 NOT_TESTED = "Run a successful test with these settings before saving."
 NAME_TAKEN = "Another saved target already has this name."
+
+
+class _Unauthorized(Exception):
+    """Hosted mode received no valid API token (require_token, Principle IV hardening)."""
+
+
+def require_token(request: Request) -> None:
+    """Gate every request when running hosted: require a matching X-Kestrel-Token (constant-time compare).
+
+    Local mode is unauthenticated — the tool runs on the user's own machine. Hosted mode is fail-closed: with no
+    token configured, or a missing/wrong one, the request is refused. A fresh clone defaults to hosted, so it
+    needs KESTREL_API_TOKEN set or KESTREL_MODE=local."""
+    settings: Settings = request.app.state.settings
+    if settings.mode != "hosted":
+        return
+    expected = settings.api_token or ""
+    provided = request.headers.get("X-Kestrel-Token", "")
+    if not expected or not hmac.compare_digest(provided, expected):
+        raise _Unauthorized()
+
+
+def _unauthorized_handler(request: Request, exc: _Unauthorized) -> JSONResponse:
+    return api_error(401, "unauthorized",
+                     "This Kestrel runs in hosted mode; send a valid X-Kestrel-Token header, "
+                     "or set KESTREL_MODE=local.")
 
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
@@ -98,7 +124,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                          "back: %s", describe_store_error(error))
             experience = None
 
-    app = FastAPI(title="Kestrel API", version="0.1.0")
+    app = FastAPI(title="Kestrel API", version="0.1.0", dependencies=[Depends(require_token)])
     app.state.settings = settings
     app.state.vault = vault
     app.state.store = store
@@ -113,6 +139,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.injected_attacker = injected_attacker
     app.state.experiment_tasks = set()               # keep background experiment tasks referenced (no GC)
     app.add_exception_handler(RequestValidationError, _validation_error)
+    app.add_exception_handler(_Unauthorized, _unauthorized_handler)
 
     @app.get("/api/config", response_model=ConfigOut)
     def get_config() -> ConfigOut:

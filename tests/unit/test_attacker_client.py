@@ -11,13 +11,18 @@ import httpx
 import pytest
 
 from kestrel.attack.attacker import GOALS, MAX_MESSAGE_CHARS, AttackerClient, AttackerError
+from kestrel.retry import RETRY_ATTEMPTS
 
 CONVERSATION = [("attacker", "<opening message>"), ("agent", "<agent reply one>")]
 
 
+async def _noop(_delay):
+    return None
+
+
 def client(handler, *, api_key="atk-key", model="deepseek/deepseek-v3.2", timeout=30.0) -> AttackerClient:
     return AttackerClient(model=model, api_key=api_key, base_url="https://atk.test/v1",
-                          transport=httpx.MockTransport(handler), timeout=timeout)
+                          transport=httpx.MockTransport(handler), timeout=timeout, sleep=_noop)
 
 
 def ask(the_client, conversation=CONVERSATION, progress="<a progress note>", family="system_prompt_leak"):
@@ -93,9 +98,39 @@ def test_a_transport_error_becomes_attacker_error(error):
         ask(client(handler))
 
 
-def test_a_non_200_becomes_attacker_error():
+def test_a_persistent_transient_status_is_retried_then_becomes_attacker_error():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(429, json={"error": "rate limited"})
     with pytest.raises(AttackerError):
-        ask(client(lambda r: httpx.Response(429, json={"error": "rate limited"})))
+        ask(client(handler))
+    assert len(calls) == RETRY_ATTEMPTS   # the transient status was retried before giving up (item 4)
+
+
+def test_a_non_retryable_status_is_not_retried():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(400, json={"error": "bad request"})
+    with pytest.raises(AttackerError):
+        ask(client(handler))
+    assert len(calls) == 1
+
+
+def test_a_transient_status_then_a_message_recovers():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(503, json={"usage": {"total_tokens": 4}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "<recovered>"}}],
+                                         "usage": {"total_tokens": 20}})
+    reply = asyncio.run(client(handler).next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    assert reply.message == "<recovered>" and reply.tokens == 24 and len(calls) == 2
 
 
 def test_an_empty_message_becomes_attacker_error():

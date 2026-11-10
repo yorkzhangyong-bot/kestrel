@@ -17,7 +17,10 @@ def test_config_returns_mode_and_defaults(client):
 
 
 def test_config_reports_hosted_mode(make_client, hosted_settings):
-    assert make_client(hosted_settings).get("/api/config").json()["mode"] == "hosted"
+    import dataclasses
+    settings = dataclasses.replace(hosted_settings, api_token="hosted-token")  # hosted is fail-closed without a token
+    response = make_client(settings).get("/api/config", headers={"X-Kestrel-Token": "hosted-token"})
+    assert response.json()["mode"] == "hosted"
 
 
 class _Probe(BaseModel):

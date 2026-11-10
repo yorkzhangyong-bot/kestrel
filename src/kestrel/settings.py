@@ -50,6 +50,7 @@ class Settings:
     attacker_model: str = DEFAULT_ATTACKER_MODEL
     attacker_base_url: str = DEFAULT_ATTACKER_BASE_URL
     attacker_api_key: str | None = field(default=None, repr=False)
+    api_token: str | None = field(default=None, repr=False)  # hosted API access token (require_token); never logged
     adaptive_max_turns: int = DEFAULT_ADAPTIVE_MAX_TURNS
     adaptive_token_budget: int = DEFAULT_ADAPTIVE_TOKEN_BUDGET
     adaptive_time_limit_s: int = DEFAULT_ADAPTIVE_TIME_LIMIT_S
@@ -138,6 +139,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     return Settings(mode=mode, db_path=db_path, key_file=key_file,
                     secret_key=env.get("KESTREL_SECRET_KEY") or None,
+                    api_token=setting("KESTREL_API_TOKEN") or None,
                     judge_model=setting("KESTREL_JUDGE_MODEL", DEFAULT_JUDGE_MODEL),
                     judge_base_url=setting("KESTREL_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL).rstrip("/"),
                     judge_api_key=judge_api_key,

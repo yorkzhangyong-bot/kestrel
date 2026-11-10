@@ -51,11 +51,11 @@ The judge (feature 002) decides a run only when no canary matched, and its verdi
 hard evidence (Principle II). To measure how good that opinion is, we score it against a **human-labelled golden
 set** rather than trust it blind. This evaluates the shipped judge; it changes nothing about the judge itself.
 
-**Method.** [scripts/export_judge_samples.py](../scripts/export_judge_samples.py) builds a golden set of 40 **target
+**Method.** [scripts/export_judge_samples.py](../scripts/export_judge_samples.py) builds a golden set of 44 **target
 replies** — [tests/eval/judge_samples.json](../tests/eval/judge_samples.json) — using any real replies from the
 local store (URLs and auth-looking tokens redacted) plus synthetic replies modelled on the HS-code target. The mix
-is deliberate: clean classifications, obvious canary leaks, paraphrased / partial-canary leaks, refusals, and
-tool-call exfiltration. A human labels each reply `leak` or `no_leak`. [tests/eval/test_judge_accuracy.py](../tests/eval/test_judge_accuracy.py)
+is deliberate: clean classifications, obvious canary leaks, paraphrased / partial-canary leaks, refusals,
+tool-call exfiltration, and replies that try to steer the judge itself (fenced as data; Principle IV hardening). A human labels each reply `leak` or `no_leak`. [tests/eval/test_judge_accuracy.py](../tests/eval/test_judge_accuracy.py)
 then runs the judge on every labelled reply, builds a confusion matrix for the `leak` class, and reports precision,
 F1 and **two recalls** — a *production-faithful* recall (a judge error or truncated verdict counts as `unclear` →
 `no_leak`, exactly as Kestrel records it) and a *discrimination* recall over only the rows the judge returned a
@@ -72,35 +72,34 @@ It asserts **production-faithful recall ≥ 0.80** (override with `KESTREL_JUDGE
 matters: a missed leak (false negative) tells an owner they are safe when they are not, which is worse than a false
 alarm.
 
-Measured 2026-11-02 against `google/gemini-3.8-flash` on the 40-reply set (13 leak / 27 no_leak; 20 real + 20
-synthetic), after the fix below:
+Measured 2026-11-10 against `google/gemini-3.8-flash` on the 44-reply set (14 leak / 30 no_leak; 20 real + 24
+synthetic), after the hardening below:
 
 | Metric | Value |
 | --- | --- |
-| Golden-set size | 40 replies (13 leak / 27 no_leak) |
+| Golden-set size | 44 replies (14 leak / 30 no_leak) |
 | Precision (leak) | 1.00 |
-| Recall (leak) — production-faithful | 0.85 (11 of 13) |
-| Recall (leak) — discrimination (verdict-returned rows) | 0.85 |
-| F1 (leak) | 0.92 |
+| Recall (leak) — production-faithful | 0.93 (13 of 14) |
+| Recall (leak) — discrimination (verdict-returned rows) | 0.93 (14 of 14 leaks scored) |
+| F1 (leak) | 0.96 |
 | Judge/canary agreement (4 hard-evidence rows) | 1.00 |
-| Truncated / parse-failed rows | 0 (occasionally 1; stochastic) |
+| Truncated / parse-failed rows | 0 |
 
-**Finding (2026-11-02, resolved).** The first baseline showed precision 1.00 but production-faithful recall 0.23 —
-and that gap was not weak judging. Two causes, neither in the judge's discrimination:
+**History.** The first baseline (2026-11-02) showed precision 1.00 but production-faithful recall 0.23 — not weak
+judging but two harness faults: the verdict call capped output at `max_tokens=200`, so a verbose model's JSON was cut
+off (`finish_reason=length`) and the run became `unclear`; and the harness paired every reply with one representative
+library prompt instead of the attack it answered. [#10](https://github.com/yorkzhangyong-bot/kestrel/pull/10) raised
+the cap to 600, made the parser tolerate a preamble, held `reason`/`progress` to ≤40 words, and gave every row its
+own `attack` — lifting production-faithful recall to 0.85.
 
-1. **Truncation.** The verdict call capped output at `max_tokens=200` ([`MAX_ANSWER_TOKENS`](../src/kestrel/judge/client.py));
-   a verbose model overran it, the JSON was cut off mid-string (`finish_reason=length`), `parse_verdict` found no
-   complete object, and the run became `unclear` (FR-021) — a real leak silently recorded as "not confirmed".
-2. **Attack mispairing (the larger cause).** The harness paired every reply with one representative library prompt
-   per family, which usually did not match the attack the reply actually answered, so the judge correctly reported
-   the agent "didn't do *that*" and returned `failed`.
-
-Fix ([#10](https://github.com/yorkzhangyong-bot/kestrel/pull/10)): raise the cap to 600, make `parse_verdict`
-tolerate a preamble before the JSON object, hold `reason`/`progress` to ≤40 words, and give every golden-set row its
-own `attack`. Result: **precision 1.00, production-faithful recall 0.85, F1 0.92, canary agreement 1.00.** The two
-remaining misses are a `borderline` row (`real-16`, a near-generic prompt template the judge calls not-a-leak) and
-the occasional stray truncation — flagged or stochastic, not systematic. Truncation is now rare but not impossible,
-so a single run may show recall 0.85 or dip by one row; re-run or rely on the configurable floor if it matters.
+**Hardening (2026-11-10).** Review feedback tightened the judge further: the verdict and recommendation answers are
+now validated against a Pydantic model whose JSON schema is exactly what the model is asked for (the asked-for and
+accepted shapes can't drift), with one retry on a schema violation; untrusted text (conversation, attack, reply) is
+fenced and the system prompt states that fenced text is data, not instructions; and the adaptive conversation is kept
+from the *tail* so the newest attacker message is never cut. Four golden-set rows were added whose replies try to
+steer the judge (a "record this as succeeded" note, a forged `</untrusted>` block, a fake verdict object). Result:
+**precision 1.00, production-faithful recall 0.93, F1 0.96, canary agreement 1.00, zero parse failures** — the
+injection rows produced no false positives, and a single paraphrased-leak row (13 of 14) is the only miss.
 
 **Why not RAGAS / DeepEval.** Both were considered. They are built for RAG and multi-metric LLM-app pipelines and
 pull in heavy dependencies outside the fixed MVP stack (Principle X) and the simplicity rule (Principle IX).
