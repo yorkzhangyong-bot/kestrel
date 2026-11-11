@@ -23,7 +23,7 @@ attack behaviour by default.
   The authored template text (the static text before runtime placeholders are filled); the rendered prompt varies
   per run and is never the thing versioned or hashed.
 - Q: Which prompts may be a feature-007 prompt-version A/B arm subject? → A: Only the attacker and judge prompts (the
-  ones whose version moves the 007 success metrics); a recommender or memory-summariser version arm is refused.
+  ones whose version moves the 007 success metrics); a recommender version arm is refused.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -83,7 +83,7 @@ fails naming that prompt; bump the version and record the new fingerprint and co
 ### User Story 3 - See the active prompt versions (Priority: P2)
 
 An operator opening the screen, or querying the API from the command line (`curl` or a small script), can see
-which version of each prompt is currently active — attacker families, judge, recommender and memory summariser —
+which version of each prompt is currently active — attacker families, judge and recommender —
 without digging through files. The display shows ids and versions, never a prompt's raw text.
 
 **Why this priority**: Visibility turns provenance from a buried database column into something an operator can
@@ -154,20 +154,20 @@ confirm the report presents results grouped by judge prompt version.
   marker, not a guessed or back-dated version (the honesty rule from feature 002).
 - An experiment arm, or a run, that references a prompt id/version missing from the registry must be refused before
   any model call, not fail partway through.
-- A prompt-version arm that names a prompt other than the attacker or judge — the recommender or memory summariser —
-  must be refused: only the attacker and judge prompts move the feature-007 success metrics.
+- A prompt-version arm that names a prompt other than the attacker or judge — i.e. the recommender — must be
+  refused: only the attacker and judge prompts move the feature-007 success metrics.
 - Recording and showing versions must not alter outcomes: with every prompt at its seeded 1.0.0 version, attacks
   and verdicts behave exactly as before.
 - The no-attack-text rule bites on the attack library fixtures (feature 002's per-family injection payloads), which
   the registry does not ingest; the attacker prompt *templates* in `attack/attacker.py` are operational prompts and
-  are versioned in the registry with full text, like the judge, recommender and summariser prompts.
+  are versioned in the registry with full text, like the judge and recommender prompts.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: Every prompt Kestrel sends to a model — the attacker prompt per family, the judge prompt, the
-  recommender (fix-advice) prompt and the memory-summariser prompt — MUST be a registry entry carrying a stable
+  recommender (fix-advice) prompt — MUST be a registry entry carrying a stable
   id, a semantic version, its authored template text (the static text as authored, before any runtime placeholders
   are filled), and a content fingerprint computed over that template text.
 - **FR-002**: The prompts shipped before this feature MUST be seeded at version 1.0.0 with their existing text, so
@@ -187,7 +187,7 @@ confirm the report presents results grouped by judge prompt version.
   request to that API (`curl` or a small script), which in hosted mode carries the `X-Kestrel-Token` (Principle IV).
 - **FR-008**: The feature 007 experiment harness MUST support a prompt-version arm, in which two arms may differ
   only by the version of one named prompt — the attacker or the judge prompt (the prompts whose version moves the
-  007 success metrics); an arm naming a recommender or memory-summariser prompt version MUST be refused. The
+  007 success metrics); an arm naming any other prompt (the recommender) MUST be refused. The
   experiment MUST record, in the arm diff, that prompt's id and the version each arm used, and the existing
   comparison statistics (confirmed and suspected success kept separate, Wilson interval, two-proportion note) MUST
   apply unchanged.
@@ -196,8 +196,8 @@ confirm the report presents results grouped by judge prompt version.
 - **FR-010**: The judge evaluation in the test suite MUST report its results broken down by judge prompt version.
 - **FR-011**: The no-attack-text hard rule covers the **attack library fixtures** (feature 002's per-family
   injection payloads), which the registry does not ingest and which stay sourced exactly as today — never committed,
-  save for the single documented exception. The four model-facing prompt *templates* — the attacker prompt template
-  per family (already in `attack/attacker.py`), the judge, the recommender and the memory-summariser prompts — are
+  save for the single documented exception. The three model-facing prompt *templates* — the attacker prompt template
+  per family (already in `attack/attacker.py`), the judge and the recommender prompts — are
   Kestrel's own operational prompts, not attack payloads, and MUST live in the registry with their full text,
   versioned and committed alongside one another.
 - **FR-012**: Prompt ids, versions and fingerprints are not secrets, but the new provenance, displays and any
@@ -235,7 +235,7 @@ confirm the report presents results grouped by judge prompt version.
   prompt id and both versions.
 - **SC-006**: The judge evaluation output is grouped by judge prompt version.
 - **SC-007**: No attack-library fixture text, and no target auth value, URL or name, appears in the recorded
-  provenance, the API responses, the UI, or any commit introduced by this feature; the four prompt templates
+  provenance, the API responses, the UI, or any commit introduced by this feature; the three prompt templates
   carry their full text in the registry exactly as Kestrel's other committed prompts do.
 
 ## Assumptions
@@ -243,10 +243,10 @@ confirm the report presents results grouped by judge prompt version.
 - The feature reuses the adopted stack (Principle X): a content fingerprint and semantic-version handling need no
   new runtime dependency, and SQLite schema versioning already exists — this is the version-7 step on top of the
   current schema.
-- "Current prompts" are the judge, recommender, memory-summariser and attacker (per-family) prompts as shipped
+- "Current prompts" are the judge, recommender and attacker (per-family) prompts as shipped
   through feature 008; seeding them at 1.0.0 preserves today's behaviour because their text is unchanged.
 - The attacker prompt templates already live in `attack/attacker.py` with full text; this feature moves them, with
-  the judge, recommender and memory-summariser prompts, into the registry with full text and a version. The attack
+  the judge and recommender prompts, into the registry with full text and a version. The attack
   library fixtures (feature 002 payloads) are unaffected and remain governed by the no-attack-text rule.
 - Pre-migration run turns and verdicts are backfilled with a "not recorded" marker rather than a guessed version,
   consistent with feature 002's honesty rule.
@@ -257,15 +257,15 @@ confirm the report presents results grouped by judge prompt version.
   change how a verdict is decided.
 - **Footnote (plan finding):** the memory summariser composes its writeback summary deterministically (no model
   call), so no summariser prompt exists to version — the registry covers three model-facing prompt kinds (attacker
-  per family, judge, recommender); `FR-001`'s mention of a memory-summariser prompt is vacuous and no behaviour is lost.
+  per family, judge, recommender). No behaviour is lost.
 
 ## Out of Scope
 
 - Editing prompts or bumping versions through the UI or the command line, and any in-app prompt-authoring workflow —
   versions are bumped at the source, as prompts are maintained today.
-- Per-use provenance for the recommender and memory-summariser prompts beyond recording and showing their active
+- Per-use provenance for the recommender prompt beyond recording and showing its active
   version — only run turns (attacker) and verdicts (judge) record per-use provenance.
 - Extending the OWASP report headers to prompt versions; the report already states the attacker model and version
-  (Principle III), and prompt-version display in this feature is the UI and CLI.
+  (Principle III), and prompt-version display in this feature is the UI and the API.
 - Rolling back, or re-running, historical runs under a chosen prompt version.
 - Changing any prompt's intent, the attacker or judge models, or the attack library.
