@@ -255,6 +255,9 @@ confirm the report presents results grouped by judge prompt version.
   them the same way.
 - Canary hard evidence (Principle II) is unaffected; this feature records and compares provenance and does not
   change how a verdict is decided.
+- **Footnote (plan finding):** the memory summariser composes its writeback summary deterministically (no model
+  call), so no summariser prompt exists to version — the registry covers three model-facing prompt kinds (attacker
+  per family, judge, recommender); `FR-001`'s mention of a memory-summariser prompt is vacuous and no behaviour is lost.
 
 ## Out of Scope
 
