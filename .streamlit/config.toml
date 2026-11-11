@@ -1,0 +1,8 @@
+# Kestrel's locked dark theme. Colours and font only — no behaviour. See docs for the brand palette.
+[theme]
+base = "dark"
+primaryColor = "#F0A028"
+backgroundColor = "#10182A"
+secondaryBackgroundColor = "#1B2436"
+textColor = "#F5ECDC"
+font = "sans-serif"

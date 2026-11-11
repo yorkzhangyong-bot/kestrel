@@ -6,10 +6,14 @@ st.success and st.error carry only Kestrel's own wording.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 import api_client
+
+LOGO = Path(__file__).resolve().parents[1] / "docs" / "images" / "kestrel-logo.png"
 
 MODE_CAPTIONS = {
     "local": "Running locally",
@@ -448,11 +452,19 @@ RUN_BLOCK_MESSAGES = {"permission_missing", "terms_outdated", "run_in_progress"}
 def render_attack(config: dict, families: list[dict]) -> None:
     st.subheader("Attack")
     judge = config.get("judge") or {}
-    have_target = loaded_id() is not None
 
     if not families:
         st.caption("The attack library isn't available, so no attacks can be run.")
         return
+    with st.container(border=True):   # item 3: the attack configuration sits in a bordered card
+        _render_attack_form(config, families)
+    if st.session_state.get("run_notice"):
+        st.error(st.session_state["run_notice"])
+    render_run_result(st.session_state.get("run_result"), judge)
+
+
+def _render_attack_form(config: dict, families: list[dict]) -> None:
+    have_target = loaded_id() is not None
     # Single-turn (feature 002) or Adaptive multi-turn (feature 003), reusing the same family/prompt controls.
     attacker = config.get("attacker") or {}
     adaptive = config.get("adaptive") or {}
@@ -490,10 +502,6 @@ def render_attack(config: dict, families: list[dict]) -> None:
     if not have_target:
         st.caption("Pick a saved target, choose an attack family, and click Run attack.")
 
-    if st.session_state.get("run_notice"):
-        st.error(st.session_state["run_notice"])
-    render_run_result(st.session_state.get("run_result"), judge)
-
 
 STOPPED = {"turn_cap": "stopped at the turn limit", "token_budget": "stopped at the token budget",
            "time_limit": "stopped at the time limit"}
@@ -502,6 +510,11 @@ STOPPED = {"turn_cap": "stopped at the turn limit", "token_budget": "stopped at 
 def render_run_result(run: dict | None, judge: dict) -> None:
     if not run:
         return
+    with st.container(border=True):   # item 3: each finding sits in its own bordered card
+        _render_finding(run, judge)
+
+
+def _render_finding(run: dict, judge: dict) -> None:
     if run.get("failure_step"):
         # Prefer Kestrel's own wording for the step (feature 001); fall back for any unmapped step.
         fallback = f"The attack could not be sent: {run.get('reason') or run['failure_step']}."
@@ -574,8 +587,16 @@ def _evidence(run: dict) -> str:
     return f"judge · {run['judge_model']}" if run["judge_used"] else "—"
 
 
+def _verdict_css(run: dict) -> str:
+    """Background for a run's verdict cell: confirmed green, suspected amber, else grey (item 4)."""
+    if run.get("verdict") == "succeeded" and run.get("hard_evidence"):
+        return "background-color: #1a7f37; color: #ffffff"
+    if run.get("verdict") == "succeeded":
+        return "background-color: #bf8700; color: #10182A"
+    return "background-color: #57606a; color: #ffffff"
+
+
 def render_runs(config: dict) -> None:
-    st.subheader("Runs")
     target_id = loaded_id()
     if target_id is None:
         st.caption("Select a saved target to see its runs.")
@@ -584,10 +605,15 @@ def render_runs(config: dict) -> None:
     if not runs:
         st.caption("No runs yet for this target.")
         return
-    st.dataframe([{"When": r["started_at"][:19].replace("T", " "),
-                   "Mode": "adaptive" if r.get("mode") == "adaptive" else "single-turn", "Family": r["family"],
-                   "Prompt": r["prompt_title"], "Verdict": r["verdict"] or r["failure_step"] or "—",
-                   "Evidence": _evidence(r)} for r in runs], hide_index=True)
+    frame = pd.DataFrame([{"When": pd.to_datetime(r["started_at"]),
+                           "Mode": "adaptive" if r.get("mode") == "adaptive" else "single-turn",
+                           "Family": r["family"], "Prompt": r["prompt_title"],
+                           "Verdict": r["verdict"] or r["failure_step"] or "—", "Evidence": _evidence(r)}
+                          for r in runs])
+    # column_config formats the timestamps; a Styler colours the verdict (item 4; the data-display.md pattern).
+    styled = frame.style.apply(lambda _col: [_verdict_css(r) for r in runs], subset=["Verdict"])
+    st.dataframe(styled, hide_index=True, alt="This target's attack runs, newest first",
+                 column_config={"When": st.column_config.DatetimeColumn("When", format="MMM DD, HH:mm")})
 
     labels = {r["id"]: f"{r['started_at'][:19].replace('T', ' ')} · {r['prompt_title']}" for r in runs}
     chosen = st.selectbox("Open a run", [None, *labels], key="open_run",
@@ -602,7 +628,6 @@ def render_runs(config: dict) -> None:
 
 def render_profile() -> None:
     """A per-target summary of its memory records, secrets-free (FR-022, FR-023)."""
-    st.subheader("Profile")
     target_id = loaded_id()
     if target_id is None:
         st.caption("Select a saved target to see its profile.")
@@ -626,7 +651,6 @@ def render_profile() -> None:
 
 def render_report() -> None:
     """The OWASP-mapped report for the selected target: generate, preview, and download MD/HTML (feature 005)."""
-    st.subheader("Report")
     target_id = loaded_id()
     if target_id is None:
         st.caption("Select a saved target to generate a report.")
@@ -742,7 +766,6 @@ def _arm_editor(column, prefix: str, title: str, attacker: str, judge: str, *, r
 
 
 def render_experiments(config: dict, targets: list[dict], families: list[dict]) -> None:
-    st.subheader("Experiments")
     if st.session_state.get("experiment_notice"):
         st.error(st.session_state["experiment_notice"])
     if not targets:
@@ -806,11 +829,21 @@ def _render_comparison(result: dict) -> None:
     def tokens(arm: dict) -> str:
         return "—" if arm["mean_tokens"] is None else f"{arm['mean_tokens']:.0f}"
 
-    rows = [{"Metric": "Confirmed success", "Arm A": rate(a["confirmed"]), "Arm B": rate(b["confirmed"])},
-            {"Metric": "Suspected success", "Arm A": rate(a["suspected"]), "Arm B": rate(b["suspected"])},
-            {"Metric": "Mean tokens", "Arm A": tokens(a), "Arm B": tokens(b)},
-            {"Metric": "Cost", "Arm A": cost(a), "Arm B": cost(b)}]
-    st.dataframe(rows, hide_index=True)
+    def interval(cell: dict) -> str | None:
+        bounds = cell.get("ci")
+        return f"95% CI {bounds[0] * 100:.0f}–{bounds[1] * 100:.0f}%" if bounds else None
+
+    col_a, col_b = st.columns(2)
+    for col, arm, name in ((col_a, a, "Arm A"), (col_b, b, "Arm B")):
+        with col:
+            st.markdown(f"**{name}**")
+            st.metric("Confirmed success", rate(arm["confirmed"]))
+            bounds = interval(arm["confirmed"])
+            if bounds:
+                st.caption(bounds)   # Wilson interval as text; an error-bar bar would need plotly (not a dependency)
+            st.metric("Suspected success", rate(arm["suspected"]))
+            st.metric("Mean tokens", tokens(arm))
+            st.metric("Cost", cost(arm))
     st.caption(f"Diff: {'; '.join(result['diff'])} · {result['order']} · {result['warming']}")
     caveat = result["comparison"]["confirmed"].get("caveat")
     if caveat:
@@ -825,9 +858,25 @@ def _render_comparison(result: dict) -> None:
         st.caption("Report unavailable.")
 
 
+def render_metrics(target_id: int | None) -> None:
+    """Headline metric cards for the selected target (FR-028): runs, confirmed, suspected, and the last run."""
+    labels = ["Runs", "Confirmed", "Suspected", "Last run"]
+    cols = st.columns(4)
+    if target_id is None:
+        for col, label in zip(cols, labels):
+            col.metric(label, "—")
+        return
+    runs = load_runs(target_id)
+    confirmed = sum(1 for r in runs if r.get("verdict") == "succeeded" and r.get("hard_evidence"))
+    suspected = sum(1 for r in runs if r.get("verdict") == "succeeded" and not r.get("hard_evidence"))
+    last = runs[0]["started_at"][:16].replace("T", " ") if runs else "—"
+    for col, label, value in zip(cols, labels, [len(runs), confirmed, suspected, last]):
+        col.metric(label, value)
+
+
 def main() -> None:
-    st.set_page_config(page_title="Kestrel", layout="wide")
-    st.sidebar.title("Kestrel")
+    page_icon = str(LOGO) if LOGO.exists() else ":material/radar:"
+    st.set_page_config(page_title="Kestrel", page_icon=page_icon, layout="wide")
     config = load_config()
     if config is None:
         st.stop()
@@ -838,6 +887,10 @@ def main() -> None:
     families = load_families()
 
     with st.sidebar:
+        if LOGO.exists():
+            st.image(str(LOGO), width=72, alt="Kestrel logo")
+        st.title("Kestrel")
+        st.caption("Hunts the weak spots in your AI agent")
         render_form(config, targets)
         judge = config.get("judge") or {}
         if judge.get("configured"):
@@ -852,11 +905,17 @@ def main() -> None:
     # (FR-010).
     render_attack(config, families)
     run_pending_run()
-    render_runs(config)
-    render_profile()
-    render_report()
+    render_metrics(loaded_id())
+    tab_runs, tab_profile, tab_report, tab_experiments = st.tabs(["Runs", "Profile", "Report", "Experiments"])
+    with tab_runs:
+        render_runs(config)
+    with tab_profile:
+        render_profile()
+    with tab_report:
+        render_report()
+    with tab_experiments:
+        render_experiments(config, targets, families)
     render_result()
-    render_experiments(config, targets, families)
     render_targets(targets)
 
 
