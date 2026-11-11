@@ -12,6 +12,19 @@ verdict records which prompt version produced it, a prompt cannot change without
 be A/B tested with the existing experiment harness, and the active versions are visible — all with no change to
 attack behaviour by default.
 
+## Clarifications
+
+### Session 2026-11-11
+
+- Q: How is the "command-line" view of active prompt versions delivered, given Kestrel has no CLI today? → A: No
+  standalone CLI — the active versions are exposed on the existing API (for example the config endpoint) and the
+  command-line view is a `curl`/small-script request to it (carrying the `X-Kestrel-Token` in hosted mode).
+- Q: Is a prompt's version and fingerprint taken over the authored template text or the fully rendered prompt? → A:
+  The authored template text (the static text before runtime placeholders are filled); the rendered prompt varies
+  per run and is never the thing versioned or hashed.
+- Q: Which prompts may be a feature-007 prompt-version A/B arm subject? → A: Only the attacker and judge prompts (the
+  ones whose version moves the 007 success metrics); a recommender or memory-summariser version arm is refused.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Know which prompt produced a result (Priority: P1)
@@ -69,23 +82,23 @@ fails naming that prompt; bump the version and record the new fingerprint and co
 
 ### User Story 3 - See the active prompt versions (Priority: P2)
 
-An operator opening the screen, or reading the command-line output, can see which version of each prompt is
-currently active — attacker families, judge, recommender and memory summariser — without digging through files.
-The display shows ids and versions, never a prompt's raw text.
+An operator opening the screen, or querying the API from the command line (`curl` or a small script), can see
+which version of each prompt is currently active — attacker families, judge, recommender and memory summariser —
+without digging through files. The display shows ids and versions, never a prompt's raw text.
 
 **Why this priority**: Visibility turns provenance from a buried database column into something an operator can
 act on — confirming which version is live before a run and spotting an unexpected version. It depends on the
 registry (US1) but is not needed to record provenance, so it sits below the P1 foundation.
 
-**Independent Test**: Open the UI and run the CLI command and confirm both list each prompt's id and active
-version, and that no prompt text is shown.
+**Independent Test**: Open the UI and query the API (for example the config endpoint) from the command line, and
+confirm both show each prompt's id and active version, with no prompt text shown.
 
 **Acceptance Scenarios**:
 
 1. **Given** the registry is seeded, **When** the operator opens the screen, **Then** the active version of each
    prompt is shown with its id.
-2. **Given** the registry is seeded, **When** the operator runs the command-line surface, **Then** the active
-   version of each prompt is listed.
+2. **Given** the registry is seeded, **When** the operator queries the API from the command line (`curl` or a
+   script), **Then** the active version of each prompt is listed.
 3. **Given** either surface, **When** the active versions are shown, **Then** no prompt's raw text appears.
 
 ---
@@ -141,6 +154,8 @@ confirm the report presents results grouped by judge prompt version.
   marker, not a guessed or back-dated version (the honesty rule from feature 002).
 - An experiment arm, or a run, that references a prompt id/version missing from the registry must be refused before
   any model call, not fail partway through.
+- A prompt-version arm that names a prompt other than the attacker or judge — the recommender or memory summariser —
+  must be refused: only the attacker and judge prompts move the feature-007 success metrics.
 - Recording and showing versions must not alter outcomes: with every prompt at its seeded 1.0.0 version, attacks
   and verdicts behave exactly as before.
 - The no-attack-text rule bites on the attack library fixtures (feature 002's per-family injection payloads), which
@@ -153,7 +168,8 @@ confirm the report presents results grouped by judge prompt version.
 
 - **FR-001**: Every prompt Kestrel sends to a model — the attacker prompt per family, the judge prompt, the
   recommender (fix-advice) prompt and the memory-summariser prompt — MUST be a registry entry carrying a stable
-  id, a semantic version, its text, and a content fingerprint computed over that text.
+  id, a semantic version, its authored template text (the static text as authored, before any runtime placeholders
+  are filled), and a content fingerprint computed over that template text.
 - **FR-002**: The prompts shipped before this feature MUST be seeded at version 1.0.0 with their existing text, so
   default attack, judge, recommendation and memory behaviour is unchanged.
 - **FR-003**: Each completed run turn MUST record the id and version of the attacker prompt that produced it, and
@@ -163,15 +179,18 @@ confirm the report presents results grouped by judge prompt version.
   version.
 - **FR-005**: A prompt id at a given version MUST identify exactly one text: presenting two different texts for the
   same id and version MUST be rejected or detectably fail.
-- **FR-006**: The test suite MUST fail when a registered prompt's text no longer matches the content fingerprint
-  recorded for its id and version — i.e., changing a prompt without bumping its version MUST be caught and the
-  offending prompt identified.
-- **FR-007**: The active version of each registered prompt MUST be visible both in the UI and in the command-line
-  surface, shown as id and version without the prompt's raw text.
+- **FR-006**: The test suite MUST fail when a registered prompt's authored template text no longer matches the
+  content fingerprint recorded for its id and version — i.e., changing a prompt without bumping its version MUST be
+  caught and the offending prompt identified.
+- **FR-007**: The active version of each registered prompt MUST be exposed on the existing API (for example the
+  config endpoint) and shown in the UI, as id and version without the prompt's raw text; the command-line view is a
+  request to that API (`curl` or a small script), which in hosted mode carries the `X-Kestrel-Token` (Principle IV).
 - **FR-008**: The feature 007 experiment harness MUST support a prompt-version arm, in which two arms may differ
-  only by the version of one named prompt; the experiment MUST record, in the arm diff, that prompt's id and the
-  version each arm used, and the existing comparison statistics (confirmed and suspected success kept separate,
-  Wilson interval, two-proportion note) MUST apply unchanged.
+  only by the version of one named prompt — the attacker or the judge prompt (the prompts whose version moves the
+  007 success metrics); an arm naming a recommender or memory-summariser prompt version MUST be refused. The
+  experiment MUST record, in the arm diff, that prompt's id and the version each arm used, and the existing
+  comparison statistics (confirmed and suspected success kept separate, Wilson interval, two-proportion note) MUST
+  apply unchanged.
 - **FR-009**: A run or experiment arm that names a prompt id or version absent from the registry MUST be refused
   before any model is called.
 - **FR-010**: The judge evaluation in the test suite MUST report its results broken down by judge prompt version.
@@ -189,15 +208,15 @@ confirm the report presents results grouped by judge prompt version.
 ### Key Entities
 
 - **Versioned prompt (registry entry)**: one of Kestrel's model-facing prompts, identified by a stable id, carrying
-  a semantic version, its text, and a content fingerprint over the text; one id at one version is exactly one text,
-  and one version per id is the active one.
+  a semantic version, its authored template text (the static text before runtime substitution), and a content
+  fingerprint over that template text; one id at one version is exactly one text, and one version per id is active.
 - **Prompt provenance**: the prompt id and version recorded on a stored run turn (the attacker prompt) and on a
   stored judge verdict (the judge prompt), added by the version-7 migration; rows predating the migration are
   marked "not recorded".
-- **Content fingerprint**: the recorded hash of a prompt's text for an id and version, used to detect a text change
-  that was not accompanied by a version bump, and safe to show because it reveals no text.
+- **Content fingerprint**: the recorded hash of a prompt's authored template text for an id and version, used to
+  detect a template change that was not accompanied by a version bump, and safe to show because it reveals no text.
 - **Prompt-version experiment arm**: a feature 007 arm that differs from the other only by the version of one named
-  prompt; the experiment's recorded arm diff names that prompt id and both versions.
+  prompt (the attacker or judge prompt); the experiment's recorded arm diff names that prompt id and both versions.
 
 ## Success Criteria *(mandatory)*
 
@@ -209,14 +228,14 @@ confirm the report presents results grouped by judge prompt version.
   the prompt; bumping the version and recording the new fingerprint makes it pass.
 - **SC-003**: With all prompts at their seeded 1.0.0 version, results on the judge golden set and the end-to-end
   HS-code run are unchanged from before the feature — no behaviour drift by default.
-- **SC-004**: The active version of each prompt is visible in both the UI and the command-line surface, and no
-  prompt's raw text is shown on either.
+- **SC-004**: The active version of each prompt is visible in the UI and on the API (so a `curl`/script command-line
+  check lists them), and no prompt's raw text is shown on either.
 - **SC-005**: An experiment comparing two versions of one prompt produces the existing comparison — confirmed and
   suspected success separate, with the Wilson interval and two-proportion note — and the recorded arm diff names the
   prompt id and both versions.
 - **SC-006**: The judge evaluation output is grouped by judge prompt version.
 - **SC-007**: No attack-library fixture text, and no target auth value, URL or name, appears in the recorded
-  provenance, the UI, the command-line surface, or any commit introduced by this feature; the four prompt templates
+  provenance, the API responses, the UI, or any commit introduced by this feature; the four prompt templates
   carry their full text in the registry exactly as Kestrel's other committed prompts do.
 
 ## Assumptions
@@ -231,15 +250,16 @@ confirm the report presents results grouped by judge prompt version.
   library fixtures (feature 002 payloads) are unaffected and remain governed by the no-attack-text rule.
 - Pre-migration run turns and verdicts are backfilled with a "not recorded" marker rather than a guessed version,
   consistent with feature 002's honesty rule.
-- The command-line surface referenced is Kestrel's existing one; "show active prompt versions" extends its output
-  and introduces no new interactive flow.
+- Kestrel has no standalone CLI today; the "command-line view" is a request to the existing API (`curl` or a small
+  script), so this feature adds no new interactive surface — the API exposes the active versions and the UI reads
+  them the same way.
 - Canary hard evidence (Principle II) is unaffected; this feature records and compares provenance and does not
   change how a verdict is decided.
 
 ## Out of Scope
 
-- Editing prompts or bumping versions through the UI or CLI, and any in-app prompt-authoring workflow — versions are
-  bumped at the source, as prompts are maintained today.
+- Editing prompts or bumping versions through the UI or the command line, and any in-app prompt-authoring workflow —
+  versions are bumped at the source, as prompts are maintained today.
 - Per-use provenance for the recommender and memory-summariser prompts beyond recording and showing their active
   version — only run turns (attacker) and verdicts (judge) record per-use provenance.
 - Extending the OWASP report headers to prompt versions; the report already states the attacker model and version
