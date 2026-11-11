@@ -161,7 +161,7 @@ Tests release cached ChromaDB clients between cases so file handles do not accum
 
 The planned work — next features, reviewer-feedback items, and later ideas — lives in [roadmap.md](roadmap.md).
 
-The MVP (features 001–007) is complete. Deliberately out of scope so far, and the natural next steps:
+The MVP (features 001–008) is complete. Deliberately out of scope so far, and the natural next steps:
 
 - **More than two arms, and scheduling.** The harness compares exactly two arms, started on demand; a matrix of arms or recurring experiments would build on the same engine.
 - **Cross-target experiments** — comparing one configuration across several owned targets, rather than one campaign on one target.
