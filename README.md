@@ -1,4 +1,4 @@
-# Kestrel
+# <img src="docs/images/kestrel-logo.png" alt="Kestrel logo" height="64" align="top" /> Kestrel
 
 Kestrel is an autonomous red-teaming agent for tool-using AI agents. You register a target (any HTTP chat endpoint you own), pick an attack family, and Kestrel's attacker agent plans and runs a multi-turn attack against it: it sends messages, inspects the replies and any tool activity for hard evidence, judges each turn, and adapts its next move. Across runs it builds a memory of what worked on each target and reuses successful attack patterns. You don't chat with Kestrel; you configure it and watch the attacker's conversation with your target unfold turn by turn in the Streamlit UI. Built for vibe coders who ship agents with tools but have no security testing in place.
 
