@@ -70,7 +70,7 @@ def api(monkeypatch):
 
 def test_experiments_section_and_arm_editors_render(api):
     at = AppTest.from_file(APP, default_timeout=10).run()
-    assert any("Experiments" in s.value for s in at.subheader)
+    assert any(t.label == "Experiments" for t in at.tabs)
     assert at.text_input(key="arm_a_attacker").value == "deepseek/deepseek-v4.1-flash"
     assert at.text_input(key="arm_b_attacker").value == "deepseek/deepseek-v4.1-flash"
 
@@ -83,6 +83,6 @@ def test_start_sends_two_arms_and_shows_the_comparison(api):
     assert api.payload is not None
     assert "arm_a" in api.payload and "arm_b" in api.payload
     assert api.payload["arm_b"]["use_prior_experience"] is True
-    # the finished comparison renders: a side-by-side table and the small-sample caveat
-    assert any("Confirmed success" in str(frame.value) for frame in at.dataframe)
+    # the finished comparison renders: per-arm metric cards and the small-sample caveat
+    assert any(m.label == "Confirmed success" for m in at.metric)
     assert any("Small sample" in w.value for w in at.warning)
