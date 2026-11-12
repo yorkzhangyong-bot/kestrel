@@ -17,7 +17,7 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 
 ## Phase 1: Setup
 
-- [ ] T001 Create module scaffold `src/kestrel/prompt_registry.py` and committed placeholder `src/kestrel/prompt_versions.lock.json` so later tests can import.
+- [X] T001 Create module scaffold `src/kestrel/prompt_registry.py` and committed placeholder `src/kestrel/prompt_versions.lock.json` so later tests can import.
 
 ---
 
@@ -25,9 +25,9 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 
 **⚠️ Blocks every user story.**
 
-- [ ] T002 Implement the registry core in `src/kestrel/prompt_registry.py`: `PromptEntry`, `fingerprint()` (stdlib `hashlib.sha256`), `is_valid_version()` (stdlib `re`), `registry()` enumerating `attacker:<family>` (from `attack/attacker.py` `SYSTEM_PROMPT`+`GOALS`), `judge`, `recommender` (`judge/client.py`) with active version from the lock, plus `has()` and `text_for(id, version)`. No new dependency (009/FR-001).
-- [ ] T003 Seed `src/kestrel/prompt_versions.lock.json` with the three ids at `1.0.0` and their current fingerprints (009/FR-002).
-- [ ] T004 Schema v7 migration in `src/kestrel/store.py`: add nullable columns `run_turns.{attacker_prompt_id,attacker_prompt_version,judge_prompt_id,judge_prompt_version}`, `runs.{judge_prompt_id,judge_prompt_version}`, `experiment_arms.{prompt_arm_target,prompt_arm_version}`; extend accepted prior versions to include `"6"`; bump `SCHEMA_VERSION` to `"7"` via the ALTER-tuple mechanism (009/FR-004).
+- [X] T002 Implement the registry core in `src/kestrel/prompt_registry.py`: `PromptEntry`, `fingerprint()` (stdlib `hashlib.sha256`), `is_valid_version()` (stdlib `re`), `registry()` enumerating `attacker:<family>` (from `attack/attacker.py` `SYSTEM_PROMPT`+`GOALS`), `judge`, `recommender` (`judge/client.py`) with active version from the lock, plus `has()` and `text_for(id, version)`. No new dependency (009/FR-001).
+- [X] T003 Seed `src/kestrel/prompt_versions.lock.json` with the three ids at `1.0.0` and their current fingerprints (009/FR-002).
+- [X] T004 Schema v7 migration in `src/kestrel/store.py`: add nullable columns `run_turns.{attacker_prompt_id,attacker_prompt_version,judge_prompt_id,judge_prompt_version}`, `runs.{judge_prompt_id,judge_prompt_version}`, `experiment_arms.{prompt_arm_target,prompt_arm_version}`; extend accepted prior versions to include `"6"`; bump `SCHEMA_VERSION` to `"7"` via the ALTER-tuple mechanism (009/FR-004).
 
 **Checkpoint**: registry + lock + schema ready — stories can begin.
 
@@ -38,13 +38,13 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 **Goal**: every adaptive run turn and judge verdict records the prompt id+version that produced it.
 **Independent Test**: run an adaptive attack + verdict; assert each `run_turns`/`runs` row carries the id+version at `1.0.0`; a pre-v7 row reads "not recorded".
 
-- [ ] T005 [P] [US1] Unit test `tests/unit/test_prompt_registry.py` — `registry()` yields the three kinds at `1.0.0`; `has()`/`text_for()` resolve; versions validate (009/FR-001, 009/FR-002).
-- [ ] T006 [P] [US1] Integration test `tests/integration/test_provenance_recorded.py` — stub-target adaptive run records attacker+judge id/version on each `run_turns` row and judge id/version on the `runs` verdict (009/FR-003, 009/SC-001).
-- [ ] T007 [P] [US1] Integration test `tests/integration/test_provenance_migration.py` — a v6 DB migrates to v7; pre-existing rows read back the NULL "not recorded" marker (009/FR-004).
-- [ ] T008 [P] [US1] `src/kestrel/attack/attacker.py` — resolve the active `attacker:<family>` id+version from the registry and expose it with each produced turn (009/FR-003).
-- [ ] T009 [P] [US1] `src/kestrel/judge/client.py` — resolve the active `judge` id+version and expose it with each verdict (009/FR-003).
-- [ ] T010 [US1] `src/kestrel/store.py` — `add_turn()` records attacker+judge provenance on `run_turns`; `finish_run()` records judge provenance on `runs`; read paths surface NULL as "not recorded" (009/FR-003, 009/FR-004).
-- [ ] T011 [US1] `src/kestrel/attack/` adaptive loop — thread the attacker/judge provenance into `add_turn`/`finish_run` (009/FR-003).
+- [X] T005 [P] [US1] Unit test `tests/unit/test_prompt_registry.py` — `registry()` yields the three kinds at `1.0.0`; `has()`/`text_for()` resolve; versions validate (009/FR-001, 009/FR-002).
+- [X] T006 [P] [US1] Integration test `tests/integration/test_provenance_recorded.py` — stub-target adaptive run records attacker+judge id/version on each `run_turns` row and judge id/version on the `runs` verdict (009/FR-003, 009/SC-001).
+- [X] T007 [P] [US1] Integration test `tests/integration/test_provenance_migration.py` — a v6 DB migrates to v7; pre-existing rows read back the NULL "not recorded" marker (009/FR-004).
+- [X] T008 [P] [US1] `src/kestrel/attack/attacker.py` — resolve the active `attacker:<family>` id+version from the registry and expose it with each produced turn (009/FR-003).
+- [X] T009 [P] [US1] `src/kestrel/judge/client.py` — resolve the active `judge` id+version and expose it with each verdict (009/FR-003).
+- [X] T010 [US1] `src/kestrel/store.py` — `add_turn()` records attacker+judge provenance on `run_turns`; `finish_run()` records judge provenance on `runs`; read paths surface NULL as "not recorded" (009/FR-003, 009/FR-004).
+- [X] T011 [US1] `src/kestrel/attack/` adaptive loop — thread the attacker/judge provenance into `add_turn`/`finish_run` (009/FR-003).
 
 **Checkpoint**: provenance recorded end to end.
 
@@ -55,8 +55,8 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 **Goal**: editing a prompt's authored text without a version bump fails the suite and names the prompt.
 **Independent Test**: edit one char of a prompt without touching the lock → guard test fails naming it; revert/bump → green.
 
-- [ ] T012 [P] [US2] `tests/unit/test_prompt_guard.py` — assert `verify_lock() == []` on shipped prompts (the live CI guard); a stubbed text change makes `verify_lock()` name the changed id; two texts for one id+version is rejected. Write FIRST; fails until T013 (009/FR-005, 009/FR-006, 009/SC-002).
-- [ ] T013 [US2] `src/kestrel/prompt_registry.py` — implement `verify_lock()` (each live fingerprint vs the lock's active entry → mismatched ids) and the one-id-one-text rule (009/FR-005, 009/FR-006).
+- [X] T012 [P] [US2] `tests/unit/test_prompt_guard.py` — assert `verify_lock() == []` on shipped prompts (the live CI guard); a stubbed text change makes `verify_lock()` name the changed id; two texts for one id+version is rejected. Write FIRST; fails until T013 (009/FR-005, 009/FR-006, 009/SC-002).
+- [X] T013 [US2] `src/kestrel/prompt_registry.py` — implement `verify_lock()` (each live fingerprint vs the lock's active entry → mismatched ids) and the one-id-one-text rule (009/FR-005, 009/FR-006).
 
 **Checkpoint**: silent prompt drift is caught.
 

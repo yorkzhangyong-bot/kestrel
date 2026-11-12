@@ -14,7 +14,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -87,7 +87,9 @@ CREATE TABLE IF NOT EXISTS runs (
     succeeded_turn INTEGER,                                      -- the turn it succeeded at, or null (FR-019)
     -- Added in schema version 4 (feature 004).
     use_prior_experience INTEGER NOT NULL DEFAULT 1,            -- warm (1, default) or cold (0), per run (FR-014)
-    memory_written INTEGER                                       -- null not attempted, 1 written, 0 failed (FR-010)
+    memory_written INTEGER,                                      -- null not attempted, 1 written, 0 failed (FR-010)
+    -- Added in schema version 7 (feature 009): the judge prompt behind this run's verdict (null = not recorded).
+    judge_prompt_id TEXT, judge_prompt_version TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_target ON runs (target_id, started_at DESC);
 -- FR-010 as a property of the database, so two API workers can't both start a run on one target (any mode).
@@ -101,6 +103,9 @@ CREATE TABLE IF NOT EXISTS run_turns (
     reply_text TEXT,                                            -- masked and cut; null if the send failed
     reply_truncated INTEGER NOT NULL DEFAULT 0,
     judge_verdict TEXT, judge_reason TEXT, judge_progress TEXT,
+    -- Added in schema version 7 (feature 009): which prompt version produced this turn (null = not recorded).
+    attacker_prompt_id TEXT, attacker_prompt_version TEXT,
+    judge_prompt_id TEXT, judge_prompt_version TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_run_turns_run ON run_turns (run_id, position);
@@ -145,7 +150,9 @@ CREATE TABLE IF NOT EXISTS experiment_arms (
     turn_cap INTEGER NOT NULL CHECK (turn_cap >= 1),
     token_budget INTEGER NOT NULL CHECK (token_budget >= 1),
     write_back INTEGER NOT NULL DEFAULT 1,       -- cold arm = 0 (FR-005)
-    run_order INTEGER                            -- 1 or 2; set when the arm starts
+    run_order INTEGER,                           -- 1 or 2; set when the arm starts
+    -- Added in schema version 7 (feature 009): a prompt-version A/B arm pins one prompt (null = default/active).
+    prompt_arm_target TEXT, prompt_arm_version TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_experiment_arms ON experiment_arms (experiment_id, label);
 CREATE TABLE IF NOT EXISTS experiment_runs (
@@ -175,6 +182,14 @@ EXPERIENCE_RUN_COLUMNS = (
     ("use_prior_experience", "INTEGER NOT NULL DEFAULT 1"),
     ("memory_written", "INTEGER"),
 )
+
+# Columns added in version 7 (feature 009): prompt-version provenance on runs/run_turns and the prompt-version arm.
+PROMPT_RUNS_COLUMNS = (("judge_prompt_id", "TEXT"), ("judge_prompt_version", "TEXT"))
+PROMPT_RUN_TURN_COLUMNS = (
+    ("attacker_prompt_id", "TEXT"), ("attacker_prompt_version", "TEXT"),
+    ("judge_prompt_id", "TEXT"), ("judge_prompt_version", "TEXT"),
+)
+PROMPT_ARM_COLUMNS = (("prompt_arm_target", "TEXT"), ("prompt_arm_version", "TEXT"))
 
 
 class NameTaken(Exception):
@@ -358,14 +373,23 @@ class TargetStore:
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4", "5"):
+        if current is not None and current not in ("1", "2", "3", "4", "5", "6"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
-        # An older database may lack the adaptive (v3) and experience (v4) columns on `runs`; add any missing.
+        # An older database may lack the adaptive (v3), experience (v4) and prompt-version (v7) columns on `runs`.
         run_columns = {r["name"] for r in db.execute("PRAGMA table_info(runs)")}
-        for column, ddl in ADAPTIVE_RUN_COLUMNS + EXPERIENCE_RUN_COLUMNS:
+        for column, ddl in ADAPTIVE_RUN_COLUMNS + EXPERIENCE_RUN_COLUMNS + PROMPT_RUNS_COLUMNS:
             if column not in run_columns:
                 db.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl}")
+        # The v7 prompt-version provenance on `run_turns` and the v7 prompt-arm columns on `experiment_arms`.
+        turn_columns = {r["name"] for r in db.execute("PRAGMA table_info(run_turns)")}
+        for column, ddl in PROMPT_RUN_TURN_COLUMNS:
+            if column not in turn_columns:
+                db.execute(f"ALTER TABLE run_turns ADD COLUMN {column} {ddl}")
+        arm_columns = {r["name"] for r in db.execute("PRAGMA table_info(experiment_arms)")}
+        for column, ddl in PROMPT_ARM_COLUMNS:
+            if column not in arm_columns:
+                db.execute(f"ALTER TABLE experiment_arms ADD COLUMN {column} {ddl}")
         # The v4 purpose description on `targets`.
         target_columns = {r["name"] for r in db.execute("PRAGMA table_info(targets)")}
         if "description" not in target_columns:
@@ -545,17 +569,20 @@ class TargetStore:
                    reply_text: str | None = None, reply_truncated: bool = False,
                    failure_step: str | None = None, stopping_condition: str | None = None,
                    succeeded_turn: int | None = None, turns_used: int | None = None,
-                   tokens_used: int | None = None) -> Run:
-        """Finish a run. Adaptive runs also pass how they ended and their usage (FR-012, FR-015, FR-019)."""
+                   tokens_used: int | None = None, judge_prompt_id: str | None = None,
+                   judge_prompt_version: str | None = None) -> Run:
+        """Finish a run. Adaptive runs also pass how they ended and their usage (FR-012, FR-015, FR-019). The judge
+        prompt provenance (feature 009, FR-003) is null when the judge was not used."""
         with self.connect() as db:
             updated = db.execute(
                 "UPDATE runs SET status = 'finished', verdict = ?, hard_evidence = ?, reason = ?, judge_used = ?,"
                 " judge_model = ?, reply_text = ?, reply_truncated = ?, failure_step = ?,"
-                " stopping_condition = ?, succeeded_turn = ?, turns_used = ?, tokens_used = ?, finished_at = ?"
+                " stopping_condition = ?, succeeded_turn = ?, turns_used = ?, tokens_used = ?,"
+                " judge_prompt_id = ?, judge_prompt_version = ?, finished_at = ?"
                 " WHERE id = ? AND status = 'in_progress'",
                 (verdict, int(hard_evidence), reason, int(judge_used), judge_model, reply_text,
                  int(reply_truncated), failure_step, stopping_condition, succeeded_turn, turns_used,
-                 tokens_used, utc_now(), run_id)).rowcount
+                 tokens_used, judge_prompt_id, judge_prompt_version, utc_now(), run_id)).rowcount
             if updated == 0:
                 raise LookupError(f"No run in progress with id {run_id}.")
         return self.get_run(run_id)
@@ -569,14 +596,21 @@ class TargetStore:
 
     def add_turn(self, run_id: int, *, position: int, attacker_message: str, reply_text: str | None = None,
                  reply_truncated: bool = False, judge_verdict: str | None = None, judge_reason: str | None = None,
-                 judge_progress: str | None = None) -> None:
-        """Record one conversation turn of an adaptive run (FR-020). The caller masks before calling."""
+                 judge_progress: str | None = None, attacker_prompt_id: str | None = None,
+                 attacker_prompt_version: str | None = None, judge_prompt_id: str | None = None,
+                 judge_prompt_version: str | None = None) -> None:
+        """Record one conversation turn of an adaptive run (FR-020). The caller masks before calling. The prompt
+        provenance (feature 009, FR-003) is null when no prompt produced it — the turn-1 library seed carries no
+        attacker prompt, and a turn the judge did not run carries no judge prompt."""
         with self.connect() as db:
             db.execute(
                 "INSERT INTO run_turns (run_id, position, attacker_message, reply_text, reply_truncated,"
-                " judge_verdict, judge_reason, judge_progress, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " judge_verdict, judge_reason, judge_progress, attacker_prompt_id, attacker_prompt_version,"
+                " judge_prompt_id, judge_prompt_version, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (run_id, position, attacker_message, reply_text, int(reply_truncated), judge_verdict,
-                 judge_reason, judge_progress, utc_now()))
+                 judge_reason, judge_progress, attacker_prompt_id, attacker_prompt_version, judge_prompt_id,
+                 judge_prompt_version, utc_now()))
 
     def list_turns(self, run_id: int) -> list[Turn]:
         with self.connect() as db:
