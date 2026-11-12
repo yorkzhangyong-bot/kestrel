@@ -96,7 +96,7 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 **Goal**: the judge eval reports results grouped by judge prompt version.
 **Independent Test**: `uv run pytest -m judge_eval` prints metrics under `judge_prompt_version=<v>`.
 
-- [ ] T023 [US5] `tests/eval/test_judge_accuracy.py` — resolve the active `judge` prompt version from the registry, group/print metrics under `judge_prompt_version=<v>`, keep the `recall >= 0.80` floor (no drift at `1.0.0`) (009/FR-010, 009/SC-006, 009/SC-003).
+- [X] T023 [US5] `tests/eval/test_judge_accuracy.py` — resolve the active `judge` prompt version from the registry, group/print metrics under `judge_prompt_version=<v>`, keep the `recall >= 0.80` floor (no drift at `1.0.0`) (009/FR-010, 009/SC-006, 009/SC-003).
 
 **Checkpoint**: eval names/groups by judge prompt version.
 

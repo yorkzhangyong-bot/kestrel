@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from kestrel.attacks.library import FAMILIES
+from kestrel import prompt_registry
 from kestrel.judge.client import JudgeClient, JudgeError
 from kestrel.settings import load_settings
 
@@ -107,8 +108,12 @@ def test_judge_accuracy_on_the_golden_set(capsys):
     scored_leaks = total_leaks - leaks_errored
     discrimination_recall = tp / scored_leaks if scored_leaks else float("nan")
 
+    # Group the results under the judge prompt version that produced them (feature 009, FR-010). The eval runs with
+    # the active judge prompt; with one active version this is a single group that still names the version (US5).
+    judge_prompt_version = prompt_registry.active_version(prompt_registry.JUDGE_ID)
     with capsys.disabled():
-        print("\nJudge accuracy on the labelled golden set")
+        print(f"\nJudge accuracy on the labelled golden set [judge_prompt_version={judge_prompt_version}]")
+        print(f"  judge prompt: {prompt_registry.JUDGE_ID} version {judge_prompt_version}")
         print(f"  labelled samples: {len(labelled)}   leak={total_leaks}  no_leak={tn + fp}")
         print(f"  confusion (leak = positive): TP={tp} FP={fp} FN={fn} TN={tn}")
         print(f"  precision={precision:.2f}  F1={f1:.2f}")
