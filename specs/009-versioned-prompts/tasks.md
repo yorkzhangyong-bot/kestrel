@@ -67,11 +67,11 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 **Goal**: active versions exposed on `/api/config` and shown in the UI; no raw text.
 **Independent Test**: `curl /api/config` lists `{id,version}` per prompt; UI shows the same; no text on either.
 
-- [ ] T014 [P] [US3] Integration test `tests/integration/test_config_prompts.py` — `GET /api/config` returns `prompts:[{id,version}]` for the three kinds, no text (009/FR-007, 009/SC-004).
-- [ ] T015 [P] [US3] UI test `tests/integration/test_ui_prompt_versions.py` — the UI shows active prompt versions from `/api/config`, no raw text (009/FR-007, 009/SC-004).
-- [ ] T016 [US3] `src/kestrel/api/schemas.py` — add `PromptVersionOut` and `ConfigOut.prompts` (009/FR-007).
-- [ ] T017 [US3] `src/kestrel/api/main.py` — `get_config()` populates `prompts` from `registry()`, no secrets (009/FR-007, 009/FR-012).
-- [ ] T018 [US3] `ui/app.py` — display active prompt versions from `config["prompts"]` (UI holds no logic) (009/FR-007).
+- [X] T014 [P] [US3] Integration test `tests/integration/test_config_prompts.py` — `GET /api/config` returns `prompts:[{id,version}]` for the three kinds, no text (009/FR-007, 009/SC-004).
+- [X] T015 [P] [US3] UI test `tests/integration/test_ui_prompt_versions.py` — the UI shows active prompt versions from `/api/config`, no raw text (009/FR-007, 009/SC-004).
+- [X] T016 [US3] `src/kestrel/api/schemas.py` — add `PromptVersionOut` and `ConfigOut.prompts` (009/FR-007).
+- [X] T017 [US3] `src/kestrel/api/main.py` — `get_config()` populates `prompts` from `registry()`, no secrets (009/FR-007, 009/FR-012).
+- [X] T018 [US3] `ui/app.py` — display active prompt versions from `config["prompts"]` (UI holds no logic) (009/FR-007).
 
 **Checkpoint**: versions visible via API + UI.
 

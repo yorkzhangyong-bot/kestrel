@@ -19,8 +19,9 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut,
                                  ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
-                                 ExperimentSummaryOut, RateOut, experiment_diff, validate_canaries,
+                                 ExperimentSummaryOut, PromptVersionOut, RateOut, experiment_diff, validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
+from kestrel import prompt_registry
 from kestrel.attack.attacker import GOALS, AttackerClient
 from kestrel.attacks.library import FAMILIES, AttackLibrary, LibraryError, load_library
 from kestrel.experience.hints import format_hints
@@ -152,7 +153,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                                   time_limit_s=settings.adaptive_time_limit_s),
                          experience=ExperienceOut(pattern_k=settings.experience_pattern_k,
                                                   memory_cap=settings.experience_memory_cap,
-                                                  use_prior_experience_default=True))
+                                                  use_prior_experience_default=True),
+                         prompts=[PromptVersionOut(id=e.id, version=e.version)
+                                  for e in prompt_registry.registry()])
 
     @app.post("/api/connection-tests", response_model=ConnectionTestResult)
     async def connection_test(body: ConnectionTestRequest, request: Request) -> Any:

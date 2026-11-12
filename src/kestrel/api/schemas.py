@@ -52,6 +52,11 @@ class ExperienceOut(BaseModel):
     use_prior_experience_default: bool  # the screen defaults the toggle to this (feature 004, FR-014)
 
 
+class PromptVersionOut(BaseModel):
+    id: str       # a registry id: "attacker:<family>", "judge", or "recommender" (feature 009)
+    version: str  # the active semantic version; never the prompt text (FR-007, FR-012)
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -60,6 +65,7 @@ class ConfigOut(BaseModel):
     attacker: AttackerOut
     adaptive: AdaptiveCapsOut
     experience: ExperienceOut
+    prompts: list[PromptVersionOut] = []   # active prompt versions, id + version only (feature 009, FR-007)
 
 
 class HeaderIn(BaseModel):
