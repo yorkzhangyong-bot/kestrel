@@ -104,11 +104,11 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T024 [P] Security test `tests/integration/test_prompt_no_secrets.py` — `registry()`, the lock, and `/api/config` carry no target auth value/URL/name and no attack-library fixture text (009/FR-011, 009/FR-012, 009/SC-007).
-- [ ] T025 [P] e2e `tests/e2e/test_prompt_provenance_e2e.py` — one e2e against the HS-code target: a real adaptive run records provenance (marker `e2e`, Principle VII) (009/SC-001).
-- [ ] T026 [P] Docs — update `docs/technical-design.md` (registry + schema v7) and add a dated learned note to `CLAUDE.md`.
-- [ ] T027 Quality gate — `uv run ruff check src ui tests`; mypy advisory on `src`; `uv run pytest tests/unit tests/integration` coverage ≥85%; run `quickstart.md`, incl. "no behaviour drift by default" (009/FR-013, 009/SC-003).
-- [ ] T028 Traceability — confirm every new test carries a `009/FR-###`/`009/SC-###` token or `FEATURE="009"`; record any untraced ids in `specs/009-versioned-prompts/traceability.md`.
+- [X] T024 [P] Security test `tests/integration/test_prompt_no_secrets.py` — `registry()`, the lock, and `/api/config` carry no target auth value/URL/name and no attack-library fixture text (009/FR-011, 009/FR-012, 009/SC-007).
+- [X] T025 [P] e2e `tests/e2e/test_prompt_provenance_e2e.py` — one e2e against the HS-code target: a real adaptive run records provenance (marker `e2e`, Principle VII) (009/SC-001).
+- [X] T026 [P] Docs — update `docs/technical-design.md` (registry + schema v7) and add a dated learned note to `CLAUDE.md`.
+- [X] T027 Quality gate — `uv run ruff check src ui tests`; mypy advisory on `src`; `uv run pytest tests/unit tests/integration` coverage ≥85%; run `quickstart.md`, incl. "no behaviour drift by default" (009/FR-013, 009/SC-003).
+- [X] T028 Traceability — confirm every new test carries a `009/FR-###`/`009/SC-###` token or `FEATURE="009"`; record any untraced ids in `specs/009-versioned-prompts/traceability.md`.
 
 ---
 

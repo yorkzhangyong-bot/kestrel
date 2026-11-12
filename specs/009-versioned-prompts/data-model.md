@@ -31,9 +31,13 @@ in the lock (FR-009 authority); seeded active version is `1.0.0` with today's te
 
 ## Entity: Fingerprint lock (committed)
 
-`src/kestrel/prompt_versions.lock.json` — `{ "<id>": { "<version>": "<sha256>" } }`. Append-only; a present
-`(id, version)` fingerprint is immutable (FR-005, enforced in review). The guard (FR-006) asserts each live entry's
-`sha256(text)` equals `lock[id][active_version]` and fails naming the prompt on mismatch.
+`src/kestrel/prompt_versions.lock.json` — `{ "<id>": { "active": "<version>", "versions": { "<version>": "<sha256>" } } }`.
+Fingerprints only, never text. Append-only; a present `(id, version)` fingerprint is immutable (FR-005, enforced in
+review). Non-active versions keep their **text** as template files beside the active prompts
+(`src/kestrel/prompt_templates/<id with ':'→'_'>@<version>.txt`); the active version's text is the live code
+constant. The guard (FR-006, `verify_lock()`) asserts every registered version's resolved text (code for the active
+version, the template file for a non-active one) matches its pinned fingerprint, and fails naming the prompt on a
+mismatch or a missing file.
 
 ## Schema v7 — provenance columns (all nullable; NULL = "not recorded", FR-004)
 

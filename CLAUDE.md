@@ -88,4 +88,10 @@ When you discover something durable about this repo — a gotcha, a command, a c
 same commit. Before opening any implementation PR, review this file and add anything learned during the feature.
 
 ## Learned notes
-- _(none yet — add dated bullets as you learn them)_
+- 2026-11-12 — **Prompt registry (009).** Model-facing prompts (attacker per family, judge, recommender) are
+  versioned in `src/kestrel/prompt_registry.py` against a committed fingerprint lock
+  (`src/kestrel/prompt_versions.lock.json`). To change a prompt: edit its text, bump its version, and re-record the
+  fingerprint — the guard (`verify_lock()`, `tests/unit/test_prompt_guard.py`) fails CI on any text change without a
+  bump. Non-active versions live as template files `src/kestrel/prompt_templates/<id with ':'→'_'>@<ver>.txt`. The
+  memory summariser is deterministic (no model prompt) — three prompt kinds, not four. Schema is v7 (provenance
+  columns on `run_turns`/`runs`, prompt-arm columns on `experiment_arms`).
