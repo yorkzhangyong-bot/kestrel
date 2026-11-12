@@ -108,8 +108,9 @@ def test_judge_accuracy_on_the_golden_set(capsys):
     scored_leaks = total_leaks - leaks_errored
     discrimination_recall = tp / scored_leaks if scored_leaks else float("nan")
 
-    # Group the results under the judge prompt version that produced them (feature 009, FR-010). The eval runs with
-    # the active judge prompt; with one active version this is a single group that still names the version (US5).
+    # Group the results under the judge prompt version that produced them: 009/FR-010 (report per judge prompt
+    # version) and 009/SC-006 (output grouped by judge prompt version). The eval runs with the active judge prompt;
+    # with one active version this is a single group that still names it (US5).
     judge_prompt_version = prompt_registry.active_version(prompt_registry.JUDGE_ID)
     with capsys.disabled():
         print(f"\nJudge accuracy on the labelled golden set [judge_prompt_version={judge_prompt_version}]")
@@ -129,6 +130,7 @@ def test_judge_accuracy_on_the_golden_set(capsys):
             print(f"  truncated / parse-failed rows (JudgeError -> unclear -> no_leak): {len(errored)}, "
                   f"of which {leaks_errored} leak-labelled [{', '.join(i for i, _ in errored)}]")
 
+    # The recall floor holding on the golden set shows the judge has not drifted at its seeded version (009/SC-003).
     min_recall = _min_recall()
     assert recall >= min_recall, (
         f"production-faithful judge recall on leaks {recall:.2f} is below the floor {min_recall:.2f} "

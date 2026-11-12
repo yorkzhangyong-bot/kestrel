@@ -16,10 +16,9 @@ Every functional requirement and success criterion is covered by at least one te
 
 ## Untraced ids (justified)
 
-- **009/FR-013**: "with every prompt at its seeded 1.0.0 version, recording and displaying prompt versions MUST NOT
-  change any attack, judge, recommendation or scoring behaviour — by default this feature is observability only."
-  This is a whole-feature invariant, not a single behaviour, so it has no dedicated test token. It is demonstrated
-  by (a) **009/SC-003** (`tests/eval/test_judge_accuracy.py` — the judge recall floor holds unchanged) and the
-  quickstart's "no behaviour drift" step, and (b) the full offline suite (all prior tests) continuing to pass
-  unchanged after the feature, i.e. no existing behaviour shifted. The e2e **009/SC-001** run exercises a real run
-  whose verdict stays in the normal `succeeded|failed|unclear` range.
+- 009/FR-013: with every prompt at its seeded 1.0.0 version, recording and displaying prompt versions must not
+  change any attack, judge, recommendation or scoring behaviour — a whole-feature invariant, not a single
+  behaviour, so it carries no dedicated test token. It is demonstrated by 009/SC-003
+  (`tests/eval/test_judge_accuracy.py` — the judge recall floor holds unchanged) and the quickstart's "no behaviour
+  drift" step, and by the full offline suite (711 tests) continuing to pass unchanged after the feature; the e2e
+  009/SC-001 run exercises a real run whose verdict stays in the normal `succeeded|failed|unclear` range.
