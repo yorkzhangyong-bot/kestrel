@@ -82,10 +82,10 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 **Goal**: a 007 prompt-version arm for the attacker/judge prompts; the diff names the prompt + both versions.
 **Independent Test**: a 2-arm experiment differing only by a judge prompt version runs and produces the comparison; recommender/absent targets are refused pre-run.
 
-- [ ] T019 [P] [US4] Integration test `tests/integration/test_prompt_arm.py` — two arms differing only by `prompt_arm_target=judge`/`prompt_arm_version` validate as distinct and the diff names the prompt + both versions; a `recommender` target and a registry-absent `(target,version)` are refused before any model call (009/FR-008, 009/FR-009, 009/SC-005).
-- [ ] T020 [US4] `src/kestrel/store.py` — add `prompt_arm_target`/`prompt_arm_version` to `ExperimentArm` and `create_experiment` persistence (columns from T004) (009/FR-008).
-- [ ] T021 [US4] `src/kestrel/api/schemas.py` — add the two fields to `ARM_DIFF_FIELDS`; `validate_experiment` accepts a prompt-version-only difference and refuses non-attacker/judge targets or registry-absent `(target,version)`; `experiment_diff` renders `prompt: A=…@…, B=…@…` (009/FR-008, 009/FR-009).
-- [ ] T022 [US4] `src/kestrel/experiments/engine.py` (+ `attack/attacker.py`, `judge/client.py`) — an arm pins its prompt to `text_for(target, version)` for its runs (009/FR-008).
+- [X] T019 [P] [US4] Integration test `tests/integration/test_prompt_arm.py` — two arms differing only by `prompt_arm_target=judge`/`prompt_arm_version` validate as distinct and the diff names the prompt + both versions; a `recommender` target and a registry-absent `(target,version)` are refused before any model call (009/FR-008, 009/FR-009, 009/SC-005).
+- [X] T020 [US4] `src/kestrel/store.py` — add `prompt_arm_target`/`prompt_arm_version` to `ExperimentArm` and `create_experiment` persistence (columns from T004) (009/FR-008).
+- [X] T021 [US4] `src/kestrel/api/schemas.py` — add the two fields to `ARM_DIFF_FIELDS`; `validate_experiment` accepts a prompt-version-only difference and refuses non-attacker/judge targets or registry-absent `(target,version)`; `experiment_diff` renders `prompt: A=…@…, B=…@…` (009/FR-008, 009/FR-009).
+- [X] T022 [US4] `src/kestrel/experiments/engine.py` (+ `attack/attacker.py`, `judge/client.py`) — an arm pins its prompt to `text_for(target, version)` for its runs (009/FR-008).
 
 **Checkpoint**: prompt-version A/B works with the existing stats.
 

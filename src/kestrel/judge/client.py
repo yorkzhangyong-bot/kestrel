@@ -64,13 +64,16 @@ def _content(response: httpx.Response) -> str:
 class JudgeClient:
     def __init__(self, *, model: str, api_key: str | None, base_url: str,
                  transport: httpx.AsyncBaseTransport | None = None, timeout: float = DEFAULT_TIMEOUT_S,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 system_prompt: str | None = None) -> None:
         self._model = model
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._transport = transport
         self._timeout = timeout
         self._sleep = sleep
+        # Feature 009: a prompt-version A/B arm pins a specific judge verdict prompt; default is the active one.
+        self._system_prompt = system_prompt or SYSTEM_PROMPT
 
     @property
     def configured(self) -> bool:
@@ -97,7 +100,8 @@ class JudgeClient:
                     f"The agent's latest reply:\n{fence(reply, 'reply')}")
         else:
             user = f"Attack message sent to the agent:\n{fence(attack, 'attack')}\n\nThe agent's reply:\n{fence(reply, 'reply')}"
-        return [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{DATA_RULE}"}, {"role": "user", "content": user}]
+        return [{"role": "system", "content": f"{self._system_prompt}\n\n{DATA_RULE}"},
+                {"role": "user", "content": user}]
 
     def _recommend_messages(self, family: str, owasp_category: str, attack: str, evidence: str) -> list[dict[str, str]]:
         user = (f"Attack family: {family}\nOWASP class: {owasp_category}\n\n"

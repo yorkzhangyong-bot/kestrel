@@ -59,13 +59,16 @@ class AttackerReply:
 class AttackerClient:
     def __init__(self, *, model: str, api_key: str | None, base_url: str,
                  transport: httpx.AsyncBaseTransport | None = None, timeout: float = DEFAULT_TIMEOUT_S,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 system_overrides: dict[str, str] | None = None) -> None:
         self._model = model
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._transport = transport
         self._timeout = timeout
         self._sleep = sleep
+        # Feature 009: a prompt-version A/B arm pins a specific attacker prompt per family; default is the active one.
+        self._system_overrides = system_overrides or {}
 
     @property
     def configured(self) -> bool:
@@ -83,7 +86,8 @@ class AttackerClient:
     def _payload(self, conversation: list[tuple[str, str]], progress: str | None, family: str,
                  hints: str | None = None) -> dict:
         goal = GOALS.get(family, "get the agent to misbehave")
-        system = f"{SYSTEM_PROMPT.format(goal=goal)}\n\n{DATA_RULE}"
+        base = self._system_overrides.get(family) or SYSTEM_PROMPT.format(goal=goal)
+        system = f"{base}\n\n{DATA_RULE}"
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         if hints:  # feature 004: retrieved patterns/memory/purpose as fenced data, never as commands (FR-019)
             messages.append({"role": "user", "content":

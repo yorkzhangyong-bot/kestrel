@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Callable
 
+from kestrel import prompt_registry
 from kestrel.attack.attacker import GOALS, AttackerClient
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings
@@ -27,11 +28,12 @@ async def run_experiment(store: TargetStore, *, experiment_id: int, settings, li
                          make_judge: Callable | None = None, make_attacker: Callable | None = None,
                          clock: Callable[[], float] = time.monotonic) -> None:
     """Execute an experiment to completion, writing every outcome to the store. Returns nothing (read the DB)."""
-    make_judge = make_judge or (lambda model: JudgeClient(model=model, api_key=settings.judge_api_key,
-                                                          base_url=settings.judge_base_url, transport=transport))
-    make_attacker = make_attacker or (lambda model: AttackerClient(model=model, api_key=settings.attacker_api_key,
-                                                                   base_url=settings.attacker_base_url,
-                                                                   transport=transport))
+    make_judge = make_judge or (lambda model, system_prompt=None: JudgeClient(
+        model=model, api_key=settings.judge_api_key, base_url=settings.judge_base_url, transport=transport,
+        system_prompt=system_prompt))
+    make_attacker = make_attacker or (lambda model, system_overrides=None: AttackerClient(
+        model=model, api_key=settings.attacker_api_key, base_url=settings.attacker_base_url, transport=transport,
+        system_overrides=system_overrides))
     experiment = store.get_experiment(experiment_id)
     target = store.get_target(experiment.target_id)
     canaries = store.list_canaries(target.id)
@@ -42,8 +44,14 @@ async def run_experiment(store: TargetStore, *, experiment_id: int, settings, li
     try:
         for order, arm in enumerate(sorted(experiment.arms, key=lambda a: a.label), start=1):
             store.set_arm_order(arm.id, order)
-            judge = make_judge(arm.judge_model)
-            attacker = make_attacker(arm.attacker_model) if experiment.mode == "adaptive" else None
+            judge_override, attacker_overrides = _prompt_overrides(arm)   # feature 009 US4: a pinned prompt version
+            judge = (make_judge(arm.judge_model) if judge_override is None
+                     else make_judge(arm.judge_model, system_prompt=judge_override))
+            if experiment.mode == "adaptive":
+                attacker = (make_attacker(arm.attacker_model) if attacker_overrides is None
+                            else make_attacker(arm.attacker_model, system_overrides=attacker_overrides))
+            else:
+                attacker = None
             for family in experiment.families:
                 seed = library.pick(family, experiment.seed_prompt_ids.get(family))
                 for rep in range(experiment.reps):
@@ -61,6 +69,20 @@ async def run_experiment(store: TargetStore, *, experiment_id: int, settings, li
         log.exception("experiment %s failed", experiment_id)
         store.set_experiment_status(experiment_id, status="failed",
                                     stopped_reason=f"failed:{type(error).__name__}", finished=True)
+
+
+def _prompt_overrides(arm):
+    """Resolve an arm's pinned prompt version to the text its client should use (feature 009 US4). Returns
+    (judge_system_prompt | None, attacker_system_overrides | None); both None when the arm pins nothing."""
+    target, version = arm.prompt_arm_target, arm.prompt_arm_version
+    if not target:
+        return None, None
+    text = prompt_registry.text_for(target, version)
+    if target == prompt_registry.JUDGE_ID:
+        return text, None
+    if target.startswith("attacker:"):
+        return None, {target.split(":", 1)[1]: text}
+    return None, None
 
 
 def _cap_hit(experiment, completed: int, tokens: int, elapsed_s: float) -> str | None:

@@ -299,6 +299,9 @@ class ExperimentArm:
     turn_cap: int
     token_budget: int
     write_back: bool
+    # Feature 009: a prompt-version A/B arm pins one registry prompt ("attacker:<family>" or "judge"); null = active.
+    prompt_arm_target: str | None = None
+    prompt_arm_version: str | None = None
     run_order: int | None = None
 
 
@@ -682,10 +685,12 @@ class TargetStore:
             for label, arm in (("A", arm_a), ("B", arm_b)):
                 db.execute(
                     "INSERT INTO experiment_arms (experiment_id, label, attacker_model, judge_model,"
-                    " use_prior_experience, turn_cap, token_budget, write_back) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " use_prior_experience, turn_cap, token_budget, write_back, prompt_arm_target,"
+                    " prompt_arm_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (experiment_id, label, arm["attacker_model"], arm["judge_model"],
                      int(arm["use_prior_experience"]), arm["turn_cap"], arm["token_budget"],
-                     int(arm.get("write_back", True))))
+                     int(arm.get("write_back", True)), arm.get("prompt_arm_target"),
+                     arm.get("prompt_arm_version")))
         return self.get_experiment(experiment_id)
 
     def get_experiment(self, experiment_id: int) -> Experiment:
@@ -769,7 +774,8 @@ class TargetStore:
         return ExperimentArm(id=row["id"], label=row["label"], attacker_model=row["attacker_model"],
                              judge_model=row["judge_model"], use_prior_experience=bool(row["use_prior_experience"]),
                              turn_cap=row["turn_cap"], token_budget=row["token_budget"],
-                             write_back=bool(row["write_back"]), run_order=row["run_order"])
+                             write_back=bool(row["write_back"]), prompt_arm_target=row["prompt_arm_target"],
+                             prompt_arm_version=row["prompt_arm_version"], run_order=row["run_order"])
 
     @staticmethod
     def _experiment(row: sqlite3.Row, arms: list[ExperimentArm]) -> Experiment:

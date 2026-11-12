@@ -26,6 +26,9 @@ from kestrel.judge.client import RECOMMEND_SYSTEM_PROMPT as _RECOMMEND_SYSTEM_PR
 from kestrel.judge.client import SYSTEM_PROMPT as _JUDGE_SYSTEM_PROMPT
 
 LOCK_PATH = Path(__file__).resolve().parent / "prompt_versions.lock.json"
+# Non-active prompt versions live as plain template files beside the active prompts (feature 009 US4). The active
+# version's text is the live code constant; every other registered version is a file `<id with ':'->'_'>@<ver>.txt`.
+TEMPLATES_DIR = Path(__file__).resolve().parent / "prompt_templates"
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 JUDGE_ID = "judge"
@@ -96,27 +99,39 @@ def registry() -> list[PromptEntry]:
     return out
 
 
+def _template_path(prompt_id: str, version: str) -> Path:
+    return TEMPLATES_DIR / f"{prompt_id.replace(':', '_')}@{version}.txt"
+
+
 def text_for(prompt_id: str, version: str) -> str:
-    """The authored template text of a specific registered version. In this slice only the active version's text is
-    live (the code constant); a non-active version is known to the lock but its text is not stored yet (US4)."""
+    """The authored template text of a specific registered version. The active version is the live code constant; a
+    non-active version is read from its template file beside the active prompts (feature 009 US4)."""
     if not has(prompt_id, version):
         raise PromptNotRegistered(f"{prompt_id}@{version}")
     if version == active_version(prompt_id):
         return _authored_texts()[prompt_id]
-    raise PromptNotRegistered(f"{prompt_id}@{version}: non-active version text is not available in this build")
+    path = _template_path(prompt_id, version)
+    if not path.exists():
+        raise PromptNotRegistered(f"{prompt_id}@{version}: no template file {path.name}")
+    return path.read_text(encoding="utf-8")
 
 
 def verify_lock() -> list[str]:
-    """Ids whose live authored text no longer matches the fingerprint the lock pins to their active version — a
-    prompt changed without a version bump, or a prompt with no lock entry (FR-006). Empty list = clean."""
+    """Ids that fail the guard (FR-005, FR-006). An id is reported when its live authored (active) text no longer
+    matches the fingerprint pinned to its active version, when it has no lock entry, or when any registered version's
+    resolved text (the active code text, or a non-active template file) does not match its pinned fingerprint — i.e.
+    a prompt changed without a version bump. Empty list = clean."""
     lock = _lock()
-    drifted: list[str] = []
-    for prompt_id, text in _authored_texts().items():
+    drifted: set[str] = set()
+    for prompt_id, text in _authored_texts().items():   # every authored prompt is registered and matches its active
         entry = lock.get(prompt_id)
-        if entry is None:
-            drifted.append(prompt_id)
-            continue
-        recorded = entry.get("versions", {}).get(entry.get("active"))
-        if recorded != fingerprint(text):
-            drifted.append(prompt_id)
+        if entry is None or entry.get("versions", {}).get(entry.get("active")) != fingerprint(text):
+            drifted.add(prompt_id)
+    for prompt_id, entry in lock.items():               # every registered (id, version) resolves and matches
+        for version, recorded in entry.get("versions", {}).items():
+            try:
+                if fingerprint(text_for(prompt_id, version)) != recorded:
+                    drifted.add(prompt_id)
+            except PromptNotRegistered:
+                drifted.add(prompt_id)
     return sorted(drifted)
