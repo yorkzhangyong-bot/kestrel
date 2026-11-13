@@ -174,9 +174,12 @@ class _StderrHandler(logging.StreamHandler):
 def configure_logging(settings: Any) -> logging.Logger:
     """Install the stream on the `kestrel` logger with the chosen format, and the run log handler that keeps each
     run's records in its own database (idempotent: one of each however often it is called); forget earlier warnings
-    so each configured logger warns once per cause."""
+    so each configured logger warns once per cause. The logger stops at its own handlers: a root handler configured
+    outside Kestrel (uvicorn --log-config, logging.basicConfig) would render a record's exception with its message,
+    which no line may carry (FR-009)."""
     logger = logging.getLogger("kestrel")
     logger.setLevel(logging.INFO)
+    logger.propagate = False
     stream = next((h for h in logger.handlers if isinstance(h, _StderrHandler)), None)
     if stream is None:
         stream = _StderrHandler()

@@ -31,6 +31,9 @@ MAX_MESSAGE_CHARS = 2_000   # one plain message per turn, cut before sending (FR
 # this leaves room for reasoning plus a short message. The per-run token budget still bounds the whole run.
 MAX_COMPLETION_TOKENS = 2_000
 DEFAULT_TIMEOUT_S = 30.0
+# The finish reasons the empty-content line names as they are; any other provider value is logged as `other`, so a
+# provider string never reaches a line verbatim (feature 010, FR-009).
+FINISH_REASONS = frozenset({"stop", "length", "content_filter", "tool_calls", "error"})
 
 
 class AttackerError(Exception):
@@ -170,10 +173,18 @@ class AttackerClient:
         usage = body.get("usage") or {}
         details = usage.get("completion_tokens_details") or {}
         reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
-        events.emit("model.empty_content", logging.WARNING, attempt=attempt, finish_reason=choice.get("finish_reason"),
+        events.emit("model.empty_content", logging.WARNING, attempt=attempt,
+                    finish_reason=_finish_reason(choice.get("finish_reason")),
                     completion_tokens=usage.get("completion_tokens"), reasoning_tokens=details.get("reasoning_tokens"),
                     total_tokens=usage.get("total_tokens"),
                     reasoning_chars=len(reasoning) if isinstance(reasoning, str) else 0)
+
+
+def _finish_reason(value: object) -> str | None:
+    """A known finish reason as itself, any other provider value as `other`, none reported as None."""
+    if value is None:
+        return None
+    return value if isinstance(value, str) and value in FINISH_REASONS else "other"
 
 
 def _active_prompt(family: str) -> str:

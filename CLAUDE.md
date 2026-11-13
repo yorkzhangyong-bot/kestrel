@@ -127,9 +127,12 @@ same commit. Before opening any implementation PR, review this file and add anyt
   daemon thread for at most 5 s; an `InMemorySpanExporter` is dead after its provider shuts down (do not reuse one
   across `configure_tracing` calls). Tests: `caplog.text` shows only event names now — count secrets over the
   `json_log` fixture; pytest 9 attaches its capture handler to non-propagating loggers (probe the root logger, not
-  caplog, for the silenced `opentelemetry` loggers); real clients run offline via the `model_transport` fixture
-  (`tests/support.py`: `real_judge`, `real_attacker`, `model_settings`); experiments with pinned prompts need the
-  engine's own factories (no injected doubles); UI tests get an autouse offline `get_run_log` stub. Provenance is now
-  written from the reference the client actually sends (a pinned arm's version; a single-turn verdict's judge
-  version), judge provenance only when a judge request was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks the OTLP exporter
-  import for a whole test session (SC-007).
+  caplog, for the silenced `opentelemetry` loggers), but only to those already non-propagating when a test phase
+  starts: `configure_logging` makes `kestrel` non-propagating (no root handler may render an exception message), so
+  `tests/conftest.py` does so at import and every test captures it alike; real clients run offline via the
+  `model_transport` fixture (`tests/support.py`: `real_judge`, `real_attacker`, `model_settings`); experiments with
+  pinned prompts need the engine's own factories (no injected doubles); UI tests get an autouse offline
+  `get_run_log` stub (no `raising=False`; `tests/unit/test_api_client_run_log.py` puts the real client back).
+  Provenance is now written from the reference the client actually sends (a pinned arm's version; a single-turn
+  verdict's judge version), judge provenance only when a judge request was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks
+  the OTLP exporter import for a whole test session (SC-007).

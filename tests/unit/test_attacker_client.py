@@ -280,3 +280,13 @@ def test_a_pinned_reference_is_the_one_on_the_line(json_log):  # 010/FR-007
                             system_overrides={"system_prompt_leak": ("PINNED", "attacker:system_prompt_leak@7")})
     asyncio.run(pinned.next_message(conversation=CONVERSATION, family="system_prompt_leak"))
     assert json_log.of("model.request")[0]["prompt"] == "attacker:system_prompt_leak@7"
+
+
+def test_an_unknown_finish_reason_is_logged_as_other(json_log):  # 010/FR-009: a provider string, never echoed
+    body = _empty()
+    body["choices"][0]["finish_reason"] = "provider specific <free text> 4471"
+    with pytest.raises(AttackerError):
+        asyncio.run(client(lambda r: httpx.Response(200, json=body))
+                    .next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    assert [line["finish_reason"] for line in json_log.of("model.empty_content")] == ["other", "other"]
+    assert "provider specific" not in json_log.text()

@@ -22,6 +22,12 @@ BLOCK_OTLP = os.environ.get("KESTREL_TEST_BLOCK_OTLP") == "1"
 if BLOCK_OTLP:
     sys.modules[OTLP_EXPORTER_MODULE] = None  # type: ignore[assignment]
 
+# Feature 010: configure_logging makes the `kestrel` logger stop at its own handlers (no propagation to the root).
+# pytest attaches its capture handler (caplog, the report's captured log) to non-propagating loggers only when a
+# test phase starts — it misses a logger that *becomes* non-propagating mid-test — so the logger is non-propagating
+# from the start of the session, as it is in production once the app is built, and every test captures it alike.
+logging.getLogger("kestrel").propagate = False
+
 
 def pytest_collection_modifyitems(config, items):
     if not BLOCK_OTLP:
@@ -166,11 +172,11 @@ def _reset_observability():
 @pytest.fixture(autouse=True)
 def _offline_run_log(request, monkeypatch):
     """The screen fetches an opened run's log (feature 010); UI tests that do not stub it would otherwise call a real
-    API on 127.0.0.1:8000. Default to an empty log offline; the viewer tests stub their own. e2e tests use the real
-    API."""
+    API on 127.0.0.1:8000. Default to an empty log offline; the viewer tests stub their own and
+    `tests/unit/test_api_client_run_log.py` puts the real client back. e2e tests use the real API. Not
+    `raising=False`: a renamed or removed client function fails here instead of being masked."""
     if request.node.get_closest_marker("e2e"):
         return
     import api_client
     monkeypatch.setattr(api_client, "get_run_log", lambda run_id: {"run_id": run_id, "lines": [], "kept": 0,
-                                                                   "dropped": 0, "truncated": False},
-                        raising=False)
+                                                                   "dropped": 0, "truncated": False})

@@ -142,3 +142,32 @@ def test_a_record_that_cannot_be_rendered_keeps_its_event_and_warns_once(json_lo
     assert all("path" not in r for r in records)
     failed = [r for r in records if r["event"] == "log.format_failed"]
     assert len(failed) == 1 and failed[0]["error"] == "RuntimeError" and failed[0]["for_event"] == "message"
+
+
+def test_the_stream_stops_at_kestrels_own_handlers(settings, monkeypatch):  # FR-009 (defence in depth)
+    """A root handler configured outside Kestrel (uvicorn --log-config, logging.basicConfig) would render a record's
+    exception with its message; configure_logging makes the `kestrel` logger stop at its own handlers."""
+    from kestrel.logging_setup import configure_logging
+    kestrel = logging.getLogger("kestrel")
+    monkeypatch.setattr(kestrel, "propagate", True)   # as an unconfigured logger starts
+    handlers, level = list(kestrel.handlers), kestrel.level
+    seen = []
+
+    class Probe(logging.Handler):
+        def emit(self, record):
+            seen.append(record)
+
+    probe, root = Probe(), logging.getLogger()
+    root.addHandler(probe)
+    try:
+        configure_logging(settings)
+        try:
+            raise ValueError("an exception message that must not be rendered")
+        except ValueError:
+            events.emit("memory.flag_failed", logging.ERROR, exc_info=True)
+    finally:   # leave the logger as found: a later test's own run log handler must be the only one on it
+        root.removeHandler(probe)
+        for installed in [h for h in kestrel.handlers if h not in handlers]:
+            kestrel.removeHandler(installed)
+        kestrel.setLevel(level)
+    assert kestrel.propagate is False and seen == []
