@@ -402,19 +402,19 @@ else.
 one warning per cause; no extra calls.
 **Independent Test**: the same stub run three ways compares equal; the cap keeps 1,000 + marker.
 
-- [ ] T039 [P] [US5] Integration test `tests/integration/test_log_resilience.py` (stubs suffice: outcomes only):
+- [X] T039 [P] [US5] Integration test `tests/integration/test_log_resilience.py` (stubs suffice: outcomes only):
       the same stub adaptive run with (a) a working sink, (b) a store whose `add_log_line` raises on every call,
       (c) tracing on with an exporter that raises; assert identical `verdict`, `hard_evidence`,
       `stopping_condition`, `turns_used`, `tokens_used`; exactly one `log.sink_failed` / `tracing.export_failed`
       warning; the stub sender, attacker and judge call counts are identical in all three (logging adds no call);
       the run's `tokens_used` equals the stubs' reported tokens (no logging token counted) (010/FR-015,
       010/FR-017, 010/SC-005).
-- [ ] T040 [P] [US5] Integration test `tests/integration/test_run_log_cap.py`: with `RUN_LOG_CAP` monkeypatched
+- [X] T040 [P] [US5] Integration test `tests/integration/test_run_log_cap.py`: with `RUN_LOG_CAP` monkeypatched
       low (and a unit assertion that the shipped constant is 1000), a stub adaptive run with a turn cap large
       enough to overflow keeps exactly the first `RUN_LOG_CAP` records plus one `log.truncated` row whose `dropped`
       equals the overflow, while the `json_log` stream carries every record and the run finishes normally; the
       endpoint reports `truncated True` (010/FR-010, 010/SC-009).
-- [ ] T041 [US5] Harden every emission and span path (`src/kestrel/events.py`, `src/kestrel/logging_setup.py`,
+- [X] T041 [US5] Harden every emission and span path (`src/kestrel/events.py`, `src/kestrel/logging_setup.py`,
       `src/kestrel/tracing.py`): wrap formatting, keeping and span operations in try/except that records one
       warning per cause (a per-process set keyed by event + error class) and swallows; `RunLogHandler` ignores
       records that lack `kestrel_keep`; `logging.raiseExceptions` cannot surface a sink failure; confirm the whole

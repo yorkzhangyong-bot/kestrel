@@ -355,7 +355,10 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
         ctx.attacker_prompt, ctx.judge_prompt = attacker_prompt, judge_prompt
         identifiers = {"run_id": run_id, "target_id": target_id, "mode": mode, "family": family,
                        "experiment_id": ctx.experiment_id, "arm": ctx.arm}
-        ctx.run_span = tracing.current().start_root("kestrel.run", **span_attributes({**identifiers, **fields}))
+        try:   # a tracing failure never costs the line (FR-015)
+            ctx.run_span = tracing.current().start_root("kestrel.run", **span_attributes({**identifiers, **fields}))
+        except Exception as error:
+            _backstop("run.start", error)
         emit("run.start", **fields)
     except Exception as error:
         _backstop("run.start", error)
