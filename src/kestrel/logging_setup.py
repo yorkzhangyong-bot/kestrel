@@ -189,3 +189,13 @@ def configure_logging(settings: Any) -> logging.Logger:
         logger.addHandler(RunLogHandler())
     events.clear_warnings()
     return logger
+
+
+def reset() -> None:
+    """Take the stream and the run log handler back off the `kestrel` logger (tests: each app installs them on the
+    process-wide logger, and one left over would keep or print a later test's records a second time). The level and
+    the stop at its own handlers stay as configured."""
+    logger = logging.getLogger("kestrel")
+    for handler in [h for h in logger.handlers if isinstance(h, (_StderrHandler, RunLogHandler))]:
+        logger.removeHandler(handler)
+        handler.close()

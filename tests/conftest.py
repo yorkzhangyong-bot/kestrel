@@ -158,8 +158,10 @@ def model_transport() -> ModelTransport:
 
 @pytest.fixture(autouse=True)
 def _reset_observability():
-    """The tracer, the price table and the warn-once sets are module-level (feature 010); reset them after every test
-    so one test's tracing or prices never leak into the next. A module never imported holds no state to reset."""
+    """The tracer, the price table, the warn-once sets and the `kestrel` logger's handlers are module-level (feature
+    010); reset them after every test so one test's tracing, prices or app logging never leak into the next (an app's
+    run log handler left on the logger would keep a later test's records twice). A module never imported holds no
+    state to reset."""
     yield
     tracing = sys.modules.get("kestrel.tracing")
     if tracing is not None:
@@ -167,6 +169,9 @@ def _reset_observability():
     events = sys.modules.get("kestrel.events")
     if events is not None:
         events.reset()
+    logging_setup = sys.modules.get("kestrel.logging_setup")
+    if logging_setup is not None:
+        logging_setup.reset()
 
 
 @pytest.fixture(autouse=True)

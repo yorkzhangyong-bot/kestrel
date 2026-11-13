@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import pytest
 
 from kestrel import events, store as store_module
-from kestrel.logging_setup import JsonFormatter, RunLogHandler
+from kestrel.logging_setup import JsonFormatter, RunLogHandler, configure_logging, reset as reset_logging
 
 FEATURE = "010"
 
@@ -134,3 +134,19 @@ def test_a_store_that_raises_is_one_warning_per_error_kind_and_never_an_exceptio
 
 def test_the_handler_formats_with_the_json_formatter(handler):  # FR-010 (D14: one representation)
     assert isinstance(handler.formatter, JsonFormatter)
+
+
+def test_reset_takes_off_only_the_handlers_configure_logging_installs(settings):  # FR-010
+    """Every app's configure_logging installs the stream and the run log handler on the process-wide `kestrel` logger;
+    the suite's autouse reset takes them off after each test, or an earlier app's run log handler would keep a later
+    test's records a second time (doubled seq, a second marker). A handler Kestrel did not install stays."""
+    logger = logging.getLogger("kestrel")
+    before, other = list(logger.handlers), logging.NullHandler()
+    logger.addHandler(other)
+    try:
+        configure_logging(settings)
+        assert sum(isinstance(h, RunLogHandler) for h in logger.handlers) == 1
+        reset_logging()
+        assert logger.handlers == before + [other]
+    finally:
+        logger.removeHandler(other)

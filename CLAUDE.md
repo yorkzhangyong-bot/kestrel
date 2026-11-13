@@ -133,6 +133,8 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `model_transport` fixture (`tests/support.py`: `real_judge`, `real_attacker`, `model_settings`); experiments with
   pinned prompts need the engine's own factories (no injected doubles); UI tests get an autouse offline
   `get_run_log` stub (no `raising=False`; `tests/unit/test_api_client_run_log.py` puts the real client back).
-  Provenance is now written from the reference the client actually sends (a pinned arm's version; a single-turn
-  verdict's judge version), judge provenance only when a judge request was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks
-  the OTLP exporter import for a whole test session (SC-007).
+  Every app's `configure_logging` installs the stream and the run log handler on the process-wide `kestrel` logger;
+  the autouse `_reset_observability` takes them off after each test (`logging_setup.reset()`) — a leftover run log
+  handler kept a later test's records twice. Provenance is now written from the reference the client actually
+  sends (a pinned arm's version; a single-turn verdict's judge version), judge provenance only when a judge request
+  was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks the OTLP exporter import for a whole test session (SC-007).
