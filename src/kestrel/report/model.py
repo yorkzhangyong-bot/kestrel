@@ -27,6 +27,10 @@ class Header:
     judge_models: tuple[str, ...] = ()
     token_budget: int | None = None
     tokens_used: int = 0
+    # Feature 009: the prompt versions the runs recorded, as `id@version` — one entry per distinct version the
+    # attacker turns (adaptive runs) and the judged verdicts used; NOT_RECORDED for pre-v7 rows, never a guess.
+    attacker_prompts: tuple[str, ...] = ()
+    judge_prompts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,8 @@ class ReportModel:
     is_empty: bool = False
 
 
+NOT_RECORDED = "not recorded"   # provenance missing on a row that predates schema v7 (feature 009, FR-004)
+
 LIMITATIONS_BASE = (
     "This report covers only the attacks that were run against this target. Judge verdicts are suspected, "
     "not proof. Results depend on the attacker model and the token budget, and warm runs reuse learned memory "
@@ -87,7 +93,7 @@ def build_report(*, target, runs, turns_by_run, recommendations=None, experience
         return ReportModel(header=Header(target_name=target.name, purpose=target.description, generated_at=now,
                                          run_count=0), is_empty=True)
     recommendations = recommendations or {}
-    header = _header(target, runs, now)
+    header = _header(target, runs, turns_by_run, now)
     coverage = tuple(_coverage_row(tested, runs) for tested in owasp.TESTED)
     untested = tuple(UntestedClass(owasp_class=name, reason=reason) for name, reason in owasp.UNTESTED)
     findings = tuple(_finding(run, turns_by_run.get(run.id, ()), recommendations)
@@ -166,14 +172,25 @@ def _judge_note(run, turns) -> str | None:
     return run.reason
 
 
-def _header(target, runs, now) -> Header:
+def _prompt_ref(prompt_id, version) -> str:
+    return f"{prompt_id}@{version}" if prompt_id and version else NOT_RECORDED
+
+
+def _header(target, runs, turns_by_run, now) -> Header:
     attacker_models = tuple(sorted({r.attacker_model for r in runs if r.attacker_model}))
     judge_models = tuple(sorted({r.judge_model for r in runs if r.judge_model}))
     token_budget = next((r.token_budget for r in runs if r.token_budget is not None), None)
     tokens_used = sum((r.tokens_used or 0) for r in runs)
+    # The judge prompt behind every judged verdict; the attacker prompt behind every attacker-produced turn
+    # (turn 1 of an adaptive run is the library seed, so it carries none) — feature 009 provenance.
+    judge_prompts = tuple(sorted({_prompt_ref(r.judge_prompt_id, r.judge_prompt_version)
+                                  for r in runs if r.judge_used}))
+    attacker_prompts = tuple(sorted({_prompt_ref(t.attacker_prompt_id, t.attacker_prompt_version)
+                                     for r in runs if r.mode == "adaptive"
+                                     for t in turns_by_run.get(r.id, ()) if t.position > 1}))
     return Header(target_name=target.name, purpose=target.description, generated_at=now, run_count=len(runs),
                   attacker_models=attacker_models, judge_models=judge_models, token_budget=token_budget,
-                  tokens_used=tokens_used)
+                  tokens_used=tokens_used, attacker_prompts=attacker_prompts, judge_prompts=judge_prompts)
 
 
 def _other_run(run) -> OtherRun:

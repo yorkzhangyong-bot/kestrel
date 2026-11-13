@@ -22,6 +22,15 @@ FAMILIES: dict[str, dict[str, str]] = {
     "indirect_injection": {"label": "Indirect injection via tool output", "owasp_category": "LLM01: Prompt Injection"},
 }
 
+
+def family_label(family: str) -> str:
+    """The display label of a family (its key, spaced, for an unknown one): the family hint in the experience
+    store's pattern query (feature 004) now that the attacker goal sentences live in the prompt files (feature 009).
+    """
+    meta = FAMILIES.get(family)
+    return meta["label"] if meta else family.replace("_", " ")
+
+
 ID_PATTERN = re.compile(r"^[a-z]{2,4}-\d{3}$")
 MAX_PROMPT_CHARS = 4_000          # Principle VIII: plain conversation, never a flooding payload
 MIN_PROMPTS, MAX_PROMPTS = 16, 24  # "about 20" in FR-001

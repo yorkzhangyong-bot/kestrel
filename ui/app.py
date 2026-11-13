@@ -898,6 +898,11 @@ def main() -> None:
         else:
             st.caption("No judge configured: only canary evidence can decide a run")
         st.caption(MODE_CAPTIONS.get(config["mode"], config["mode"]))
+        prompts = config.get("prompts") or []
+        if prompts:
+            with st.expander("Prompt versions"):
+                for prompt in prompts:
+                    st.caption(f"{prompt['id']} · {prompt['version']}")
     run_pending_test()
     run_pending_experiment()
     # Draw the attack panel (and its Run button) before executing a pending run, so the button shows disabled

@@ -30,6 +30,12 @@ def _fence(text: str) -> list[str]:
     return [ticks, text or "", ticks, ""]
 
 
+def _prompts(refs: tuple[str, ...]) -> str:
+    """The prompt version(s) behind the model(s), next to the slugs (feature 009): `id@version` or "not recorded";
+    nothing when no prompt applied (no judge ran, or no attacker-produced turn)."""
+    return f" · prompt(s): {', '.join(refs)}" if refs else ""
+
+
 def render_markdown(model: ReportModel) -> str:
     h = model.header
     if model.is_empty:
@@ -39,8 +45,8 @@ def render_markdown(model: ReportModel) -> str:
     lines.append(f"- **Purpose**: {h.purpose or '—'}")
     lines.append(f"- **Generated**: {h.generated_at}")
     lines.append(f"- **Runs**: {h.run_count}")
-    lines.append(f"- **Attacker model(s)**: {', '.join(h.attacker_models) or '—'}")
-    lines.append(f"- **Judge model(s)**: {', '.join(h.judge_models) or '—'}")
+    lines.append(f"- **Attacker model(s)**: {', '.join(h.attacker_models) or '—'}{_prompts(h.attacker_prompts)}")
+    lines.append(f"- **Judge model(s)**: {', '.join(h.judge_models) or '—'}{_prompts(h.judge_prompts)}")
     budget = h.token_budget if h.token_budget is not None else "—"
     lines += [f"- **Token budget / used**: {budget} / {h.tokens_used}", ""]
 

@@ -29,6 +29,29 @@ def test_every_recommend_schema_property_is_required():
     assert RECOMMEND_SCHEMA["additionalProperties"] is False
 
 
+def _object_nodes(node):
+    """Every JSON-schema object node in ``node`` — the root and any nested object — depth first."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" or "properties" in node:
+            yield node
+        for value in node.values():
+            yield from _object_nodes(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _object_nodes(item)
+
+
+@pytest.mark.parametrize("schema", [RESPONSE_SCHEMA, RECOMMEND_SCHEMA], ids=["judge", "recommend"])
+def test_every_property_at_every_level_is_required_and_extras_are_forbidden(schema):
+    """Strict structured output needs ``required`` to list every property and ``additionalProperties`` false — at
+    the root and inside any nested object a future field might add (review of PR #19, item 4)."""
+    objects = list(_object_nodes(schema))
+    assert objects and objects[0] is schema
+    for node in objects:
+        assert set(node.get("required", [])) == set(node["properties"]), node
+        assert node.get("additionalProperties") is False, node
+
+
 def test_the_derived_schema_drops_keywords_providers_reject_in_strict_mode():
     blob = json.dumps(RESPONSE_SCHEMA)
     for banned in ("maxLength", "minLength", "pattern", "format", "title"):

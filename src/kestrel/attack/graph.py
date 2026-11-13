@@ -14,6 +14,7 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from kestrel import prompt_registry
 from kestrel.attack.attacker import AttackerError
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
@@ -57,6 +58,7 @@ class _State(TypedDict, total=False):
     last_verdict: str | None
     last_progress: str | None
     last_reason: str | None
+    last_judged_turn: int                 # the turn the judge last produced a verdict on (feature 009)
     pending_message: str                  # this turn's attacker message, masked
     pending_reply: str | None
     pending_truncated: bool
@@ -84,6 +86,15 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                              use_prior_experience=use_prior_experience)
     deadline = clock() + time_limit_s
     secrets = [value for _, value in resolved.headers]
+    # Prompt-version provenance (feature 009, FR-003): the active attacker (per family) and judge prompt versions
+    # are constant for the run; resolve once from the registry and attach them to the turns/verdict they produce.
+    attacker_prompt_id: str | None = prompt_registry.attacker_id(seed_prompt.family)
+    try:
+        attacker_prompt_version: str | None = prompt_registry.active_version(attacker_prompt_id)
+    except prompt_registry.PromptNotRegistered:
+        attacker_prompt_id = attacker_prompt_version = None
+    judge_prompt_id = prompt_registry.JUDGE_ID
+    judge_prompt_version = prompt_registry.active_version(judge_prompt_id)
 
     def remaining() -> float:
         return deadline - clock()
@@ -142,7 +153,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                     "last_progress": state["last_progress"]}
         update: _State = {"judge_used": True, "tokens_used": state["tokens_used"] + verdict.tokens,
                           "last_verdict": verdict.verdict, "last_reason": verdict.reason,
-                          "last_progress": verdict.progress}
+                          "last_progress": verdict.progress, "last_judged_turn": state["turns_used"] + 1}
         if verdict.verdict == "succeeded":
             update["outcome"] = {"verdict": "succeeded", "hard_evidence": False, "reason": verdict.reason,
                                  "judge_used": True, "stopping_condition": "succeeded",
@@ -151,10 +162,15 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
 
     def record_node(state: _State) -> _State:
         turn = state["turns_used"] + 1
+        judged = state.get("last_judged_turn") == turn   # the judge produced a verdict on this turn (feature 009)
         store.add_turn(run_id, position=turn, attacker_message=state["pending_message"],
                        reply_text=state.get("pending_reply"), reply_truncated=state.get("pending_truncated", False),
                        judge_verdict=state.get("last_verdict"), judge_reason=state.get("last_reason"),
-                       judge_progress=state.get("last_progress"))
+                       judge_progress=state.get("last_progress"),
+                       attacker_prompt_id=attacker_prompt_id if turn >= 2 else None,
+                       attacker_prompt_version=attacker_prompt_version if turn >= 2 else None,
+                       judge_prompt_id=judge_prompt_id if judged else None,
+                       judge_prompt_version=judge_prompt_version if judged else None)
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]
         if state.get("pending_reply") is not None:
             conversation.append(("agent", state["pending_reply"]))
@@ -207,7 +223,9 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                            judge_model=judge.model if outcome["judge_used"] else None,
                            failure_step=outcome.get("failure_step"), stopping_condition=outcome["stopping_condition"],
                            succeeded_turn=outcome["succeeded_turn"], turns_used=final["turns_used"],
-                           tokens_used=final["tokens_used"])
+                           tokens_used=final["tokens_used"],
+                           judge_prompt_id=judge_prompt_id if outcome["judge_used"] else None,
+                           judge_prompt_version=judge_prompt_version if outcome["judge_used"] else None)
     log.info("adaptive run target_id=%d family=%s verdict=%s hard_evidence=%s stop=%s attacker=%s judge=%s "
              "turns=%s tokens=%s", run.target_id, run.family, run.verdict or "-", run.hard_evidence,
              run.stopping_condition, attacker.model, judge.model if outcome["judge_used"] else "-",

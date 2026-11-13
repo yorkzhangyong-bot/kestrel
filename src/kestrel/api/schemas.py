@@ -52,6 +52,11 @@ class ExperienceOut(BaseModel):
     use_prior_experience_default: bool  # the screen defaults the toggle to this (feature 004, FR-014)
 
 
+class PromptVersionOut(BaseModel):
+    id: str       # a registry id: "attacker:<family>", "judge", or "recommender" (feature 009)
+    version: str  # the active version ("1", "2", …); never the prompt text (FR-007, FR-012)
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -60,6 +65,7 @@ class ConfigOut(BaseModel):
     attacker: AttackerOut
     adaptive: AdaptiveCapsOut
     experience: ExperienceOut
+    prompts: list[PromptVersionOut] = []   # active prompt versions, id + version only (feature 009, FR-007)
 
 
 class HeaderIn(BaseModel):
@@ -240,6 +246,9 @@ class ArmIn(BaseModel):
     turn_cap: int = 6
     token_budget: int = 40000
     write_back: bool = True
+    # Feature 009: pin one prompt for this arm — "attacker:<family>" or "judge" — at a version; null = active.
+    prompt_arm_target: str | None = None
+    prompt_arm_version: str | None = None
 
 
 class CapsIn(BaseModel):
@@ -336,14 +345,30 @@ class ExperimentSummaryOut(BaseModel):
     finished_at: str | None
 
 
-ARM_DIFF_FIELDS = ("attacker_model", "judge_model", "use_prior_experience", "turn_cap", "token_budget")
+ARM_DIFF_FIELDS = ("attacker_model", "judge_model", "use_prior_experience", "turn_cap", "token_budget",
+                   "prompt_arm_target", "prompt_arm_version")
 
 
 def validate_experiment(request: CreateExperimentRequest, known_families: list[str]) -> list[dict[str, str]]:
-    """Arms must differ in >=1 field; families (if given) known and non-empty; reps/caps sane (FR-003, FR-008)."""
+    """Arms must differ in >=1 field; families (if given) known and non-empty; reps/caps sane; a prompt-version arm
+    names the attacker or judge prompt at a version the registry knows (FR-003, FR-008, FR-009)."""
+    from kestrel import prompt_registry
     errors: list[dict[str, str]] = []
     if all(getattr(request.arm_a, f) == getattr(request.arm_b, f) for f in ARM_DIFF_FIELDS):
         errors.append({"field": "arm_b", "message": "The two arms must differ in at least one setting."})
+    for label, arm in (("arm_a", request.arm_a), ("arm_b", request.arm_b)):
+        target, version = arm.prompt_arm_target, arm.prompt_arm_version
+        if target is None and version is None:
+            continue
+        if (target is None) != (version is None):
+            errors.append({"field": f"{label}.prompt_arm_version",
+                           "message": "Pin both a prompt and a version, or neither."})
+        elif not (target == prompt_registry.JUDGE_ID or target.startswith("attacker:")):
+            errors.append({"field": f"{label}.prompt_arm_target",
+                           "message": "Only the attacker or judge prompt can be A/B-tested."})
+        elif not prompt_registry.has(target, version):
+            errors.append({"field": f"{label}.prompt_arm_version",
+                           "message": f"Unknown prompt {target}@{version}."})
     if request.families is not None:
         if not request.families:
             errors.append({"field": "families", "message": "Choose at least one attack family."})
@@ -371,19 +396,31 @@ class _ArmLike(Protocol):
     def turn_cap(self) -> int: ...
     @property
     def token_budget(self) -> int: ...
+    @property
+    def prompt_arm_target(self) -> str | None: ...
+    @property
+    def prompt_arm_version(self) -> str | None: ...
+
+
+def _arm_prompt(target: str | None, version: str | None) -> str:
+    return f"{target}@{version}" if target else "active"
 
 
 def experiment_diff(arm_a: _ArmLike, arm_b: _ArmLike) -> list[str]:
     """Human-readable differences between the two arms (FR-003)."""
     labels = {"use_prior_experience": "retrieval"}
     out = []
-    for field in ARM_DIFF_FIELDS:
+    for field in ("attacker_model", "judge_model", "use_prior_experience", "turn_cap", "token_budget"):
         a, b = getattr(arm_a, field), getattr(arm_b, field)
         if a != b:
             name = labels.get(field, field)
             if isinstance(a, bool):
                 a, b = ("on" if a else "off"), ("on" if b else "off")
             out.append(f"{name}: A={a}, B={b}")
+    a_prompt = (getattr(arm_a, "prompt_arm_target", None), getattr(arm_a, "prompt_arm_version", None))
+    b_prompt = (getattr(arm_b, "prompt_arm_target", None), getattr(arm_b, "prompt_arm_version", None))
+    if a_prompt != b_prompt:   # feature 009: one line, e.g. "prompt: A=judge@1.0.0, B=judge@1.1.0"
+        out.append(f"prompt: A={_arm_prompt(*a_prompt)}, B={_arm_prompt(*b_prompt)}")
     return out
 
 
