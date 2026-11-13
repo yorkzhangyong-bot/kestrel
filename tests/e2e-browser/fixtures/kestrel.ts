@@ -12,6 +12,33 @@ export interface KestrelConfig {
   attacker: { model: string; configured: boolean };
   adaptive: { max_turns: number; token_budget: number; time_limit_s: number };
   experience: { pattern_k: number; memory_cap: number; use_prior_experience_default: boolean };
+  /** The active prompt versions, as `{id, version}` entries; never the prompt text (feature 009). */
+  prompts: Array<{ id: string; version: string }>;
+}
+
+/** One kept log record: the allow-listed fields the line carries (feature 010). */
+export interface LogLine {
+  ts?: string;
+  level?: string;
+  logger?: string;
+  event?: string;
+  run_id?: number;
+  [field: string]: unknown;
+}
+
+/** The body of `GET /api/runs/{id}/log` (feature 010, FR-011). */
+export interface RunLog {
+  run_id: number;
+  lines: LogLine[];
+  kept: number;
+  dropped: number;
+  truncated: boolean;
+}
+
+/** The status and parsed body of a run-log request, for the error-path assertions. */
+export interface RunLogResponse {
+  status: number;
+  body: unknown;
 }
 
 export interface TurnDetail {
@@ -194,6 +221,37 @@ export class KestrelApi {
   async getRunStatus(runId: number): Promise<number> {
     const response = await this.request.get(`${API_URL}/api/runs/${runId}`);
     return response.status();
+  }
+
+  async getRunLog(runId: number): Promise<RunLog> {
+    const response = await this.request.get(`${API_URL}/api/runs/${runId}/log`);
+    expect(response.ok(), `GET /api/runs/${runId}/log returned ${response.status()}`).toBe(true);
+    return (await response.json()) as RunLog;
+  }
+
+  /** The exact response body, so two calls can be compared byte for byte. */
+  async getRunLogText(runId: number): Promise<string> {
+    const response = await this.request.get(`${API_URL}/api/runs/${runId}/log`);
+    expect(response.ok(), `GET /api/runs/${runId}/log returned ${response.status()}`).toBe(true);
+    return response.text();
+  }
+
+  async getRunLogStatus(runId: number): Promise<number> {
+    const response = await this.request.get(`${API_URL}/api/runs/${runId}/log`);
+    return response.status();
+  }
+
+  /** Status and body without asserting: an unknown run answers 404 with the documented error. */
+  async getRunLogResponse(runId: number): Promise<RunLogResponse> {
+    const response = await this.request.get(`${API_URL}/api/runs/${runId}/log`);
+    return { status: response.status(), body: await response.json() };
+  }
+
+  /** Generate the target's report; the run's kept log must stay byte-identical (feature 010, FR-010). */
+  async generateReport(targetId: number): Promise<string> {
+    const response = await this.request.get(`${API_URL}/api/targets/${targetId}/report`, { timeout: 60_000 });
+    expect(response.ok(), `GET /api/targets/${targetId}/report returned ${response.status()}`).toBe(true);
+    return response.text();
   }
 
   async attackPrompts(family: string): Promise<AttackPrompt[]> {
