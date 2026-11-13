@@ -1,4 +1,4 @@
-"""The `kestrel` log stream (feature 010): JSON Lines by default, the same fields as plain text by setting (research D2).
+"""The `kestrel` log stream (feature 010): JSON Lines by default, the same fields as plain text by setting (D2).
 
 The stream is the output of the `kestrel` logger and its children on standard error; the web server's own lines are
 not part of it. Every record renders as its common fields (`ts`, `level`, `logger`, `event`), then the run's scope,

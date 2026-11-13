@@ -5,7 +5,8 @@ never an auth header value, the target URL, or the target name (FR-020). Untrust
 attack, the reply) is fenced before it enters the prompt, and the answer is validated against a Pydantic schema
 with one retry on a schema violation; transient HTTP statuses are retried within the run's deadline. The judge and
 recommender prompt texts are not in this module: they are read from the prompt registry (feature 009,
-`src/kestrel/prompts/`), the active version unless an A/B arm pins one.
+`src/kestrel/prompts/`), the active version unless an A/B arm pins one. Each judge or recommender call is one
+`model.request` line (feature 010): the verdict category at most — never the reason, the progress note or the advice.
 """
 from __future__ import annotations
 
@@ -15,9 +16,9 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from kestrel import prompt_registry
+from kestrel import events, prompt_registry
 from kestrel.prompting import DATA_RULE, fence
-from kestrel.retry import post_with_retry
+from kestrel.retry import CallTally, post_with_retry
 from kestrel.judge.verdict import (RECOMMEND_SCHEMA, RESPONSE_SCHEMA, ParsedVerdict, Recommendation, Verdict,
                                    VerdictParseError, validate_recommendation, validate_verdict)
 
@@ -44,7 +45,7 @@ class JudgeClient:
     def __init__(self, *, model: str, api_key: str | None, base_url: str,
                  transport: httpx.AsyncBaseTransport | None = None, timeout: float = DEFAULT_TIMEOUT_S,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                 system_prompt: str | None = None) -> None:
+                 system_prompt: str | tuple[str, str] | None = None) -> None:
         self._model = model
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -52,7 +53,7 @@ class JudgeClient:
         self._timeout = timeout
         self._sleep = sleep
         # Feature 009: a prompt-version A/B arm pins a specific judge verdict prompt; None = the active one, read
-        # from the registry at call time.
+        # from the registry at call time. Feature 010: the pin carries its reference, `(text, "judge@N")` (FR-007).
         self._system_prompt = system_prompt
 
     @property
@@ -62,6 +63,20 @@ class JudgeClient:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def judge_prompt_ref(self) -> str | None:
+        """The reference (`judge@N`) of the verdict prompt this client sends: a pinned arm's, or the registry's active
+        one; None for a plain pinned text (its version is not known). The single source of the judge provenance and
+        lines (feature 010, FR-007)."""
+        if self._system_prompt is None:
+            return prompt_registry.active_ref(prompt_registry.JUDGE_ID)
+        return self._system_prompt[1] if isinstance(self._system_prompt, tuple) else None
+
+    @property
+    def recommender_prompt_ref(self) -> str | None:
+        """The reference (`recommender@N`) of the fix-advice prompt: always the active one (arms never pin it)."""
+        return prompt_registry.active_ref(prompt_registry.RECOMMENDER_ID)
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
@@ -80,7 +95,9 @@ class JudgeClient:
                     f"The agent's latest reply:\n{fence(reply, 'reply')}")
         else:
             user = f"Attack message sent to the agent:\n{fence(attack, 'attack')}\n\nThe agent's reply:\n{fence(reply, 'reply')}"
-        system = self._system_prompt or prompt_registry.load_prompt(prompt_registry.JUDGE_ID)[0]
+        pinned = self._system_prompt
+        system = (pinned[0] if isinstance(pinned, tuple) else pinned) or \
+            prompt_registry.load_prompt(prompt_registry.JUDGE_ID)[0]
         return [{"role": "system", "content": f"{system}\n\n{DATA_RULE}"},
                 {"role": "user", "content": user}]
 
@@ -96,18 +113,25 @@ class JudgeClient:
 
     async def _structured_call(self, http: httpx.AsyncClient, messages: list[dict[str, str]], *, max_tokens: int,
                                schema_name: str, schema: dict, validate: Callable[[str], object],
-                               remaining: Callable[[], float]) -> tuple[object, int]:
+                               remaining: Callable[[], float], tally: CallTally | None = None) -> tuple[object, int]:
         """Up to two model calls: validate the answer; on a schema violation, retry once with the error as
         feedback (judge item 1). Returns (validated model, tokens summed over every call). Raises JudgeError on a
-        bad status or a second failure; transient statuses are already retried inside post_with_retry (item 4)."""
+        bad status or a second failure; transient statuses are already retried inside post_with_retry (item 4).
+        `tally` accumulates the attempts, status and usage for the model-request line (feature 010)."""
+        tally = tally if tally is not None else CallTally()
         tokens = 0
         last_error: VerdictParseError | None = None
         for attempt in (1, 2):
             payload = {"model": self._model, "max_tokens": max_tokens, "temperature": 0, "messages": messages,
                        "response_format": {"type": "json_schema",
                                            "json_schema": {"name": schema_name, "strict": True, "schema": schema}}}
-            result = await post_with_retry(http, f"{self._base_url}/chat/completions", json=payload,
-                                           headers=self._headers(), remaining=remaining, sleep=self._sleep)
+            try:
+                result = await post_with_retry(http, f"{self._base_url}/chat/completions", json=payload,
+                                               headers=self._headers(), remaining=remaining, sleep=self._sleep)
+            except httpx.HTTPError:
+                tally.failed_to_connect()
+                raise
+            tally.add(result)
             tokens += result.tokens
             if result.response.status_code != 200:
                 raise JudgeError(f"The judge answered with status {result.response.status_code}.")
@@ -133,16 +157,29 @@ class JudgeClient:
             raise JudgeError("No judge is configured; set KESTREL_JUDGE_API_KEY or OPENROUTER_API_KEY.")
         limit = self._timeout if timeout is None else min(self._timeout, timeout)
         messages = self._judge_messages(attack, reply, conversation)
-        try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=limit) as http:
-                model, tokens = await self._structured_call(
-                    http, messages, max_tokens=MAX_ANSWER_TOKENS, schema_name="verdict", schema=RESPONSE_SCHEMA,
-                    validate=validate_verdict, remaining=self._remaining(limit))
-        except httpx.HTTPError as error:
-            raise JudgeError(f"The judge could not be reached: {type(error).__name__}.") from error
-        assert isinstance(model, Verdict)
-        progress = model.progress.strip() if model.progress and model.progress.strip() else None
-        return ParsedVerdict(verdict=model.verdict, reason=model.reason, progress=progress, tokens=tokens)
+        tally, started = CallTally(), time.perf_counter()
+        parsed: ParsedVerdict | None = None
+        error_kind: str | None = None
+        with events.child_span("kestrel.model_request") as span:
+            try:
+                async with httpx.AsyncClient(transport=self._transport, timeout=limit) as http:
+                    model, tokens = await self._structured_call(
+                        http, messages, max_tokens=MAX_ANSWER_TOKENS, schema_name="verdict", schema=RESPONSE_SCHEMA,
+                        validate=validate_verdict, remaining=self._remaining(limit), tally=tally)
+                assert isinstance(model, Verdict)
+                progress = model.progress.strip() if model.progress and model.progress.strip() else None
+                parsed = ParsedVerdict(verdict=model.verdict, reason=model.reason, progress=progress, tokens=tokens)
+                return parsed
+            except httpx.HTTPError as error:
+                error_kind = type(error).__name__
+                raise JudgeError(f"The judge could not be reached: {type(error).__name__}.") from error
+            except BaseException as error:
+                error_kind = error_kind or type(error).__name__
+                raise
+            finally:
+                # The verdict category only: the reason and the progress note may quote the reply (FR-009).
+                self._log_request("judge", self.judge_prompt_ref, tally, started, ok=parsed is not None,
+                                  error=error_kind, verdict=parsed.verdict if parsed is not None else None, span=span)
 
     async def recommend(self, *, family: str, owasp_category: str, attack: str, evidence: str,
                         timeout: float | None = None) -> tuple[str, int]:
@@ -155,15 +192,34 @@ class JudgeClient:
             raise JudgeError("No judge is configured; set KESTREL_JUDGE_API_KEY or OPENROUTER_API_KEY.")
         limit = self._timeout if timeout is None else min(self._timeout, timeout)
         messages = self._recommend_messages(family, owasp_category, attack, evidence)
-        try:
+        tally, started = CallTally(), time.perf_counter()
+        done = False
+        error_kind: str | None = None
+        try:   # report time, outside any run: logged (on the stream only), never traced (FR-013)
             async with httpx.AsyncClient(transport=self._transport, timeout=limit) as http:
                 model, tokens = await self._structured_call(
                     http, messages, max_tokens=MAX_RECOMMEND_TOKENS, schema_name="recommendation",
-                    schema=RECOMMEND_SCHEMA, validate=validate_recommendation, remaining=self._remaining(limit))
+                    schema=RECOMMEND_SCHEMA, validate=validate_recommendation, remaining=self._remaining(limit),
+                    tally=tally)
+            assert isinstance(model, Recommendation)
+            text = model.recommendation.strip()
+            if not text:
+                raise JudgeError("The judge returned an empty recommendation.")
+            done = True
+            return text, tokens
         except httpx.HTTPError as error:
+            error_kind = type(error).__name__
             raise JudgeError(f"The judge could not be reached: {type(error).__name__}.") from error
-        assert isinstance(model, Recommendation)
-        text = model.recommendation.strip()
-        if not text:
-            raise JudgeError("The judge returned an empty recommendation.")
-        return text, tokens
+        except BaseException as error:
+            error_kind = error_kind or type(error).__name__
+            raise
+        finally:
+            self._log_request("recommender", self.recommender_prompt_ref, tally, started, ok=done, error=error_kind)
+
+    def _log_request(self, kind: str, prompt: str | None, tally: CallTally, started: float, *, ok: bool,
+                     error: str | None, verdict: str | None = None, span=None) -> None:
+        events.model_request(kind=kind, model=self._model, prompt=prompt,
+                             latency_ms=int((time.perf_counter() - started) * 1000), ok=ok, status=tally.status,
+                             attempts=tally.attempts, prompt_tokens=tally.prompt_tokens,
+                             completion_tokens=tally.completion_tokens, total_tokens=tally.total_tokens,
+                             error=None if ok else error or "JudgeError", verdict=verdict, span=span)

@@ -126,7 +126,7 @@ runs carry experiment id and arm; operational lines in scope.
 `model_transport`, an experiment and a report generation produce the contract's event sequence with the contract's
 fields.
 
-- [ ] T011 [P] [US1] Integration test `tests/integration/test_log_records_single_turn.py` (real `JudgeClient` over
+- [X] T011 [P] [US1] Integration test `tests/integration/test_log_records_single_turn.py` (real `JudgeClient` over
       `model_transport`): with `json_log`, a stub-target single-turn run yields, in order, `run.start` (prompt_id,
       attacker_source, judge_model, `judge_prompt == "judge@1"`, caps, use_prior_experience), `target.request`
       (latency_ms, ok, status, step, reply_chars, reply_truncated; no URL field), `model.request` kind=judge (model,
@@ -139,7 +139,7 @@ fields.
       no judge configured there is no judge line, the turn carries no judge fields, and `run.end.judge_used` is
       false; a canary hit yields `canary_hit`/`hard_evidence` true, no judge line and a null `judge_prompt` on the
       turn line (010/FR-001, 010/FR-002, 010/FR-003, 010/FR-004, 010/FR-007, 010/FR-016, 010/SC-001).
-- [ ] T012 [P] [US1] Integration test `tests/integration/test_log_records_adaptive.py` (real `AttackerClient` and
+- [X] T012 [P] [US1] Integration test `tests/integration/test_log_records_adaptive.py` (real `AttackerClient` and
       `JudgeClient` over `model_transport`): a stub adaptive run of N turns yields one `turn` per turn with its
       number, `duration_ms`, token totals summed over that turn's requests, cost, `attacker_model`/
       `attacker_prompt == "attacker:<family>@1"` on turns ≥ 2 only, `judge_model` on every turn and
@@ -153,13 +153,13 @@ fields.
       `run.end.judge_used` false; an attacker error yields a `model.request` with `ok false`, `error` = class name,
       no tokens, and `run.end.stopping_condition == "attacker_failed"`; a provider retry yields `attempts == 2`
       with tokens summed; every line parses as JSON (010/FR-002, 010/FR-003, 010/FR-004, 010/FR-016, 010/SC-001).
-- [ ] T013 [P] [US1] Integration test `tests/integration/test_experiment_events.py` (real clients over
+- [X] T013 [P] [US1] Integration test `tests/integration/test_experiment_events.py` (real clients over
       `model_transport`): a two-arm stub experiment emits `experiment.start` (arms, caps), every record of its runs
       — `memory.writeback` included — carries `run_id`, `experiment_id` and `arm`, an arm that pins `judge@1`
       shows `prompt == "judge@1"` on its judge lines, a cap stop emits `experiment.cap` (cap, completed_runs,
       tokens_used), and `experiment.end` carries status and stopped_reason; each run's `run.end` is its last record and
       follows its `memory.writeback` (010/FR-005, 010/FR-007, 010/FR-016, 010/SC-008).
-- [ ] T014 [P] [US1] Unit tests in `tests/unit/test_attacker_client.py` and `tests/unit/test_judge_client.py`
+- [X] T014 [P] [US1] Unit tests in `tests/unit/test_attacker_client.py` and `tests/unit/test_judge_client.py`
       (extend): a model call emits one `model.request` with kind, model, prompt reference, `latency_ms ≥ 0`,
       status, attempts, prompt/completion/total tokens and cost (null + note when unpriced); a judge call adds
       `verdict` and `hard_evidence False`; `recommend()` emits kind=recommender with the bound run id; the clients
@@ -168,25 +168,25 @@ fields.
       `model.empty_content` event with `attempt`, `finish_reason`, `completion_tokens`, `reasoning_tokens`,
       `total_tokens`, `reasoning_chars` as fields (update the existing `finish_reason=length` text assertion)
       (010/FR-003, 010/FR-007, 010/FR-008).
-- [ ] T015 [US1] `src/kestrel/connection/tester.py`: `run_test`/`refused` emit `target.request` (turn from the
+- [X] T015 [US1] `src/kestrel/connection/tester.py`: `run_test`/`refused` emit `target.request` (turn from the
       run context) when a run is bound and `connection.test` otherwise, with `latency_ms`, `ok`, `status`, `step`,
       `reply_chars`, `reply_truncated`, and `target_id` from a new optional `target_id` argument; `display_name`
       stays accepted but is no longer logged; `_loggable_url` is retired from logging; `src/kestrel/api/main.py`
       passes `target_id=body.target_id` from the connection-test endpoint (010/FR-004, 010/FR-009).
-- [ ] T016 [US1] `src/kestrel/attack/attacker.py`: time `next_message` end to end (`time.perf_counter`), count
+- [X] T016 [US1] `src/kestrel/attack/attacker.py`: time `next_message` end to end (`time.perf_counter`), count
       attempts across the empty-content loop and `RetryResult.attempts`, read prompt/completion/total usage, and
       emit `model.request` kind=attacker in a `finally` (status or `error` class name, `message_chars` on success);
       carry and expose the prompt reference (`prompt_ref(family)`: `load_prompt(...)[1]`, or the arm's pinned
       `"<id>@<version>"` — `system_overrides` becomes `{family: (text, ref)}`); the empty-content warning becomes
       `model.empty_content` with fields (010/FR-003, 010/FR-007).
-- [ ] T017 [US1] `src/kestrel/judge/client.py`: the same for `judge()` (kind=judge, `verdict`, `hard_evidence
+- [X] T017 [US1] `src/kestrel/judge/client.py`: the same for `judge()` (kind=judge, `verdict`, `hard_evidence
       False`, `ctx.judge_requests += 1`) and `recommend()` (kind=recommender), attempts summed across
       `_structured_call`'s schema retry and `RetryResult.attempts`; `system_prompt` also accepts `(text, ref)` (a
       plain text, the feature-009 form, keeps working with an unknown reference) and the client exposes
       `judge_prompt_ref`/`recommender_prompt_ref`; `src/kestrel/experiments/engine.py::_prompt_overrides` returns the
       references alongside the texts; `api/main.py::_schedule_experiment`'s injected-double factories accept the pin
       keywords (010/FR-003, 010/FR-007).
-- [ ] T018 [US1] `src/kestrel/runs.py` and `src/kestrel/api/main.py`: `start_run` opens `events.run_scope()`
+- [X] T018 [US1] `src/kestrel/runs.py` and `src/kestrel/api/main.py`: `start_run` opens `events.run_scope()`
       around the run function **and** `write_back(...)`; `execute_run` calls `run_started(...)` right after
       `claim_run` (single-turn deadline as `time_limit_s`, the judge model and `judge.judge_prompt_ref`, falling
       back to the registry's active reference when the judge double has no accessor; `run_started`/`run_finished`
@@ -196,7 +196,7 @@ fields.
       "attack run" line; the unexpected-failure path still closes the row and the scope's `run.end` carries
       `error`; `write_back` is reached inside the scope so `memory.writeback` carries the run id and `run.end`
       carries `memory_written` (010/FR-001, 010/FR-002, 010/FR-008, 010/FR-016).
-- [ ] T019 [US1] `src/kestrel/attack/graph.py`: `run_adaptive` calls `run_started(...)` after `claim_run` (attacker
+- [X] T019 [US1] `src/kestrel/attack/graph.py`: `run_adaptive` calls `run_started(...)` after `claim_run` (attacker
       model, the references from `attacker.prompt_ref(family)` and `judge.judge_prompt_ref` — T046 — with the
       registry's active reference as the fallback when a client double has no accessor, and null-safe with no
       scope open so the existing direct-call tests keep passing; caps), sets
@@ -204,7 +204,7 @@ fields.
       on turn 1, `attacker:<family>@N` after; `duration_ms`, the turn's token totals and cost, model slugs and
       prompt references in play, message/reply lengths, canary_hit, hard_evidence, judged, verdict) and calls
       `run_finished(...)` after `finish_run`, replacing the free-text "adaptive run" line (010/FR-001, 010/FR-002).
-- [ ] T020 [US1] `src/kestrel/experience/store.py` `retrieve_patterns_with_ids(family, query_text, k) ->
+- [X] T020 [US1] `src/kestrel/experience/store.py` `retrieve_patterns_with_ids(family, query_text, k) ->
       list[tuple[str, str]]`; the hint providers in `src/kestrel/api/main.py` (`start_run.hint_provider`) and
       `src/kestrel/experiments/engine.py` (`_hint_provider`) use it and emit `memory.retrieval` whenever they ask
       the store (prior experience on, store available): `pattern_count`, `memory_count` (zero when nothing came
@@ -213,14 +213,14 @@ fields.
       `pattern_written`, `error` class name on failure; a direct call with no scope for that run binds the run as a
       reference so the line still names it, stream-only) and records `memory_written` on the run context; a failed
       flag write is `memory.flag_failed` (010/FR-016).
-- [ ] T021 [US1] `src/kestrel/experiments/engine.py`: `bind_experiment(experiment.id, arm.label)` and, inside it,
+- [X] T021 [US1] `src/kestrel/experiments/engine.py`: `bind_experiment(experiment.id, arm.label)` and, inside it,
       `events.run_scope()` around each `_run_rep`'s run function **and** its `write_back(...)`, so every record of
       the run — the write-back line included — carries the experiment id and arm and `run.end` is last; emit
       `experiment.start` (campaign, caps, arms with their pinned prompt), `experiment.cap` (cap, completed_runs,
       tokens_used, elapsed_s) and `experiment.end` (status, stopped_reason, completed_runs, tokens_used, duration_ms,
       `error` on failure, replacing the free-text exception line's message with class + frames)
       (010/FR-005, 010/FR-016).
-- [ ] T022 [US1] `src/kestrel/report/recommend.py`: bind the finding's run with `events.bind_run_reference(run)`
+- [X] T022 [US1] `src/kestrel/report/recommend.py`: bind the finding's run with `events.bind_run_reference(run)`
       (non-emitting, not kept) around each `judge.recommend(...)` so the recommender line carries `run_id`,
       `target_id`, `mode` and `family` on the stream only; the "No recommendation" warning becomes an event with
       `error` = class name, no message text (010/FR-003, 010/FR-009, 010/FR-010).
@@ -469,7 +469,7 @@ Tasks added by the review; each names where it executes.
       active reference (`load_prompt(...)[1]`), so the existing tests keep passing; a unit test in
       `tests/unit/test_store_run_turns.py` (extend) covers the split; pre-v8 rows are untouched; this is a
       recording correction of a feature-009 gap, not a behaviour change (010/FR-007, 010/FR-017, 010/SC-005).
-- [ ] T047 [US1] (executes with the US1 tests, T011–T014) Integration test
+- [X] T047 [US1] (executes with the US1 tests, T011–T014) Integration test
       `tests/integration/test_prompt_provenance_pinned.py` (the `two_judge_versions` fixture pattern of
       `tests/integration/test_prompt_arm.py`; real clients over `model_transport`): a two-arm experiment whose arm B
       pins `judge@1` while `judge@2` is active yields, for arm B's run, `runs.judge_prompt_version == "1"`,

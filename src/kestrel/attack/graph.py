@@ -3,7 +3,9 @@
 LangGraph orchestrates; the attacker and judge model calls are plain httpx (their own clients). The loop claims a
 run row, drives the conversation turn by turn under three caps, and finishes the row. Canary first, judge only if
 nothing matched (Principle II); hard_evidence comes from a canary alone. Every message and reply is masked before
-it is stored, judged or handed to the attacker (Principle IV, FR-021). No attack text lives here.
+it is stored, judged or handed to the attacker (Principle IV, FR-021). No attack text lives here. Feature 010: the
+loop emits `run.start` once the row is claimed and one `turn` line per recorded turn (lengths, categories, totals);
+the turn number and the turn span ride on the shared run context, which every graph node sees.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from kestrel import prompt_registry
+from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerError
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
@@ -23,8 +25,6 @@ from kestrel.judge.client import JudgeError
 from kestrel.runs import attacker_ref, judge_ref, match_canary
 from kestrel.secrets import mask_values
 from kestrel.store import Run, TargetStore
-
-log = logging.getLogger("kestrel")
 
 SEND_LIMIT_S = 60.0
 JUDGE_LIMIT_S = 30.0
@@ -62,6 +62,7 @@ class _State(TypedDict, total=False):
     pending_message: str                  # this turn's attacker message, masked
     pending_reply: str | None
     pending_truncated: bool
+    pending_canary: bool                  # a canary matched this turn's reply (feature 010: the turn line)
     outcome: dict[str, Any] | None        # set exactly once, when the run ends
 
 
@@ -95,20 +96,26 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
     attacker_prompt_id, attacker_prompt_version = prompt_registry.split_ref(attacker_prompt)
     judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
     judge_requests = 0
+    events.run_started(store, run_id=run_id, target_id=target_id, mode="adaptive", family=seed_prompt.family,
+                       prompt_id=seed_prompt.id, attacker_source=attacker_source, attacker_model=attacker.model,
+                       judge_model=judge.model if judge.configured else None, attacker_prompt=attacker_prompt,
+                       judge_prompt=judge_prompt, turn_budget=max_turns, token_budget=token_budget,
+                       time_limit_s=int(time_limit_s), use_prior_experience=use_prior_experience)
 
     def remaining() -> float:
         return deadline - clock()
 
     async def attacker_node(state: _State) -> _State:
         turn = state["turns_used"] + 1
+        events.turn_started(turn)   # every line of this turn carries its number, through all the nodes
         if turn == 1:
-            return {"pending_message": mask_values(seed_prompt.text, secrets)}
+            return {"pending_message": mask_values(seed_prompt.text, secrets), "pending_canary": False}
         hints = None
         if hint_provider is not None:
             try:
                 hints = hint_provider(state["conversation"])   # best-effort; a retrieval failure never fails the run
             except Exception:
-                log.exception("retrieving experience hints failed; continuing without them for run %s", run_id)
+                events.emit("memory.retrieval_failed", logging.WARNING, exc_info=True)
         try:
             reply = await attacker.next_message(conversation=state["conversation"], family=seed_prompt.family,
                                                 progress=state["last_progress"], hints=hints,
@@ -117,7 +124,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
             return {"outcome": {"verdict": "unclear", "hard_evidence": False, "reason": str(error),
                                 "judge_used": state["judge_used"], "stopping_condition": "attacker_failed",
                                 "succeeded_turn": None}}
-        return {"pending_message": mask_values(reply.message, secrets),
+        return {"pending_message": mask_values(reply.message, secrets), "pending_canary": False,
                 "tokens_used": state["tokens_used"] + reply.tokens}
 
     async def send_node(state: _State) -> _State:
@@ -133,7 +140,8 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
 
     def evidence_node(state: _State) -> _State:
         if match_canary(state["pending_reply"] or "", canaries) is not None:
-            return {"outcome": {"verdict": "succeeded", "hard_evidence": True, "reason": CANARY_REASON,
+            return {"pending_canary": True,
+                    "outcome": {"verdict": "succeeded", "hard_evidence": True, "reason": CANARY_REASON,
                                 "judge_used": state["judge_used"], "stopping_condition": "succeeded",
                                 "succeeded_turn": state["turns_used"] + 1}}
         return {}
@@ -146,6 +154,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"]),
                                                       ("agent", state["pending_reply"] or "")]
         judge_requests += 1
+        events.judge_requested(judge_prompt)
         try:
             verdict = await judge.judge(attack=state["pending_message"], reply=state["pending_reply"] or "",
                                         conversation=_format(conversation),
@@ -173,6 +182,15 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                        attacker_prompt_version=attacker_prompt_version if turn >= 2 else None,
                        judge_prompt_id=judge_prompt_id if judged else None,
                        judge_prompt_version=judge_prompt_version if judged else None)
+        reply = state.get("pending_reply")
+        canary = bool(state.get("pending_canary", False))
+        events.turn_ended(turn=turn, source=f"library:{seed_prompt.id}" if turn == 1 else
+                          (attacker_prompt or prompt_registry.attacker_id(seed_prompt.family)),
+                          message_chars=len(state["pending_message"]),
+                          reply_chars=None if reply is None else len(reply),
+                          reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
+                          hard_evidence=canary, judged=judged, verdict=state.get("last_verdict") if judged else None,
+                          attacker_generated=turn >= 2)
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]
         if state.get("pending_reply") is not None:
             conversation.append(("agent", state["pending_reply"]))
@@ -228,8 +246,5 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                            tokens_used=final["tokens_used"],
                            judge_prompt_id=judge_prompt_id if judge_requests else None,
                            judge_prompt_version=judge_prompt_version if judge_requests else None)
-    log.info("adaptive run target_id=%d family=%s verdict=%s hard_evidence=%s stop=%s attacker=%s judge=%s "
-             "turns=%s tokens=%s", run.target_id, run.family, run.verdict or "-", run.hard_evidence,
-             run.stopping_condition, attacker.model, judge.model if outcome["judge_used"] else "-",
-             run.turns_used, run.tokens_used)
+    events.run_finished(run)   # run.end is emitted by the caller's run scope, after the write-back (FR-001)
     return run

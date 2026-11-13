@@ -37,6 +37,35 @@ class RetryResult:
 USAGE_KINDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 
+@dataclass
+class CallTally:
+    """One logical model request across a client's own attempts (an empty-content or schema retry, each one a
+    `post_with_retry`): HTTP posts made, the last status, and each usage kind summed — what its model-request line
+    reports (feature 010, FR-003)."""
+    attempts: int = 0
+    status: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+    def add(self, result: RetryResult) -> None:
+        self.attempts += result.attempts
+        self.status = result.response.status_code
+        self.prompt_tokens = _plus(self.prompt_tokens, result.prompt_tokens)
+        self.completion_tokens = _plus(self.completion_tokens, result.completion_tokens)
+        self.total_tokens = _plus(self.total_tokens, result.total_tokens)
+
+    def failed_to_connect(self) -> None:
+        """A post that raised (unreachable, timed out) was still an attempt."""
+        self.attempts += 1
+
+
+def _plus(a: int | None, b: int | None) -> int | None:
+    if b is None:
+        return a
+    return b if a is None else a + b
+
+
 def _usage(response: httpx.Response) -> dict[str, int]:
     """The usage counts a JSON body reports, by kind; empty when the body is missing, non-JSON, or has no usage."""
     try:

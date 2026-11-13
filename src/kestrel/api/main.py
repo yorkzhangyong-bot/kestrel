@@ -180,8 +180,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         fingerprint = None
         try:
             if stored is not None and needs_unreadable_value(body.settings, stored):
-                return refused("credentials_unreadable", resolved, display_name).as_dict()  # nothing is sent
-            result = await run_test(resolved, mode=settings.mode, display_name=display_name,
+                return refused("credentials_unreadable", resolved, display_name,   # nothing is sent
+                               target_id=body.target_id).as_dict()
+            result = await run_test(resolved, mode=settings.mode, display_name=display_name, target_id=body.target_id,
                                     transport=request.app.state.transport, resolver=request.app.state.resolver)
             if result.ok:
                 fingerprint = sessions.fingerprint(resolved)
@@ -306,32 +307,39 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             memory = experience.retrieve_memory(target_id=target.id, family=prompt.family,
                                                  cap=settings.experience_memory_cap)
             query = f"{family_label(prompt.family)} {_recent_conversation(conversation)}".strip()
-            patterns = experience.retrieve_patterns(family=prompt.family, query_text=query,
-                                                    k=settings.experience_pattern_k)
-            return format_hints(purpose=purpose, patterns=patterns, memory=memory)
+            found = experience.retrieve_patterns_with_ids(family=prompt.family, query_text=query,
+                                                          k=settings.experience_pattern_k)
+            # Feature 010 (FR-016): counts and pattern ids, whenever the store was asked — zero when nothing came back.
+            events.memory_retrieval(pattern_ids=[pattern_id for pattern_id, _ in found], memory_count=len(memory))
+            return format_hints(purpose=purpose, patterns=[document for _, document in found], memory=memory)
 
-        try:
-            if body.mode == "adaptive":
-                run = await execute_adaptive_run(
-                    store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
-                    canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
-                    attacker=request.app.state.attacker, judge=request.app.state.judge,
-                    max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
-                    time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
-                    resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
-                    hint_provider=hint_provider)
-            else:
-                run = await execute_run(store, target_id=target.id, prompt=prompt,
-                                        attacker_source=library.attacker_source,
-                                        canaries=store.list_canaries(target.id), resolved=resolved,
-                                        mode=settings.mode, judge=request.app.state.judge,
-                                        transport=request.app.state.transport, resolver=request.app.state.resolver,
-                                        use_prior_experience=body.use_prior_experience)
-        except RunInProgress:
-            return api_error(409, "run_in_progress", "A run against this target is already in progress.")
-        # Write back to the experience store after every run; a failure is loud, never discards the run (FR-006/10).
-        turns = store.list_turns(run.id)
-        write_back(request.app.state.experience, store, run, turns)
+        # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
+        # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
+        with events.run_scope():
+            try:
+                if body.mode == "adaptive":
+                    run = await execute_adaptive_run(
+                        store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
+                        canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
+                        attacker=request.app.state.attacker, judge=request.app.state.judge,
+                        max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
+                        time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
+                        resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
+                        hint_provider=hint_provider)
+                else:
+                    run = await execute_run(store, target_id=target.id, prompt=prompt,
+                                            attacker_source=library.attacker_source,
+                                            canaries=store.list_canaries(target.id), resolved=resolved,
+                                            mode=settings.mode, judge=request.app.state.judge,
+                                            transport=request.app.state.transport,
+                                            resolver=request.app.state.resolver,
+                                            use_prior_experience=body.use_prior_experience)
+            except RunInProgress:
+                return api_error(409, "run_in_progress", "A run against this target is already in progress.")
+            # Write back to the experience store after every run; a failure is loud, never discards the run
+            # (FR-006/10).
+            turns = store.list_turns(run.id)
+            write_back(request.app.state.experience, store, run, turns)
         return run_detail(store.get_run(run.id), turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
@@ -581,8 +589,10 @@ def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
 
 def _schedule_experiment(app: FastAPI, store: TargetStore, settings: Settings, experiment_id: int) -> None:
     """Run the experiment in the background; keep the task referenced so it is not garbage-collected (R4)."""
-    make_judge = (lambda model: app.state.injected_judge) if app.state.injected_judge is not None else None
-    make_attacker = (lambda model: app.state.injected_attacker) if app.state.injected_attacker is not None else None
+    # An injected test double serves every arm; it ignores a pinned prompt (the pin keywords are accepted, not used).
+    make_judge = (lambda model, **_: app.state.injected_judge) if app.state.injected_judge is not None else None
+    make_attacker = ((lambda model, **_: app.state.injected_attacker) if app.state.injected_attacker is not None
+                     else None)
     task = asyncio.create_task(run_experiment(
         store, experiment_id=experiment_id, settings=settings, library=app.state.library,
         experience=app.state.experience, transport=app.state.transport, resolver=app.state.resolver,

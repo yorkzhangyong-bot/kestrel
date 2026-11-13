@@ -133,12 +133,19 @@ class ExperienceStore:
 
     def retrieve_patterns(self, *, family: str, query_text: str, k: int) -> list[str]:
         """Up to k patterns of this family, by semantic similarity to query_text (FR-016/17, SC-014)."""
+        return [document for _, document in self.retrieve_patterns_with_ids(family=family, query_text=query_text,
+                                                                            k=k)]
+
+    def retrieve_patterns_with_ids(self, *, family: str, query_text: str, k: int) -> list[tuple[str, str]]:
+        """The same patterns as `(id, document)` pairs: the ids (`pattern:lib:<prompt_id>`, `pattern:run:<run_id>`)
+        are what the retrieval line names (feature 010, FR-016) — identifiers, never the text."""
         if k <= 0:
             return []
         result = self._collection.query(query_texts=[query_text or ""], n_results=k,
                                         where=_and({"type": "pattern"}, {"family": family}))
+        ids = (result.get("ids") or [[]])[0]
         documents = (result.get("documents") or [[]])[0]
-        return list(documents)
+        return list(zip(ids, documents))
 
     def retrieve_memory(self, *, target_id: int, family: str, cap: int) -> list[MemoryRecord]:
         """This target's memory, by exact id (never semantic): recent-first to cap, keeping same-family successes."""

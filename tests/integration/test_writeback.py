@@ -97,7 +97,7 @@ class FailingExperience:
         raise RuntimeError("store down")
 
 
-def test_write_back_fails_loud_but_keeps_the_run(store, caplog):
+def test_write_back_fails_loud_but_keeps_the_run(store, caplog, json_log):
     tid = a_target(store)
     run = single_turn(store, tid)
     with caplog.at_level(logging.ERROR, logger="kestrel"):
@@ -105,4 +105,8 @@ def test_write_back_fails_loud_but_keeps_the_run(store, caplog):
     assert ok is False
     assert store.get_run(run.id).memory_written is False           # FR-010
     assert store.get_run(run.id).verdict == "failed"               # the attack result is kept
-    assert "write" in caplog.text.lower() and str(run.id) in caplog.text  # SC-011: logged loudly
+    # SC-011: logged loudly. Since feature 010 the run id is a field of the JSON line, not message text
+    # (010/SC-005: the assertion changes only in the shape of the line it reads).
+    line = json_log.of("memory.writeback")[0]
+    assert "write" in caplog.text.lower() and line["run_id"] == run.id and line["level"] == "ERROR"
+    assert line["written"] is False and line["error"] == "RuntimeError"

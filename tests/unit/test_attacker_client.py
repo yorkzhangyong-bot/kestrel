@@ -5,7 +5,6 @@ Async calls are driven through asyncio.run, matching tests/unit/test_judge_clien
 """
 import asyncio
 import json
-import logging
 
 import httpx
 import pytest
@@ -183,15 +182,101 @@ def test_it_stops_after_a_second_empty_message():
     assert len(calls) == 2                        # exactly one retry, then stop
 
 
-def test_an_empty_message_is_logged_with_diagnostics(caplog):
-    with caplog.at_level(logging.WARNING, logger="kestrel"):
-        with pytest.raises(AttackerError):
-            asyncio.run(client(lambda r: httpx.Response(200, json=_empty(reasoning_tokens=400, total=400)))
-                        .next_message(conversation=CONVERSATION, family="system_prompt_leak"))
-    assert "finish_reason=length" in caplog.text and "reasoning_tokens=400" in caplog.text
+def test_an_empty_message_is_logged_with_diagnostics(json_log):
+    # 010/FR-003: the same diagnostics, now as the fields of a `model.empty_content` line instead of message text.
+    with pytest.raises(AttackerError):
+        asyncio.run(client(lambda r: httpx.Response(200, json=_empty(reasoning_tokens=400, total=400)))
+                    .next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    first = json_log.of("model.empty_content")[0]
+    assert first["finish_reason"] == "length" and first["reasoning_tokens"] == 400
+    assert (first["level"], first["attempt"], first["completion_tokens"], first["total_tokens"],
+            first["reasoning_chars"]) == ("WARNING", 1, 400, 400, 40)
 
 
 def test_the_timeout_passed_in_is_honoured():
     sink = {}
     ask(client(returns(sink=sink), timeout=5.0))
     assert sink["timeout"]["read"] == 5.0
+
+
+# ---- feature 010: one model.request line per logical call, and the prompt reference the client sends ----
+
+
+def _ask_logged(handler, **kwargs):
+    return asyncio.run(client(handler, **kwargs).next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+
+
+def test_a_call_emits_one_model_request_line(json_log):  # 010/FR-003, 010/FR-008
+    reply = _ask_logged(returns("<next move>", tokens=150))
+    line = json_log.of("model.request")[0]
+    assert len(json_log.of("model.request")) == 1
+    assert (line["kind"], line["model"], line["prompt"]) == ("attacker", "deepseek/deepseek-v3.2",
+                                                             "attacker:system_prompt_leak@1")
+    assert line["latency_ms"] >= 0 and line["ok"] is True and line["status"] == 200 and line["attempts"] == 1
+    assert (line["prompt_tokens"], line["completion_tokens"], line["total_tokens"]) == (None, None, 150)
+    assert line["cost_usd"] is None
+    assert line["cost_note"] == "unavailable (no configured price for deepseek/deepseek-v3.2)"
+    assert line["message_chars"] == len(reply.message) and "error" not in line and line["level"] == "INFO"
+
+
+def test_a_priced_model_gets_its_cost(json_log):  # 010/FR-008, 010/SC-006
+    from kestrel import events
+    events.configure(prices={"deepseek/deepseek-v3.2": 0.002})
+    _ask_logged(returns(tokens=150))
+    line = json_log.of("model.request")[0]
+    assert abs(line["cost_usd"] - 150 / 1000 * 0.002) < 1e-9 and "cost_note" not in line
+
+
+def test_an_empty_then_good_answer_is_one_line_counting_both_attempts(json_log):  # 010/FR-003
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(200, json=_empty(total=400))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "<move>"}}],
+                                         "usage": {"total_tokens": 120}})
+    _ask_logged(handler)
+    lines = json_log.of("model.request")
+    assert len(lines) == 1 and lines[0]["attempts"] == 2 and lines[0]["total_tokens"] == 520
+
+
+def test_a_failed_call_logs_the_status_and_the_error_class_only(json_log):  # 010/FR-003, 010/FR-009
+    with pytest.raises(AttackerError):
+        _ask_logged(lambda r: httpx.Response(400, json={"error": {"message": "provider says no-such-model"}}))
+    line = json_log.of("model.request")[0]
+    assert line["ok"] is False and line["status"] == 400 and line["error"] == "AttackerError"
+    assert line["level"] == "ERROR" and "message_chars" not in line and line["total_tokens"] is None
+    assert "no-such-model" not in json_log.text()
+
+
+def test_an_unreachable_model_logs_the_transport_error_class(json_log):  # 010/FR-003
+    def handler(request):
+        raise httpx.ConnectError("connection refused to a private address", request=request)
+    with pytest.raises(AttackerError):
+        _ask_logged(handler)
+    line = json_log.of("model.request")[0]
+    assert line["error"] == "ConnectError" and line["status"] is None and line["attempts"] == 1
+    assert "private address" not in json_log.text()
+
+
+def test_the_client_exposes_the_reference_it_sends(json_log):  # 010/FR-007
+    active = AttackerClient(model="m", api_key="k", base_url="https://atk.test/v1")
+    assert active.prompt_ref("system_prompt_leak") == "attacker:system_prompt_leak@1"
+    assert active.prompt_ref("no_such_family") is None
+    pinned = AttackerClient(model="m", api_key="k", base_url="https://atk.test/v1",
+                            system_overrides={"system_prompt_leak": ("PINNED TEXT", "attacker:system_prompt_leak@7")})
+    assert pinned.prompt_ref("system_prompt_leak") == "attacker:system_prompt_leak@7"
+    assert "PINNED TEXT" in pinned._payload([], None, "system_prompt_leak")["messages"][0]["content"]
+    assert pinned.prompt_ref("direct_injection") == "attacker:direct_injection@1"   # other families: active
+    plain = AttackerClient(model="m", api_key="k", base_url="https://atk.test/v1",
+                           system_overrides={"system_prompt_leak": "A PLAIN PINNED TEXT"})
+    assert plain.prompt_ref("system_prompt_leak") is None   # the feature-009 form: the reference is not known
+
+
+def test_a_pinned_reference_is_the_one_on_the_line(json_log):  # 010/FR-007
+    pinned = AttackerClient(model="m", api_key="k", base_url="https://atk.test/v1", sleep=_noop,
+                            transport=httpx.MockTransport(returns()),
+                            system_overrides={"system_prompt_leak": ("PINNED", "attacker:system_prompt_leak@7")})
+    asyncio.run(pinned.next_message(conversation=CONVERSATION, family="system_prompt_leak"))
+    assert json_log.of("model.request")[0]["prompt"] == "attacker:system_prompt_leak@7"

@@ -542,13 +542,14 @@ def memory_retrieval(*, pattern_ids: list[str], memory_count: int) -> None:
          pattern_ids=list(pattern_ids))
 
 
-def memory_writeback(*, written: bool, pattern_written: bool, error: str | None = None, exc_info: Any = None) -> None:
+def memory_writeback(*, written: bool, pattern_written: bool, error: str | None = None, exc_info: Any = None,
+                     message: str | None = None) -> None:
     """The run's write-back result (FR-016), inside its scope; `run.end` reports it as `memory_written`."""
     ctx = _live()
     if ctx is not None:
         ctx.memory_written = written
-    emit("memory.writeback", logging.INFO if written else logging.ERROR, exc_info=exc_info, written=written,
-         pattern_written=pattern_written, **_present({"error": error}))
+    emit("memory.writeback", logging.INFO if written else logging.ERROR, exc_info=exc_info, message=message,
+         written=written, pattern_written=pattern_written, **_present({"error": error}))
 
 
 def experiment_started(*, experiment_id: int, target_id: int, mode: str, families: list[str], reps: int,

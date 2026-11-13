@@ -146,6 +146,7 @@ class ModelTransport:
         self.judge_statuses: list[int] = []
         self.recommendation = "Keep the system prompt out of replies."
         self.usage = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+        self.error_usage: dict | None = None        # usage an error response reports (a retried, billed attempt)
         self.transport = httpx.MockTransport(self.handle)
 
     # -- what a test reads back --
@@ -173,7 +174,10 @@ class ModelTransport:
         else:
             status, content = 200, json.dumps({"recommendation": self.recommendation})
         if status != 200:
-            return httpx.Response(status, json={"error": {"message": "placeholder provider error"}})
+            body: dict = {"error": {"message": "placeholder provider error"}}
+            if self.error_usage is not None:
+                body["usage"] = dict(self.error_usage)
+            return httpx.Response(status, json=body)
         return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}],
                                          "usage": dict(self.usage)})
 
@@ -198,3 +202,35 @@ def real_attacker(model_transport: ModelTransport, *, model: str = "deepseek/dee
     from kestrel.attack.attacker import AttackerClient
     return AttackerClient(model=model, api_key=MODEL_KEY, base_url=MODEL_BASE_URL,
                           transport=model_transport.transport, sleep=no_sleep, system_overrides=system_overrides)
+
+
+def saved_target(store, *, name: str = TARGET_NAME, url: str = TARGET_URL, secret: str = SECRET,
+                 canaries: list[str] | None = None, description: str | None = None):
+    """A saved, permission-confirmed target under the current terms, written straight to the store (feature 010)."""
+    from kestrel.api.main import load_terms
+    target = store.create_target(name=name, url=url, method="POST", headers=[("X-API-Key", secret)],
+                                 body_template='{"message": "{{prompt}}"}', response_path="$.reply",
+                                 terms_version=load_terms().version, description=description)
+    if canaries:
+        store.set_canaries(target.id, canaries)
+    return target
+
+
+def model_settings(settings):
+    """Settings whose model clients — built by the app or by the experiment engine's own factories — reach the
+    offline model transport (feature 010, research D10)."""
+    import dataclasses
+    return dataclasses.replace(settings, judge_api_key=MODEL_KEY, judge_base_url=MODEL_BASE_URL,
+                               attacker_api_key=MODEL_KEY, attacker_base_url=MODEL_BASE_URL)
+
+
+def await_experiment(client, experiment_id: int, timeout_s: float = 30.0) -> dict:
+    """Poll the status endpoint until the experiment leaves 'running'."""
+    import time
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/experiments/{experiment_id}/status").json()
+        if status["status"] != "running":
+            return status
+        time.sleep(0.05)
+    raise AssertionError(f"experiment {experiment_id} did not finish within {timeout_s}s")

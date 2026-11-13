@@ -2,23 +2,21 @@
 
 Order (fixed): claim the run row → send through the connection tester → match canaries → judge only if nothing
 matched → finish the row. hard_evidence is set by a canary match alone, never from the judge (Principle II).
+Feature 010: `run.start` once the row is claimed, one `turn` line for the run's single turn, and the outcome stashed
+for the `run.end` line the caller's run scope emits after the write-back — identifiers, lengths and categories only.
 """
 from __future__ import annotations
 
-import logging
 import time
-from datetime import datetime
 from typing import Awaitable, Callable, Protocol, Sequence
 
-from kestrel import prompt_registry
+from kestrel import events, prompt_registry
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
 from kestrel.judge.client import JudgeError
 from kestrel.judge.verdict import ParsedVerdict
 from kestrel.store import Run, TargetStore
-
-log = logging.getLogger("kestrel")
 
 TOTAL_DEADLINE_S = 90.0   # FR-013: the whole run, start to verdict
 SEND_LIMIT_S = 60.0       # feature 001's send limit, inside the deadline
@@ -80,6 +78,13 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
     run_id = store.claim_run(target_id, prompt_id=prompt.id, prompt_title=prompt.title, prompt_text=prompt.text,
                              family=prompt.family, owasp_category=prompt.owasp_category,
                              attacker_source=attacker_source, use_prior_experience=use_prior_experience)
+    # The judge reference this run would send — the one source of its lines and its provenance (FR-007, D15).
+    judge_prompt = judge_ref(judge) if judge.configured else None
+    events.run_started(store, run_id=run_id, target_id=target_id, mode="single_turn", family=prompt.family,
+                       prompt_id=prompt.id, attacker_source=attacker_source,
+                       judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
+                       turn_budget=1, time_limit_s=int(total_s), use_prior_experience=use_prior_experience)
+    events.turn_started(1)
     deadline = clock() + total_s
     try:
         send_budget = max(0.1, min(send_s, deadline - clock()))
@@ -93,8 +98,8 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
 
         hit = match_canary(reply, canaries)
         if hit is not None:
-            return _finish(store, run_id, prompt, verdict="succeeded", hard_evidence=True, reason=CANARY_REASON,
-                           reply_text=reply, reply_truncated=truncated, tokens_used=0)
+            return _finish(store, run_id, prompt, canary_hit=True, verdict="succeeded", hard_evidence=True,
+                           reason=CANARY_REASON, reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         if not judge.configured:
             return _finish(store, run_id, prompt, verdict="unclear", reason=NO_JUDGE_REASON,
@@ -106,42 +111,37 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
                            reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         # A judge request is made: its prompt version is recorded on the verdict (feature 010, FR-007; D15).
-        judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_ref(judge))
+        judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
+        events.judge_requested(judge_prompt)
         try:
             verdict = await judge.judge(attack=prompt.text, reply=reply, timeout=judge_budget)
         except JudgeError as error:
             return _finish(store, run_id, prompt, verdict="unclear", judge_used=True, judge_model=judge.model,
                            reason=f"The judge could not decide: {error}", reply_text=reply, reply_truncated=truncated,
                            tokens_used=0, judge_prompt_id=judge_prompt_id, judge_prompt_version=judge_prompt_version)
-        return _finish(store, run_id, prompt, verdict=verdict.verdict, hard_evidence=False, judge_used=True,
-                       judge_model=judge.model, reason=verdict.reason, reply_text=reply, reply_truncated=truncated,
-                       tokens_used=verdict.tokens, judge_prompt_id=judge_prompt_id,
+        return _finish(store, run_id, prompt, judged=True, verdict=verdict.verdict, hard_evidence=False,
+                       judge_used=True, judge_model=judge.model, reason=verdict.reason, reply_text=reply,
+                       reply_truncated=truncated, tokens_used=verdict.tokens, judge_prompt_id=judge_prompt_id,
                        judge_prompt_version=judge_prompt_version)
     except Exception:
         # Close the row so the target is not left locked by FR-010; the start-up sweep is only a backstop.
-        store.finish_run(run_id, verdict="unclear", reason="The run failed unexpectedly.")
+        events.run_finished(store.finish_run(run_id, verdict="unclear", reason="The run failed unexpectedly."))
         raise
 
 
-def _finish(store: TargetStore, run_id: int, prompt: AttackPrompt, **fields) -> Run:
+def _finish(store: TargetStore, run_id: int, prompt: AttackPrompt, *, canary_hit: bool = False,
+            judged: bool = False, **fields) -> Run:
+    """Emit the run's one `turn` line, finish the row, and stash the outcome for `run.end` (feature 010). Lengths and
+    categories only: no prompt text, reply, reason or header value (research R13, FR-009)."""
+    reply = fields.get("reply_text")
+    events.turn_ended(turn=1, source=f"library:{prompt.id}", message_chars=len(prompt.text),
+                      reply_chars=None if reply is None else len(reply),
+                      reply_truncated=bool(fields.get("reply_truncated", False)), canary_hit=canary_hit,
+                      hard_evidence=bool(fields.get("hard_evidence", False)), judged=judged,
+                      verdict=fields.get("verdict"), attacker_generated=False)
     run = store.finish_run(run_id, **fields)
-    # One line, no prompt text, reply, reason or header value (research R13).
-    log.info("attack run target_id=%d family=%s prompt=%s verdict=%s hard_evidence=%s judge=%s step=%s duration_ms=%s",
-             run.target_id, run.family, run.prompt_id, run.verdict or "-", run.hard_evidence,
-             run.judge_model or "-", run.failure_step or "-", _duration_ms(run))
+    events.run_finished(run)
     return run
-
-
-def _duration_ms(run: Run) -> int | str:
-    """Milliseconds from start to finish, parsed from the stored ISO timestamps, or '-' if either is missing."""
-    if not run.finished_at:
-        return "-"
-    try:
-        start = datetime.fromisoformat(run.started_at)
-        end = datetime.fromisoformat(run.finished_at)
-    except ValueError:
-        return "-"
-    return int((end - start).total_seconds() * 1000)
 
 
 async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,

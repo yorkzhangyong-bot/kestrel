@@ -1,7 +1,6 @@
 """run_test against httpx.MockTransport targets: research R2 rows 2 and 4 to 13 (rows 1 and 3 come from the API)."""
 import asyncio
 import json
-import logging
 import socket
 
 import httpx
@@ -195,15 +194,30 @@ def test_header_values_echoed_in_a_reply_or_detail_are_masked():
     assert SECRET not in redirect.detail and MASK in redirect.detail
 
 
-def test_one_log_line_without_query_string_header_value_or_reply(caplog):
-    caplog.set_level(logging.INFO, logger="kestrel.connection")
+def test_one_log_line_without_url_name_header_value_or_reply(json_log):
+    # 010/FR-004, 010/FR-009: the connection line keeps the target id, the step, the status and the duration. Since
+    # feature 010 it carries neither the URL in any form nor the display name (it used to show the URL without its
+    # query string, and the name); the header value and the reply stay absent (010/SC-005: the line's shape changed).
     run(make(url="http://h:8001/chat?q={{prompt}}&lang=en", method="GET"), reply({"reply": "the secret reply"}),
-        display_name="Agent")
-    lines = [r.getMessage() for r in caplog.records if r.name == "kestrel.connection"]
-    assert len(lines) == 1
-    line = lines[0]
-    assert "http://h:8001/chat" in line
-    assert "?" not in line and "q=" not in line and "Hello" not in line
-    for expected in ("Agent", "GET", "success", "200", "duration_ms"):
-        assert expected in line
-    assert SECRET not in caplog.text and "the secret reply" not in caplog.text
+        display_name="Agent", target_id=7)
+    assert len(json_log()) == 1
+    line = json_log.of("connection.test")[0]
+    assert line["logger"] == "kestrel.connection" and line["target_id"] == 7 and line["latency_ms"] >= 0
+    assert (line["ok"], line["status"], line["step"]) == (True, 200, "success")
+    text = json_log.text()
+    for absent in ("h:8001", "/chat", "q=", "lang=", "Hello", "Agent", SECRET, "the secret reply"):
+        assert absent not in text, absent
+
+
+def test_an_unsaved_target_has_no_target_id_on_its_line(json_log):  # 010/FR-009
+    run(make(), reply({"reply": "hi"}), display_name="Agent")
+    line = json_log.of("connection.test")[0]
+    assert "target_id" not in line and "run_id" not in line and "Agent" not in json_log.text()
+
+
+def test_a_refused_test_logs_the_same_shape(json_log):  # 010/FR-004, 010/FR-009
+    from kestrel.connection.tester import refused
+    refused("credentials_unreadable", make(), "Agent", target_id=3)
+    line = json_log.of("connection.test")[0]
+    assert (line["target_id"], line["ok"], line["status"], line["step"]) == (3, False, None, "credentials_unreadable")
+    assert "agent.test" not in json_log.text() and "Agent" not in json_log.text()
