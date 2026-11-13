@@ -14,10 +14,13 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
+# Feature 010 (FR-010): a run keeps at most this many of its log lines; the rest reach the stream only, and one
+# `log.truncated` marker row records how many were dropped. A constant, not a setting.
+RUN_LOG_CAP = 1000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS targets (
@@ -166,6 +169,17 @@ CREATE TABLE IF NOT EXISTS experiment_runs (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_experiment_runs_exp ON experiment_runs (experiment_id, arm_id);
+
+-- Added in schema version 8 (feature 010): the structured log lines kept for a run, in emission order (FR-010).
+CREATE TABLE IF NOT EXISTS run_log (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,                        -- 1-based emission order within the run's scope
+    ts TEXT NOT NULL,                            -- copied from the record, for ordering and display
+    event TEXT NOT NULL,                         -- copied from the record, for filtering
+    record TEXT NOT NULL                         -- the exact JSON line that went to the stream
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_run_log_seq ON run_log (run_id, seq);
 """
 
 # Columns added to `runs` in version 3; ALTER-added for a version-2 database (fresh ones get them from SCHEMA).
@@ -289,6 +303,15 @@ class Turn:
 
 
 @dataclass(frozen=True)
+class LogLine:
+    """One kept log line of a run (feature 010, FR-010): its order, time, event and the exact JSON record."""
+    seq: int
+    ts: str
+    event: str
+    record: str
+
+
+@dataclass(frozen=True)
 class StoredRecommendation:
     """A cached, model-generated fix suggestion for one successful run (feature 005, FR-012)."""
     run_id: int
@@ -380,12 +403,13 @@ class TargetStore:
     def _migrate(db: sqlite3.Connection) -> None:
         """Additive migrations. New tables (v2 canaries/runs, v3 turns, v5 report_recommendations) come from the
         schema script (CREATE IF NOT EXISTS); the version-3 columns (adaptive) and version-4 columns (experience)
-        on the existing tables are ALTER-added for an older database (R9). Version 5 adds only a new table."""
+        on the existing tables are ALTER-added for an older database (R9). Versions 5 and 8 (feature 010's run_log)
+        add only a new table."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4", "5", "6"):
+        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
         # An older database may lack the adaptive (v3), experience (v4) and prompt-version (v7) columns on `runs`.
@@ -648,6 +672,22 @@ class TargetStore:
         if row is None:
             raise LookupError(f"No run with id {run_id}.")
         return self._run(row)
+
+    # ---- kept log lines (feature 010, FR-010) ----
+
+    def add_log_line(self, run_id: int, *, seq: int, ts: str, event: str, record: str) -> None:
+        """Keep one log line of a run. `record` is the exact JSON line the stream carried; `(run_id, seq)` is
+        unique."""
+        with self.connect() as db:
+            db.execute("INSERT INTO run_log (run_id, seq, ts, event, record) VALUES (?, ?, ?, ?, ?)",
+                       (run_id, seq, ts, event, record))
+
+    def list_log_lines(self, run_id: int) -> list[LogLine]:
+        """A run's kept log lines in emission order; empty for a run that kept none (or predates schema 8)."""
+        with self.connect() as db:
+            rows = db.execute("SELECT seq, ts, event, record FROM run_log WHERE run_id = ? ORDER BY seq",
+                              (run_id,)).fetchall()
+        return [LogLine(seq=r["seq"], ts=r["ts"], event=r["event"], record=r["record"]) for r in rows]
 
     # ---- report recommendations (feature 005, FR-012/FR-013) ----
 

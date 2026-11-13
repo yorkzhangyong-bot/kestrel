@@ -161,3 +161,16 @@ def _reset_observability():
     events = sys.modules.get("kestrel.events")
     if events is not None:
         events.reset()
+
+
+@pytest.fixture(autouse=True)
+def _offline_run_log(request, monkeypatch):
+    """The screen fetches an opened run's log (feature 010); UI tests that do not stub it would otherwise call a real
+    API on 127.0.0.1:8000. Default to an empty log offline; the viewer tests stub their own. e2e tests use the real
+    API."""
+    if request.node.get_closest_marker("e2e"):
+        return
+    import api_client
+    monkeypatch.setattr(api_client, "get_run_log", lambda run_id: {"run_id": run_id, "lines": [], "kept": 0,
+                                                                   "dropped": 0, "truncated": False},
+                        raising=False)

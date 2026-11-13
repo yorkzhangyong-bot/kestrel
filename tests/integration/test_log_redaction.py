@@ -75,3 +75,12 @@ def test_a_failing_model_request_logs_the_error_class_only(make_client, settings
     failed = [r for r in json_log() if r["event"] == "model.request" and r["ok"] is False]
     assert failed and all(r["error"] == "JudgeError" and r["status"] == 400 for r in failed)
     assert "placeholder provider error" not in json_log.text()
+
+
+def test_the_log_endpoint_serves_none_of_them(make_client, settings, model_transport):  # FR-009, FR-011, SC-002
+    api, runs, seed_text = redaction_runs(make_client, settings, model_transport)
+    for run_id in runs:
+        response = api.get(f"/api/runs/{run_id}/log")
+        assert response.status_code == 200 and response.json()["lines"]
+        for label, value in {**KNOWN, "library seed text": seed_text}.items():
+            assert response.text.count(value) == 0, label

@@ -283,43 +283,43 @@ occurrences across every surface that exists at this point (stream; spans/endpoi
 token, send-failed and truncated states behave as the contracts say; a report leaves the kept log unchanged.
 T048 (Phase 9) executes with this story's tests, after T033.
 
-- [ ] T027 [P] [US3] Unit test `tests/unit/test_run_log_handler.py`: the handler keeps only records marked
+- [X] T027 [P] [US3] Unit test `tests/unit/test_run_log_handler.py`: the handler keeps only records marked
       `kestrel_keep` (a live run scope) — a record with a run id but `kestrel_keep` false (a `bind_run_reference`
       emitter) is ignored: no row, no `seq`, no counter change; it writes `seq` 1..n in order with the exact JSON
       line, keeps the first `RUN_LOG_CAP == 1000` records of a scope and drops the rest from the table, writes one
       `log.truncated` row (`seq == kept + 1`, `kept`, `dropped`) on the scope's `run.end` only when something was
       dropped and then forgets the run's counters, and on a store that raises emits exactly one `log.sink_failed`
       warning per error kind (with `for_run`, no `run_id`) and never raises (010/FR-010, 010/FR-015, 010/SC-009).
-- [ ] T028 [P] [US3] Unit test `tests/unit/test_store_migration_v8.py` (the `test_store_migration_v6.py` pattern
+- [X] T028 [P] [US3] Unit test `tests/unit/test_store_migration_v8.py` (the `test_store_migration_v6.py` pattern
       with a version-7 fixture database): migrates to `"8"` additively, `run_log` exists with
       `UNIQUE (run_id, seq)`, `add_log_line`/`list_log_lines` round-trip in `seq` order, deleting the target
       removes the lines (cascade), an unknown version is still refused (010/FR-010).
-- [ ] T029 [P] [US3] Integration test `tests/integration/test_run_log_api.py`: after a stub run, `GET
+- [X] T029 [P] [US3] Integration test `tests/integration/test_run_log_api.py`: after a stub run, `GET
       /api/runs/{id}/log` returns `RunLogOut` with the kept records in order — `run.start` first, `memory.writeback`
       before `run.end`, `run.end` last — `kept`, `dropped == 0`, `truncated False`; a run row inserted without lines
       returns `lines == []`; an unknown id → 404 `not_found`; hosted mode without the token → 401; a run in
       progress (background experiment) returns the lines so far; no line carries a deny-list string (010/FR-011,
       010/SC-002, 010/SC-003).
-- [ ] T030 [P] [US3] Integration test `tests/integration/test_ui_run_log.py` (AppTest, `api_client` stubbed as in
+- [X] T030 [P] [US3] Integration test `tests/integration/test_ui_run_log.py` (AppTest, `api_client` stubbed as in
       `test_ui_prompt_versions.py`): opening a run shows a "Log" expander; its dataframe has the columns Time,
       Event, Turn, Model, Prompt, Latency ms, Tokens, Cost and one row per line; the raw JSON `st.code` block is
       present; a run whose send failed (`failure_step` set) shows its failure message **and** the expander with its
       lines; an empty list shows "No log lines were recorded for this run."; a truncated log shows the dropped
       count caption; no known secret/URL/name/message/reply string appears in any element (010/FR-012,
       010/SC-002, 010/SC-003).
-- [ ] T031 [US3] `src/kestrel/store.py`: schema v8 — the `run_log` table (`id`, `run_id REFERENCES runs ON
+- [X] T031 [US3] `src/kestrel/store.py`: schema v8 — the `run_log` table (`id`, `run_id REFERENCES runs ON
       DELETE CASCADE`, `seq`, `ts`, `event`, `record TEXT`) and `uq_run_log_seq`; `SCHEMA_VERSION = "8"`;
       `_migrate` accepts `"7"`; `LogLine` dataclass; `add_log_line(run_id, *, seq, ts, event, record)`;
       `list_log_lines(run_id)`; `RUN_LOG_CAP = 1000` (010/FR-010).
-- [ ] T032 [US3] `src/kestrel/logging_setup.py`: `RunLogHandler()` (keeps `kestrel_keep` records only, through the
+- [X] T032 [US3] `src/kestrel/logging_setup.py`: `RunLogHandler()` (keeps `kestrel_keep` records only, through the
       store on the record's own run context — `run_started(store, …)` puts it there; per-run `seq`/`kept`/`dropped`
       counters on that context under the handler's lock, cap, marker on the scope's `run.end`, `handleError` → one
       `log.sink_failed` per error kind), installed once by `configure_logging(settings)` from `create_app`
       (010/FR-010, 010/FR-015).
-- [ ] T033 [US3] `src/kestrel/api/schemas.py` `RunLogOut(run_id, lines: list[dict[str, Any]], kept, dropped,
+- [X] T033 [US3] `src/kestrel/api/schemas.py` `RunLogOut(run_id, lines: list[dict[str, Any]], kept, dropped,
       truncated)`; `src/kestrel/api/main.py` `GET /api/runs/{run_id}/log` (404 `not_found` like `get_run`; parses
       each kept `record`; `truncated = dropped > 0` from the marker row) (010/FR-011).
-- [ ] T034 [US3] `ui/api_client.py` `get_run_log(run_id)`; `ui/app.py` `_render_finding` adds the collapsed
+- [X] T034 [US3] `ui/api_client.py` `get_run_log(run_id)`; `ui/app.py` `_render_finding` adds the collapsed
       `st.expander("Log")` **before its early return for a send-failed run**, so every opened run shows it: the
       dataframe (blank cells for missing fields), the raw `st.code(..., language="json")`, the truncated caption
       and the empty-state caption; errors through `api_message` (010/FR-012).
@@ -480,7 +480,7 @@ Tasks added by the review; each names where it executes.
       judge configured records null judge provenance on `runs` and `run_turns` and its `run.start` has no
       `judge_prompt`; a canary-decided turn records null judge provenance and its turn line's `judge_prompt` is
       null (010/FR-007, 010/SC-001).
-- [ ] T048 [US3] (executes with the US3 tests, after T033) Integration test
+- [X] T048 [US3] (executes with the US3 tests, after T033) Integration test
       `tests/integration/test_run_log_after_report.py` (real clients over `model_transport`): after a stub-target
       run, and after a run truncated at the cap (`RUN_LOG_CAP` monkeypatched low), generating the target's report
       (`GET /api/targets/{id}/report`, `model_transport` answering the recommender request with a canned

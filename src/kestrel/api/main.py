@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,8 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut,
                                  ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
-                                 ExperimentSummaryOut, PromptVersionOut, RateOut, experiment_diff, validate_canaries,
+                                 ExperimentSummaryOut, PromptVersionOut, RateOut, RunLogOut, experiment_diff,
+                                 validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
 from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerClient
@@ -397,6 +399,16 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         except LookupError:
             return api_error(404, "not_found", f"No run with id {run_id}.")
 
+    @app.get("/api/runs/{run_id}/log", response_model=RunLogOut)
+    def get_run_log(run_id: int) -> Any:
+        """A run's kept log lines, in order (feature 010, FR-011): read-only, the records as the stream carried them.
+        A run in progress answers with the lines kept so far; a run without kept lines with an empty list."""
+        try:
+            store.get_run(run_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+        return run_log(run_id, store.list_log_lines(run_id))
+
     @app.get("/api/attack-families")
     def attack_families(request: Request) -> Any:
         library: AttackLibrary | None = request.app.state.library
@@ -594,6 +606,21 @@ def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
                                     reply_truncated=t.reply_truncated, judge_verdict=t.judge_verdict,
                                     judge_reason=t.judge_reason, judge_progress=t.judge_progress)
                             for t in (turns or [])])
+
+
+def run_log(run_id: int, kept_lines: list) -> RunLogOut:
+    """The kept lines parsed back to objects; the `log.truncated` marker (last) gives the drop count."""
+    lines, dropped = [], 0
+    for kept in kept_lines:
+        try:
+            record = json.loads(kept.record)
+        except ValueError:
+            continue   # a row that cannot be read is skipped, never echoed
+        if kept.event == "log.truncated":
+            dropped = int(record.get("dropped", 0))
+        lines.append(record)
+    kept_count = sum(1 for kept in kept_lines if kept.event != "log.truncated")
+    return RunLogOut(run_id=run_id, lines=lines, kept=kept_count, dropped=dropped, truncated=dropped > 0)
 
 
 def _schedule_experiment(app: FastAPI, store: TargetStore, settings: Settings, experiment_id: int) -> None:

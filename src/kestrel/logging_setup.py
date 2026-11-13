@@ -18,6 +18,7 @@ from pathlib import PurePath
 from typing import Any
 
 from kestrel import events
+from kestrel import store as store_module
 
 _NEEDS_QUOTES = re.compile(r'[\s"=]')
 
@@ -107,6 +108,51 @@ class TextFormatter(logging.Formatter):
             return f"{common['ts']} {common['level']} {common['event']}"
 
 
+class RunLogHandler(logging.Handler):
+    """Keeps exactly the records of a live run scope — run.start to run.end — in that run's own database (research D3,
+    FR-010): the exact JSON line the stream carried, in order, up to `store.RUN_LOG_CAP`; later records reach the
+    stream only, and the scope's run.end adds one `log.truncated` marker row with the drop count. A record emitted
+    about a run outside its scope (a run reference: the recommender at report time) is never kept. A store that
+    fails is reported once per error kind and never reaches the run (FR-015)."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.setFormatter(JsonFormatter())
+
+    def emit(self, record: logging.LogRecord) -> None:
+        ctx = getattr(record, "kestrel_ctx", None)
+        if not getattr(record, "kestrel_keep", False) or ctx is None or ctx.store is None or ctx.run_id is None:
+            return
+        try:
+            line = self.format(record)
+            event = getattr(record, "kestrel_event", None) or "message"
+            if ctx.log_kept < store_module.RUN_LOG_CAP:
+                ctx.store.add_log_line(ctx.run_id, seq=ctx.log_kept + 1, ts=timestamp(record.created), event=event,
+                                       record=line)
+                ctx.log_kept += 1
+            else:
+                ctx.log_dropped += 1
+            if event == "run.end" and ctx.log_dropped:
+                marker = {key: value for key, value in json.loads(line).items()
+                          if key in ("ts", "logger") or key in events.SCOPE_FIELDS}
+                marker.update({"level": "WARNING", "event": "log.truncated", "kept": ctx.log_kept,
+                               "dropped": ctx.log_dropped})
+                ordered = {key: marker[key] for key in ("ts", "level", "logger", "event") if key in marker}
+                ordered.update(marker)
+                ctx.store.add_log_line(ctx.run_id, seq=ctx.log_kept + 1, ts=ordered["ts"], event="log.truncated",
+                                       record=_json(ordered))
+        except Exception:
+            self.handleError(record)
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        """One `log.sink_failed` warning per error kind, unscoped (so it is never kept itself), and nothing raised —
+        whatever `logging.raiseExceptions` says (FR-015)."""
+        error = sys.exc_info()[1]
+        kind = type(error).__name__ if error is not None else "Error"
+        events.warn_once("log.sink_failed", kind, error=kind,
+                         for_run=getattr(getattr(record, "kestrel_ctx", None), "run_id", None))
+
+
 class _StderrHandler(logging.StreamHandler):
     """Writes to whatever `sys.stderr` is when a record is emitted (as logging's own last-resort handler does)."""
 
@@ -126,8 +172,9 @@ class _StderrHandler(logging.StreamHandler):
 
 
 def configure_logging(settings: Any) -> logging.Logger:
-    """Install the stream on the `kestrel` logger with the chosen format (idempotent: one stream handler however
-    often it is called), and forget earlier warnings so each configured logger warns once per cause."""
+    """Install the stream on the `kestrel` logger with the chosen format, and the run log handler that keeps each
+    run's records in its own database (idempotent: one of each however often it is called); forget earlier warnings
+    so each configured logger warns once per cause."""
     logger = logging.getLogger("kestrel")
     logger.setLevel(logging.INFO)
     stream = next((h for h in logger.handlers if isinstance(h, _StderrHandler)), None)
@@ -135,5 +182,7 @@ def configure_logging(settings: Any) -> logging.Logger:
         stream = _StderrHandler()
         logger.addHandler(stream)
     stream.setFormatter(TextFormatter() if settings.log_format == "text" else JsonFormatter())
+    if not any(isinstance(h, RunLogHandler) for h in logger.handlers):
+        logger.addHandler(RunLogHandler())
     events.clear_warnings()
     return logger

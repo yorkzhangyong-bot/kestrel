@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import BaseModel, Field
@@ -168,6 +168,16 @@ class RunDetail(RunSummary):
     # message instead of the raw step key; null when the run did not fail to send.
     failure_message: str | None = None
     turns: list[TurnOut] = Field(default_factory=list)
+
+
+class RunLogOut(BaseModel):
+    """A run's kept log lines (feature 010, FR-011): the records its scope emitted, as the stream carried them, in
+    order — the `log.truncated` marker last when the cap was hit. Allow-listed fields only (FR-009)."""
+    run_id: int
+    lines: list[dict[str, Any]]
+    kept: int        # records kept (at most RUN_LOG_CAP)
+    dropped: int     # records not kept because of the cap
+    truncated: bool  # dropped > 0
 
 
 class AttackPromptOut(BaseModel):
