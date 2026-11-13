@@ -58,17 +58,17 @@ deny-list in any line, span attribute, endpoint response or viewer rendering (Pr
 **⚠️ Blocks every user story**: the emission API, the formatter and the settings are what every line is made of.
 T046 (Phase 9) also executes here, after T010 and before any user story.
 
-- [ ] T004 [P] Unit test `tests/unit/test_settings_logging.py`: `KESTREL_LOG_FORMAT` unset → `log_format ==
+- [X] T004 [P] Unit test `tests/unit/test_settings_logging.py`: `KESTREL_LOG_FORMAT` unset → `log_format ==
       "json"`, `text` accepted, any other value raises `SettingsError`; `KESTREL_TRACING` unset → `tracing is
       False`, `on`/`off` accepted, other values raise (010/FR-006, 010/FR-013).
-- [ ] T005 [P] Unit test `tests/unit/test_log_formatter.py`: every formatted record is exactly one JSON object
+- [X] T005 [P] Unit test `tests/unit/test_log_formatter.py`: every formatted record is exactly one JSON object
       with no embedded newline; key order is common fields (`ts`, `level`, `logger`, `event`), then run/turn/
       experiment scope, then event fields; a record without `kestrel_event` becomes `{"event": "message",
       "message": …}`; an attached exception renders `exc_type` and `stack` (`file:line in function` frames) and
       never the exception message; the text formatter renders the same fields as `ts level event key=value …`;
       fields not in the catalogue are dropped and counted once as a `log.unknown_field` warning
       (010/FR-006, 010/FR-009).
-- [ ] T006 [P] Unit test `tests/unit/test_events.py`: `run_scope()` emits nothing by itself; `run_started(ctx,
+- [X] T006 [P] Unit test `tests/unit/test_events.py`: `run_scope()` emits nothing by itself; `run_started(ctx,
       …)` inside it emits `run.start` and from then on every record carries `run_id`, `target_id`, `mode`,
       `family` and `kestrel_keep` true; the scope's exit emits `run.end` as the last record — after whatever the
       scope body did (a fake write-back sets `memory_written`) — with the outcome stashed by `run_finished`,
@@ -81,15 +81,15 @@ T046 (Phase 9) also executes here, after T010 and before any user story.
       shared context object is seen by a record emitted from an `asyncio` child task; the per-turn token/cost
       accumulators reset on each new turn; fields are omitted (not null) when not applicable (010/FR-001,
       010/FR-005, 010/FR-010, 010/SC-005).
-- [ ] T007 [P] Unit test `tests/unit/test_request_cost.py`: `request_cost(908, "m", {"m": 0.0015})` equals
+- [X] T007 [P] Unit test `tests/unit/test_request_cost.py`: `request_cost(908, "m", {"m": 0.0015})` equals
       `908 / 1000 * 0.0015` within 1e-9 (the `pricing.arm_cost` arithmetic); no price → `(None, "unavailable (no
       configured price for m)")`; `total_tokens=None` → `(None, "no usage reported by the provider")`; never `0.0`
       when tokens > 0 and no price; the turn total and the run total each sum priced requests or carry the first
       reason (010/FR-008, 010/SC-006).
-- [ ] T008 [P] Unit test `tests/unit/test_retry.py` (extend): `RetryResult` carries `attempts` (HTTP posts made),
+- [X] T008 [P] Unit test `tests/unit/test_retry.py` (extend): `RetryResult` carries `attempts` (HTTP posts made),
       and `prompt_tokens`/`completion_tokens`/`total_tokens` summed over every attempt, `None` when no attempt
       reported usage, while `tokens` keeps its integer budget semantics (010/FR-003).
-- [ ] T009 Implement `src/kestrel/events.py`: mutable `RunContext` (identifiers, `experiment_id`, `arm`, `keep`,
+- [X] T009 Implement `src/kestrel/events.py`: mutable `RunContext` (identifiers, `experiment_id`, `arm`, `keep`,
       `turn`, `turn_started_at`, `started_at`, the model slugs and prompt references in play, per-turn and per-run
       token/cost accumulators, `judge_requests`, `memory_written`, `outcome`, `run_span`/`turn_span`) in a
       `contextvars.ContextVar`; `run_scope()` (opened by the callers; `run.end` on exit after the body, only when
@@ -104,7 +104,7 @@ T046 (Phase 9) also executes here, after T010 and before any user story.
       field catalogue as the allow-list; `configure(prices=...)` and `request_cost(...)`; every emission wrapped so
       a failure becomes one warning per cause and never raises (010/FR-001, 010/FR-005, 010/FR-008, 010/FR-010,
       010/FR-015).
-- [ ] T010 Implement `src/kestrel/logging_setup.py` (`JsonFormatter`, `TextFormatter`, `configure_logging(settings)`
+- [X] T010 Implement `src/kestrel/logging_setup.py` (`JsonFormatter`, `TextFormatter`, `configure_logging(settings)`
       installing the stderr handler with the chosen formatter on the `kestrel` logger, idempotent; `emit(...,
       message=<constant text>)` keeps a converted line's constant text as the record's message, research D1)
       and replace `_configure_logging` in `src/kestrel/api/main.py` with it; add `log_format` and `tracing` to
@@ -157,7 +157,7 @@ fields.
       `model_transport`): a two-arm stub experiment emits `experiment.start` (arms, caps), every record of its runs
       — `memory.writeback` included — carries `run_id`, `experiment_id` and `arm`, an arm that pins `judge@1`
       shows `prompt == "judge@1"` on its judge lines, a cap stop emits `experiment.cap` (cap, completed_runs,
-      tokens_used), and `experiment.end` carries status and reason; each run's `run.end` is its last record and
+      tokens_used), and `experiment.end` carries status and stopped_reason; each run's `run.end` is its last record and
       follows its `memory.writeback` (010/FR-005, 010/FR-007, 010/FR-016, 010/SC-008).
 - [ ] T014 [P] [US1] Unit tests in `tests/unit/test_attacker_client.py` and `tests/unit/test_judge_client.py`
       (extend): a model call emits one `model.request` with kind, model, prompt reference, `latency_ms ≥ 0`,
@@ -217,7 +217,7 @@ fields.
       `events.run_scope()` around each `_run_rep`'s run function **and** its `write_back(...)`, so every record of
       the run — the write-back line included — carries the experiment id and arm and `run.end` is last; emit
       `experiment.start` (campaign, caps, arms with their pinned prompt), `experiment.cap` (cap, completed_runs,
-      tokens_used, elapsed_s) and `experiment.end` (status, reason, completed_runs, tokens_used, duration_ms,
+      tokens_used, elapsed_s) and `experiment.end` (status, stopped_reason, completed_runs, tokens_used, duration_ms,
       `error` on failure, replacing the free-text exception line's message with class + frames)
       (010/FR-005, 010/FR-016).
 - [ ] T022 [US1] `src/kestrel/report/recommend.py`: bind the finding's run with `events.bind_run_reference(run)`
@@ -341,7 +341,7 @@ the bound; no trace header reaches the target.
       module-level `opentelemetry` import (parse it with `ast`); flag off → `configure_tracing` returns the no-op
       without touching `opentelemetry.exporter.otlp.proto.http.trace_exporter` (the module is blocked with
       `sys.modules[...] = None`; no error, no warning, `enabled False`); flag on + blocked import → exactly one
-      `tracing.unavailable` warning (`reason package_missing`, `extra kestrel[otel]`) and the no-op; flag on +
+      `tracing.unavailable` warning (`cause package_missing`, `extra kestrel[otel]`) and the no-op; flag on +
       `span_collector` → `run_span`/`span(parent=…)` produce `kestrel.run` with `kestrel.run_id` and **no parent**,
       children `kestrel.turn`, `kestrel.model_request`, `kestrel.target_request` sharing one trace id, the global
       tracer provider untouched (`trace.get_tracer_provider()` is not Kestrel's), `service.name == "kestrel"` by
@@ -454,7 +454,7 @@ one warning per cause; no extra calls.
 
 Tasks added by the review; each names where it executes.
 
-- [ ] T046 (executes in Phase 2, after T010, before any story) Provenance records the version actually used, from
+- [X] T046 (executes in Phase 2, after T010, before any story) Provenance records the version actually used, from
       the single source the lines use (research D15): `src/kestrel/attack/graph.py::run_adaptive` takes the
       attacker and judge references from the clients (`attacker.prompt_ref(seed_prompt.family)`,
       `judge.judge_prompt_ref` — T016/T017 add the accessors; until then from `load_prompt(...)[1]`) instead of
@@ -567,3 +567,8 @@ LOW findings fixed in the same pass: C8 (`turn.judge_prompt` equals the provenan
 (a turn or run with no model request costs 0, null tokens), C10 (single-turn `run.start` caps), C11 (the
 `log.truncated` marker carries the common fields), C12 ("once" = per configured logger/tracer, one per process
 start), C13 (a failed model request carries the usage the provider reported, null when none — FR-003).
+
+Found while writing T025's test: C14 — the catalogue named two category fields `reason` (`experiment.end`,
+`tracing.unavailable`) while T025 asserts no field is called `reason` (the judge's free text must have no field);
+renamed to `stopped_reason` (the stored column's name) and `cause`. `tracing.span_failed` and `log.format_failed`
+were added for the span and formatting failures FR-015 names.

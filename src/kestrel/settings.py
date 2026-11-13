@@ -32,6 +32,7 @@ DEFAULT_EXPERIMENT_TOKEN_BUDGET = 500_000
 DEFAULT_EXPERIMENT_WALL_CLOCK_S = 3600
 
 Mode = Literal["local", "hosted"]
+LogFormat = Literal["json", "text"]
 
 
 class SettingsError(Exception):
@@ -62,6 +63,9 @@ class Settings:
     experiment_max_runs: int = DEFAULT_EXPERIMENT_MAX_RUNS
     experiment_token_budget: int = DEFAULT_EXPERIMENT_TOKEN_BUDGET
     experiment_wall_clock_s: int = DEFAULT_EXPERIMENT_WALL_CLOCK_S
+    # Feature 010: the stream's format (JSON Lines by default) and the optional OpenTelemetry tracing flag.
+    log_format: LogFormat = "json"
+    tracing: bool = False
 
     @property
     def judge_configured(self) -> bool:
@@ -137,7 +141,16 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             raise SettingsError(f"{name} must be greater than 0, not {value}.")
         return value
 
-    return Settings(mode=mode, db_path=db_path, key_file=key_file,
+    raw_format = setting("KESTREL_LOG_FORMAT", "json")
+    if raw_format not in ("json", "text"):
+        raise SettingsError(f"KESTREL_LOG_FORMAT must be 'json' or 'text', not {raw_format!r}.")
+    log_format: LogFormat = raw_format  # type: ignore[assignment]
+    raw_tracing = setting("KESTREL_TRACING", "off")
+    if raw_tracing not in ("on", "off"):
+        raise SettingsError(f"KESTREL_TRACING must be 'on' or 'off', not {raw_tracing!r}.")
+
+    return Settings(mode=mode, db_path=db_path, key_file=key_file, log_format=log_format,
+                    tracing=raw_tracing == "on",
                     secret_key=env.get("KESTREL_SECRET_KEY") or None,
                     api_token=setting("KESTREL_API_TOKEN") or None,
                     judge_model=setting("KESTREL_JUDGE_MODEL", DEFAULT_JUDGE_MODEL),

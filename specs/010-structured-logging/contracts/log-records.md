@@ -44,10 +44,10 @@ the common fields, `message`, `exc_type`, `stack`) is dropped and reported once 
 | `memory.writeback` | INFO (ERROR when failed) | once per run, inside the run's scope, before `run.end` (a direct call outside a scope binds the run as a reference: the line names the run and goes to the stream only) | `written`, `pattern_written`, `error` (class name, only when failed) |
 | `memory.flag_failed` | ERROR | a failed write-back could not even be flagged on the run row | `exc_type`, `stack` |
 | `recommendation.unavailable` | WARNING | report time: the recommender call for a finding failed, so the report omits that recommendation | `error` (class name) |
-| `run.end` | INFO | once, the last record of the run's scope, after the write-back (every exit path) | `verdict` (\| null), `hard_evidence`, `stopping_condition` (\| null), `failure_step` (\| null), `judge_used` (at least one judge request was made), `turns_used`, `tokens_used`, `succeeded_turn` (\| null), `memory_written` (bool \| null: null when no write-back was attempted), `duration_ms`, `cost_usd` (number \| null), `cost_note` (only when null), `error` (class name, only when the run failed unexpectedly) |
+| `run.end` | INFO (ERROR when `error` is set) | once, the last record of the run's scope, after the write-back (every exit path) | `verdict` (\| null), `hard_evidence`, `stopping_condition` (\| null), `failure_step` (\| null), `judge_used` (at least one judge request was made), `turns_used`, `tokens_used`, `succeeded_turn` (\| null), `memory_written` (bool \| null: null when no write-back was attempted), `duration_ms`, `cost_usd` (number \| null), `cost_note` (only when null), `error` (class name, only when the run failed unexpectedly) |
 | `experiment.start` | INFO | once when an experiment starts executing | `experiment_id`, `target_id`, `mode`, `families`, `reps`, `max_runs`, `token_budget_total`, `wall_clock_s`, `arms` (list of `{label, attacker_model, judge_model, use_prior_experience, turn_cap, token_budget, write_back, prompt}`) |
 | `experiment.cap` | WARNING | once, when a hard cap stops the experiment | `experiment_id`, `cap` (`max_runs`/`token_budget`/`wall_clock`), `completed_runs`, `tokens_used`, `elapsed_s` |
-| `experiment.end` | INFO (ERROR when failed) | once when the experiment finishes, stops or fails | `experiment_id`, `status`, `reason`, `completed_runs`, `tokens_used`, `duration_ms`, `error` (class name, only when failed) |
+| `experiment.end` | INFO (ERROR when failed) | once when the experiment finishes, stops or fails | `experiment_id`, `status`, `stopped_reason` (`completed`, the cap, or `failed:<class>` — the stored value), `completed_runs`, `tokens_used`, `duration_ms`, `error` (class name, only when failed) |
 | `library.unavailable` | WARNING | start-up: the attack library could not be loaded | `exc_type` |
 | `experience.unavailable` | ERROR | start-up: the experience store cannot be used | `exc_type`, `reason_kind` (`embedding_function_mismatch`/`model_download`/`other`) |
 | `experience.seed_failed` | ERROR | start-up: the store could not be seeded | `exc_type`, `reason_kind` |
@@ -56,8 +56,10 @@ the common fields, `message`, `exc_type`, `stack`) is dropped and reported once 
 | `log.truncated` | WARNING (kept row only, never on the stream) | written to the kept log when the cap was hit, as its last row | the common and run-scope fields copied from the run's `run.end`, `kept`, `dropped` |
 | `log.sink_failed` | WARNING | once per error kind per process | `error` (class name), `for_run` (int) |
 | `log.unknown_field` | WARNING | once per field name per process: an emitter passed a field outside the catalogue (the field is dropped) | `field`, `for_event` |
-| `tracing.unavailable` | WARNING | once at start-up: flag on, packages missing | `reason` (`package_missing`), `extra` (`kestrel[otel]`) |
+| `tracing.unavailable` | WARNING | once at start-up: flag on, packages missing | `cause` (`package_missing`), `extra` (`kestrel[otel]`) |
 | `tracing.export_failed` | WARNING | once per process: the collector refused the spans (a failure result) or could not be reached (an exception) | `error` (class name or `failure_result`) |
+| `tracing.span_failed` | WARNING | once per cause: a span could not be created, annotated or ended (the run continues untraced for that span) | `error` (class name) |
+| `log.format_failed` | WARNING | once per cause: a record could not be rendered in full (the line is written with its common fields only) | `error` (class name), `for_event` |
 | `message` | any | every pre-existing free-text line that carries no failure (start-up paths and counts, key file, interrupted runs, store seeding count, experience-store version, …) | `message` (constant text), and its values as fields: `path`, `count`, `stored_version`, `expected_version` |
 
 ## Example lines (illustrative values; shown pretty-printed, emitted on one line)

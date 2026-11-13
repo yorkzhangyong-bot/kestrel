@@ -198,6 +198,22 @@ def load_prompt(prompt_id: str) -> tuple[str, str]:
     return versions[version].text, f"{prompt_id}@{version}"
 
 
+def active_ref(prompt_id: str) -> str | None:
+    """The reference (`id@N`) of the active version, or None when the id has no prompt file."""
+    try:
+        return load_prompt(prompt_id)[1]
+    except PromptNotRegistered:
+        return None
+
+
+def split_ref(ref: str | None) -> tuple[str | None, str | None]:
+    """A prompt reference `id@N` as the provenance columns `(id, N)` (feature 010, FR-007); (None, None) for none."""
+    if not ref or "@" not in ref:
+        return None, None
+    prompt_id, _, version = ref.rpartition("@")
+    return (prompt_id, version) if prompt_id and version else (None, None)
+
+
 def registry() -> list[PromptEntry]:
     """The active entry of every registered prompt, sorted by id (FR-001)."""
     out: list[PromptEntry] = []

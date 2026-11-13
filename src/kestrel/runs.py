@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from typing import Awaitable, Callable, Protocol, Sequence
 
+from kestrel import prompt_registry
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
@@ -37,6 +38,24 @@ class Judge(Protocol):
 
 
 Sender = Callable[..., Awaitable[TestOutcome]]
+
+
+def judge_ref(judge) -> str | None:
+    """The judge prompt reference (`judge@N`) the client sends — its `judge_prompt_ref`, the pinned version for a
+    pinned A/B arm — or the registry's active one for a client double without the accessor (research D15). The one
+    source for both the recorded provenance and the log lines (FR-007)."""
+    if hasattr(judge, "judge_prompt_ref"):
+        return judge.judge_prompt_ref
+    return prompt_registry.active_ref(prompt_registry.JUDGE_ID)
+
+
+def attacker_ref(attacker, family: str) -> str | None:
+    """The attacker prompt reference (`attacker:<family>@N`) the client sends for this family, or the registry's
+    active one for a client double without `prompt_ref` (research D15)."""
+    prompt_ref = getattr(attacker, "prompt_ref", None)
+    if prompt_ref is not None:
+        return prompt_ref(family)
+    return prompt_registry.active_ref(prompt_registry.attacker_id(family))
 
 
 def match_canary(reply: str, canaries: Sequence[str]) -> str | None:
@@ -86,15 +105,18 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
             return _finish(store, run_id, prompt, verdict="unclear", reason=DEADLINE_REASON,
                            reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
+        # A judge request is made: its prompt version is recorded on the verdict (feature 010, FR-007; D15).
+        judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_ref(judge))
         try:
             verdict = await judge.judge(attack=prompt.text, reply=reply, timeout=judge_budget)
         except JudgeError as error:
             return _finish(store, run_id, prompt, verdict="unclear", judge_used=True, judge_model=judge.model,
                            reason=f"The judge could not decide: {error}", reply_text=reply, reply_truncated=truncated,
-                           tokens_used=0)
+                           tokens_used=0, judge_prompt_id=judge_prompt_id, judge_prompt_version=judge_prompt_version)
         return _finish(store, run_id, prompt, verdict=verdict.verdict, hard_evidence=False, judge_used=True,
                        judge_model=judge.model, reason=verdict.reason, reply_text=reply, reply_truncated=truncated,
-                       tokens_used=verdict.tokens)
+                       tokens_used=verdict.tokens, judge_prompt_id=judge_prompt_id,
+                       judge_prompt_version=judge_prompt_version)
     except Exception:
         # Close the row so the target is not left locked by FR-010; the start-up sweep is only a backstop.
         store.finish_run(run_id, verdict="unclear", reason="The run failed unexpectedly.")

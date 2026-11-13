@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import logging
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +19,7 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
                                  ExperimentSummaryOut, PromptVersionOut, RateOut, experiment_diff, validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
-from kestrel import prompt_registry
+from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, family_label, load_library
 from kestrel.experience.hints import format_hints
@@ -38,6 +36,7 @@ from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
+from kestrel.logging_setup import configure_logging
 from kestrel.runs import execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
@@ -45,7 +44,6 @@ from kestrel.settings import Settings, load_settings
 from kestrel.store import (ExperimentInProgress, NameTaken, Run, RunInProgress, Target, TargetNotFound,
                            TargetStore, utc_now)
 
-LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
 TERMS_PATH = Path(__file__).with_name("terms.md")
 NOT_TESTED = "Run a successful test with these settings before saving."
@@ -83,7 +81,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker
     and an experience store (a stub-backed one keeps tests offline)."""
     settings = settings or load_settings()
-    logger = _configure_logging()
+    logger = configure_logging(settings)            # the JSON (or text) stream of the `kestrel` logger (feature 010)
+    events.configure(prices=settings.model_prices)  # every model-request line is costed with the feature-007 prices
     key, _source = load_or_create_key(settings, logger)
     vault = Vault(key)
     terms = load_terms()
@@ -706,13 +705,3 @@ def _field_error(error: dict[str, Any]) -> dict[str, str]:
     message = str(error.get("msg") or "Invalid value.").removeprefix("Value error, ")
     return {"field": field, "message": message}
 
-
-def _configure_logging() -> logging.Logger:
-    logger = logging.getLogger("kestrel")
-    logger.setLevel(logging.INFO)
-    if not any(getattr(handler, "_kestrel", False) for handler in logger.handlers):
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter(LOG_FORMAT))
-        handler._kestrel = True  # type: ignore[attr-defined]
-        logger.addHandler(handler)
-    return logger

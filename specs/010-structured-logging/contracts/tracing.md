@@ -21,7 +21,7 @@ test suite drives the real adapter.
 |------|----------|-----------|--------|
 | off | any | any | `configure_tracing` returns the no-op tracer **without importing** anything from the tracing packages (and `kestrel/tracing.py` has no module-level import of one); no span anywhere |
 | on | present | reachable | one trace per run, delivered in batches by the SDK's background processor; spans never block the run |
-| on | absent | — | exactly one `tracing.unavailable` warning at start-up (`reason: package_missing`, `extra: kestrel[otel]`); runs proceed exactly as with the flag off |
+| on | absent | — | exactly one `tracing.unavailable` warning at start-up (`cause: package_missing`, `extra: kestrel[otel]`); runs proceed exactly as with the flag off |
 | on | present | unreachable, or refusing the spans | runs proceed unchanged; exactly one `tracing.export_failed` warning per process (`error`: the exception's class name, or `failure_result`); spans are dropped; shutdown waits at most 5 s |
 
 The "exactly one warning" rule covers both failure shapes and the exporter's own logging: Kestrel wraps the

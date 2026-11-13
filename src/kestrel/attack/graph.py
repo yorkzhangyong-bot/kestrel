@@ -20,7 +20,7 @@ from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
 from kestrel.judge.client import JudgeError
-from kestrel.runs import match_canary
+from kestrel.runs import attacker_ref, judge_ref, match_canary
 from kestrel.secrets import mask_values
 from kestrel.store import Run, TargetStore
 
@@ -86,15 +86,15 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                              use_prior_experience=use_prior_experience)
     deadline = clock() + time_limit_s
     secrets = [value for _, value in resolved.headers]
-    # Prompt-version provenance (feature 009, FR-003): the active attacker (per family) and judge prompt versions
-    # are constant for the run; resolve once from the registry and attach them to the turns/verdict they produce.
-    attacker_prompt_id: str | None = prompt_registry.attacker_id(seed_prompt.family)
-    try:
-        attacker_prompt_version: str | None = prompt_registry.active_version(attacker_prompt_id)
-    except prompt_registry.PromptNotRegistered:
-        attacker_prompt_id = attacker_prompt_version = None
-    judge_prompt_id = prompt_registry.JUDGE_ID
-    judge_prompt_version = prompt_registry.active_version(judge_prompt_id)
+    # Prompt-version provenance (feature 009, FR-003): the attacker (per family) and judge prompt versions are
+    # constant for the run. Feature 010 (FR-007, D15): they are the references the clients actually send — a pinned
+    # A/B arm's version, not the active one — the same source the log lines use; judge provenance is recorded only
+    # when a judge request was made.
+    attacker_prompt = attacker_ref(attacker, seed_prompt.family)
+    judge_prompt = judge_ref(judge) if judge.configured else None
+    attacker_prompt_id, attacker_prompt_version = prompt_registry.split_ref(attacker_prompt)
+    judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
+    judge_requests = 0
 
     def remaining() -> float:
         return deadline - clock()
@@ -139,11 +139,13 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
         return {}
 
     async def judge_node(state: _State) -> _State:
+        nonlocal judge_requests
         if not judge.configured:
             return {"judge_used": True, "last_verdict": "unclear", "last_reason": "No judge is configured.",
                     "last_progress": state["last_progress"]}
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"]),
                                                       ("agent", state["pending_reply"] or "")]
+        judge_requests += 1
         try:
             verdict = await judge.judge(attack=state["pending_message"], reply=state["pending_reply"] or "",
                                         conversation=_format(conversation),
@@ -224,8 +226,8 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                            failure_step=outcome.get("failure_step"), stopping_condition=outcome["stopping_condition"],
                            succeeded_turn=outcome["succeeded_turn"], turns_used=final["turns_used"],
                            tokens_used=final["tokens_used"],
-                           judge_prompt_id=judge_prompt_id if outcome["judge_used"] else None,
-                           judge_prompt_version=judge_prompt_version if outcome["judge_used"] else None)
+                           judge_prompt_id=judge_prompt_id if judge_requests else None,
+                           judge_prompt_version=judge_prompt_version if judge_requests else None)
     log.info("adaptive run target_id=%d family=%s verdict=%s hard_evidence=%s stop=%s attacker=%s judge=%s "
              "turns=%s tokens=%s", run.target_id, run.family, run.verdict or "-", run.hard_evidence,
              run.stopping_condition, attacker.model, judge.model if outcome["judge_used"] else "-",
