@@ -2,7 +2,7 @@
 
 Autonomous red-teaming agent for tool-using AI agents: register an HTTP chat target you own, pick an attack
 family, and Kestrel runs single-turn or adaptive multi-turn attacks, judges them (hard evidence first), learns
-across runs, and reports mapped to the OWASP LLM Top 10. Features 001–008 are merged.
+across runs, and reports mapped to the OWASP LLM Top 10. Features 001–009 are merged.
 
 ## Working with me
 - Keep replies short.
