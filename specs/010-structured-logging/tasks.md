@@ -43,11 +43,13 @@ deny-list in any line, span attribute, endpoint response or viewer rendering (Pr
       parsed records in order), `span_collector` (an `InMemorySpanExporter` from
       `opentelemetry.sdk.trace.export.in_memory_span_exporter`, passed to `configure_tracing(..., exporter=)`),
       `model_transport` (an `httpx.MockTransport` answering the attacker/judge/recommender POSTs with canned
-      OpenAI-style JSON bodies carrying a `usage` object and recording every request's headers, so the real
-      clients run offline), the known-string constants (`SECRET`, `TARGET_URL`, `TARGET_NAME`, `ATTACK_TEXT`,
-      `REPLY_TEXT`) the redaction tests reuse, and the SC-007 switch: when `KESTREL_TEST_BLOCK_OTLP=1` is set,
-      a session-start hook places `None` in `sys.modules` for `opentelemetry.exporter.otlp.proto.http.trace_exporter`
-      and the tests marked as needing the real exporter are skipped (010/SC-001, 010/SC-002, 010/SC-007).
+      OpenAI-style JSON bodies carrying a `usage` object **and** the stub target's sends, routed by host, recording
+      every request's headers, so the real clients — injected, or built by the experiment engine's own factories
+      over the app's `transport` — run offline), the known-string constants (`SECRET`, `TARGET_URL`, `TARGET_NAME`,
+      `ATTACK_TEXT`, `REPLY_TEXT`) the redaction tests reuse, an autouse reset of the module-level logging/tracing/
+      price state between tests, and the SC-007 switch: when `KESTREL_TEST_BLOCK_OTLP=1` is set, conftest places
+      `None` in `sys.modules` for `opentelemetry.exporter.otlp.proto.http.trace_exporter` before any test runs and
+      the tests marked as needing the real exporter are skipped (010/SC-001, 010/SC-002, 010/SC-007).
 
 ---
 
@@ -91,8 +93,9 @@ T046 (Phase 9) also executes here, after T010 and before any user story.
       `turn`, `turn_started_at`, `started_at`, the model slugs and prompt references in play, per-turn and per-run
       token/cost accumulators, `judge_requests`, `memory_written`, `outcome`, `run_span`/`turn_span`) in a
       `contextvars.ContextVar`; `run_scope()` (opened by the callers; `run.end` on exit after the body, only when
-      `run.start` was emitted), `run_started(ctx, …)` (emits `run.start`; null-safe with no scope open: `run_id`
-      null, not kept, no error), `run_finished(ctx, run)` (stashes the outcome; a no-op with no scope open),
+      `run.start` was emitted), `run_started(ctx, …)` (receives the run's store and puts it on the context for the
+      `RunLogHandler`; emits `run.start`; null-safe with no scope open: `run_id` null, not kept, no error),
+      `run_finished(ctx, run)` (stashes the outcome; a no-op with no scope open),
       `bind_experiment(...)`, `bind_run_reference(run)` (non-emitting, `keep` false); `emit(event,
       level=INFO, **fields)` → `log.log(level, event, extra={"kestrel_event", "kestrel_fields", "kestrel_keep"})`
       with the context merged in; the per-event helpers of `contracts/log-records.md` (`run_started`, `turn`,
@@ -101,8 +104,9 @@ T046 (Phase 9) also executes here, after T010 and before any user story.
       field catalogue as the allow-list; `configure(prices=...)` and `request_cost(...)`; every emission wrapped so
       a failure becomes one warning per cause and never raises (010/FR-001, 010/FR-005, 010/FR-008, 010/FR-010,
       010/FR-015).
-- [ ] T010 Implement `src/kestrel/logging_setup.py` (`JsonFormatter`, `TextFormatter`, `configure_logging(settings,
-      store=None)` installing the stderr handler with the chosen formatter on the `kestrel` logger, idempotent)
+- [ ] T010 Implement `src/kestrel/logging_setup.py` (`JsonFormatter`, `TextFormatter`, `configure_logging(settings)`
+      installing the stderr handler with the chosen formatter on the `kestrel` logger, idempotent; `emit(...,
+      message=<constant text>)` keeps a converted line's constant text as the record's message, research D1)
       and replace `_configure_logging` in `src/kestrel/api/main.py` with it; add `log_format` and `tracing` to
       `src/kestrel/settings.py` (`KESTREL_LOG_FORMAT`, `KESTREL_TRACING`, `SettingsError` on other values); extend
       `src/kestrel/retry.py` `RetryResult` with `attempts`, `prompt_tokens`, `completion_tokens` summed over
@@ -177,9 +181,11 @@ fields.
       `model.empty_content` with fields (010/FR-003, 010/FR-007).
 - [ ] T017 [US1] `src/kestrel/judge/client.py`: the same for `judge()` (kind=judge, `verdict`, `hard_evidence
       False`, `ctx.judge_requests += 1`) and `recommend()` (kind=recommender), attempts summed across
-      `_structured_call`'s schema retry and `RetryResult.attempts`; `system_prompt` becomes `(text, ref)` and the
-      client exposes `judge_prompt_ref`/`recommender_prompt_ref`; `src/kestrel/experiments/engine.py::
-      _prompt_overrides` returns the references alongside the texts (010/FR-003, 010/FR-007).
+      `_structured_call`'s schema retry and `RetryResult.attempts`; `system_prompt` also accepts `(text, ref)` (a
+      plain text, the feature-009 form, keeps working with an unknown reference) and the client exposes
+      `judge_prompt_ref`/`recommender_prompt_ref`; `src/kestrel/experiments/engine.py::_prompt_overrides` returns the
+      references alongside the texts; `api/main.py::_schedule_experiment`'s injected-double factories accept the pin
+      keywords (010/FR-003, 010/FR-007).
 - [ ] T018 [US1] `src/kestrel/runs.py` and `src/kestrel/api/main.py`: `start_run` opens `events.run_scope()`
       around the run function **and** `write_back(...)`; `execute_run` calls `run_started(...)` right after
       `claim_run` (single-turn deadline as `time_limit_s`, the judge model and `judge.judge_prompt_ref`, falling
@@ -204,8 +210,9 @@ fields.
       the store (prior experience on, store available): `pattern_count`, `memory_count` (zero when nothing came
       back), `pattern_ids` (empty when none), `warm = pattern_count > 0`; a run with prior experience off asks for
       nothing and emits no line; `src/kestrel/experience/writeback.py` emits `memory.writeback` (`written`,
-      `pattern_written`, `error` class name on failure) and records `memory_written` on the run context
-      (010/FR-016).
+      `pattern_written`, `error` class name on failure; a direct call with no scope for that run binds the run as a
+      reference so the line still names it, stream-only) and records `memory_written` on the run context; a failed
+      flag write is `memory.flag_failed` (010/FR-016).
 - [ ] T021 [US1] `src/kestrel/experiments/engine.py`: `bind_experiment(experiment.id, arm.label)` and, inside it,
       `events.run_scope()` around each `_run_rep`'s run function **and** its `write_back(...)`, so every record of
       the run — the write-back line included — carries the experiment id and arm and `run.end` is last; emit
@@ -254,10 +261,11 @@ occurrences across every surface that exists at this point (stream; spans/endpoi
       key-mismatch error line (the constant "encryption key doesn't match" message → `key.mismatch`, no exception)
       and the delete-target memory failure (`logger.exception("could not delete experience memory …")` →
       `experience.delete_failed` with `exc_type` and `target_id`), while the start-up lines carrying only paths and
-      counts stay `message` events with their values as fields; `src/kestrel/secrets.py`,
-      `src/kestrel/experience/store.py` (version warning), `src/kestrel/experience/writeback.py` and
-      `src/kestrel/attack/graph.py` (`log.exception` → event with `exc_type`/`stack`, no message),
-      `src/kestrel/report/recommend.py`. Move the existing secret-count assertions of
+      counts stay `message` events with their values as fields (`path`, `count`, versions) and a constant
+      `message`; `src/kestrel/secrets.py`, `src/kestrel/experience/store.py` (version warning),
+      `src/kestrel/experience/writeback.py` and `src/kestrel/attack/graph.py` (`log.exception` →
+      `memory.retrieval_failed` with `exc_type`/`stack`, no message), `src/kestrel/report/recommend.py`
+      (`recommendation.unavailable`). Move the existing secret-count assertions of
       `tests/integration/test_api_connection_tests.py`, `test_api_save.py`, `test_api_manage.py` and
       `test_experiment_secrets.py` from `caplog.text` to the rendered JSON lines (`json_log`), so they keep
       counting values rather than event names; delete or weaken none of them (010/FR-006, 010/FR-009,
@@ -303,10 +311,11 @@ T048 (Phase 9) executes with this story's tests, after T033.
       DELETE CASCADE`, `seq`, `ts`, `event`, `record TEXT`) and `uq_run_log_seq`; `SCHEMA_VERSION = "8"`;
       `_migrate` accepts `"7"`; `LogLine` dataclass; `add_log_line(run_id, *, seq, ts, event, record)`;
       `list_log_lines(run_id)`; `RUN_LOG_CAP = 1000` (010/FR-010).
-- [ ] T032 [US3] `src/kestrel/logging_setup.py`: `RunLogHandler(store)` (keeps `kestrel_keep` records only;
-      per-run `kept`/`dropped` counters under a lock, cap, marker on the scope's `run.end`, `handleError` → one
-      `log.sink_failed` per error kind), installed by `configure_logging(settings, store)` from `create_app` after
-      the store exists (010/FR-010, 010/FR-015).
+- [ ] T032 [US3] `src/kestrel/logging_setup.py`: `RunLogHandler()` (keeps `kestrel_keep` records only, through the
+      store on the record's own run context — `run_started(store, …)` puts it there; per-run `seq`/`kept`/`dropped`
+      counters on that context under the handler's lock, cap, marker on the scope's `run.end`, `handleError` → one
+      `log.sink_failed` per error kind), installed once by `configure_logging(settings)` from `create_app`
+      (010/FR-010, 010/FR-015).
 - [ ] T033 [US3] `src/kestrel/api/schemas.py` `RunLogOut(run_id, lines: list[dict[str, Any]], kept, dropped,
       truncated)`; `src/kestrel/api/main.py` `GET /api/runs/{run_id}/log` (404 `not_found` like `get_run`; parses
       each kept `record`; `truncated = dropped > 0` from the marker row) (010/FR-011).
@@ -370,7 +379,8 @@ the bound; no trace header reaches the target.
       never raising; no propagator, no header injection (010/FR-013, 010/FR-014, 010/FR-015).
 - [ ] T038 [US4] Wire the spans: `src/kestrel/api/main.py` creates the app with
       `FastAPI(..., telemetry={"tracing": False, "metrics": False, "logs": False})`, calls
-      `configure_tracing(settings)` and adds a `lifespan` whose exit calls `tracing.current().shutdown(5.0)`;
+      `configure_tracing(settings, exporter=span_exporter)` (`create_app` gains the `span_exporter=None` test seam)
+      and adds a `lifespan` whose exit calls `tracing.current().shutdown(5.0)`;
       `src/kestrel/events.py`: `run_started` opens the `kestrel.run` root span (`ctx.run_span`, from an empty
       context) and the run scope's exit ends it after setting the run-end attributes — `kestrel.memory_written`
       included, which is known only after the caller's write-back; `src/kestrel/attack/graph.py` opens a
@@ -532,3 +542,28 @@ Tasks added by the review; each names where it executes.
   display name; exceptions log as class + frames; the redaction test counts the known strings on every surface.
 - Tracing is inert by default: the no-op adapter imports nothing; the provider is private and the framework's own
   telemetry is off; one warning per cause; shutdown bounded to 5 s by Kestrel's own join.
+
+## Analysis remediation (`/speckit-analyze`, 2026-11-13, before implementation)
+
+No CRITICAL or HIGH finding; coverage 100% (17 FR + 9 SC). The MEDIUM findings were fixed in the design documents
+(no requirement in `spec.md` changed):
+
+- C1 — the catalogue (the allow-list) gained the events the tasks name but it lacked (`memory.retrieval_failed`,
+  `memory.flag_failed`, `recommendation.unavailable`), the value fields of `message` events (`path`, `count`,
+  `stored_version`, `expected_version`), and `exc_type`/`stack`/`message` on any record (contracts/log-records.md).
+- C2 — `emit(..., message=<constant text>)` keeps a converted line's constant text as the record's message, so
+  the plain-message `caplog` assertions D10 relies on keep working; values stay fields (research D1/D10, T010).
+- C3 — a direct `write_back` call outside a scope binds the run as a reference so `memory.writeback` names it
+  (T020).
+- C4 — `create_app(..., span_exporter=None)` hands the in-process collector to an app; conftest resets the
+  module-level state between tests (research D8, T003, T038).
+- C5 — kept lines go through the store on the record's own run context, not a store fixed at install time
+  (research D3, data-model, plan, T009, T032).
+- C6 — experiment tests with real clients use the engine's own factories over `model_transport`; the injected-
+  double factories accept the pin keywords (research D10, T003, T017).
+- C7 — the clients accept `(text, ref)` and still the feature-009 plain text (research D5, T017).
+
+LOW findings fixed in the same pass: C8 (`turn.judge_prompt` equals the provenance wherever it is recorded), C9
+(a turn or run with no model request costs 0, null tokens), C10 (single-turn `run.start` caps), C11 (the
+`log.truncated` marker carries the common fields), C12 ("once" = per configured logger/tracer, one per process
+start), C13 (a failed model request carries the usage the provider reported, null when none — FR-003).
