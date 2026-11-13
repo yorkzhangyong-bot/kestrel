@@ -28,17 +28,17 @@ deny-list in any line, span attribute, endpoint response or viewer rendering (Pr
 
 ## Phase 1: Setup
 
-- [ ] T001 Declare the optional tracing extra and the development-only install: in `pyproject.toml` add
+- [X] T001 Declare the optional tracing extra and the development-only install: in `pyproject.toml` add
       `[project.optional-dependencies] otel = ["opentelemetry-sdk>=1.45", "opentelemetry-exporter-otlp-proto-http>=1.45"]`
       and list the same two packages in the `dev` group; run `uv lock` and `uv sync`; `[project] dependencies`
       stays byte-identical. Add `tests/unit/test_optional_extra.py` asserting (with stdlib `tomllib`) that no
       `opentelemetry*` package is in `[project] dependencies`, that the `otel` extra names exactly those two, and
       that the `dev` group contains them (010/FR-014, 010/SC-007).
-- [ ] T002 [P] Document the settings in `.env.example`: `KESTREL_LOG_FORMAT` (`json` default, `text`),
+- [X] T002 [P] Document the settings in `.env.example`: `KESTREL_LOG_FORMAT` (`json` default, `text`),
       `KESTREL_TRACING` (`on`/`off`, default `off`), and the standard `OTEL_EXPORTER_OTLP_ENDPOINT` /
       `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_SERVICE_NAME` lines (none overridden by Kestrel) with the
       `uv sync --extra otel` note (010/FR-006, 010/FR-013).
-- [ ] T003 [P] Shared test fixtures in `tests/conftest.py`: `json_log` (attaches the real `JsonFormatter` from
+- [X] T003 [P] Shared test fixtures in `tests/conftest.py`: `json_log` (attaches the real `JsonFormatter` from
       `kestrel.logging_setup` to a `StringIO` handler on the `kestrel` logger and returns a function yielding the
       parsed records in order), `span_collector` (an `InMemorySpanExporter` from
       `opentelemetry.sdk.trace.export.in_memory_span_exporter`, passed to `configure_tracing(..., exporter=)`),
