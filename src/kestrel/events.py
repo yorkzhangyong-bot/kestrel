@@ -67,7 +67,7 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "log.sink_failed": ("error", "for_run"),
     "log.unknown_field": ("field", "for_event"),
     "log.format_failed": ("error", "for_event"),
-    "tracing.unavailable": ("cause", "extra"),
+    "tracing.unavailable": ("cause", "extra", "error"),
     "tracing.export_failed": ("error",),
     "tracing.span_failed": ("error",),
     "message": ("path", "count", "stored_version", "expected_version"),
@@ -526,8 +526,8 @@ def target_request(*, latency_ms: int, ok: bool, status: int | None, step: str, 
                    reply_truncated: bool, span: Any = None) -> None:
     """One request sent to the target inside a run (FR-004): elapsed time, status or step, the reply's length —
     nothing about the URL, headers, body or reply text."""
-    fields = {"latency_ms": latency_ms, "ok": ok, "status": status, "step": step, "reply_chars": reply_chars,
-              "reply_truncated": reply_truncated}
+    fields: dict[str, Any] = {"latency_ms": latency_ms, "ok": ok, "status": status, "step": step,
+                              "reply_chars": reply_chars, "reply_truncated": reply_truncated}
     emit("target.request", logger=connection_log, **fields)
     if span is not None:
         tracing.current().set_attributes(span, **span_attributes(fields))

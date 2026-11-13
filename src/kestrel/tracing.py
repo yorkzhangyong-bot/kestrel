@@ -196,10 +196,18 @@ def configure_tracing(settings: Any, *, exporter: Any = None) -> Any:
     except ImportError:
         _warn("tracing.unavailable", "package_missing", cause="package_missing", extra=OTEL_EXTRA)
         return _current
-    _quiet_sdk_loggers()
-    provider = TracerProvider(resource=Resource.create(
-        {"service.name": os.environ.get("OTEL_SERVICE_NAME") or SERVICE_NAME}))
-    provider.add_span_processor(BatchSpanProcessor(_GuardedExporter(exporter, SpanExportResult)))
+    except Exception as error:   # e.g. a certificate the OTEL_* variables name cannot be read: never stop start-up
+        _warn("tracing.unavailable", "setup_failed", cause="setup_failed", error=type(error).__name__)
+        return _current
+    try:
+        _quiet_sdk_loggers()
+        provider = TracerProvider(resource=Resource.create(
+            {"service.name": os.environ.get("OTEL_SERVICE_NAME") or SERVICE_NAME}))
+        guarded: Any = _GuardedExporter(exporter, SpanExportResult)   # a SpanExporter by duck typing
+        provider.add_span_processor(BatchSpanProcessor(guarded))
+    except Exception as error:
+        _warn("tracing.unavailable", "setup_failed", cause="setup_failed", error=type(error).__name__)
+        return _current
     _current = OtelTracing(provider, Context, trace.set_span_in_context)
     return _current
 

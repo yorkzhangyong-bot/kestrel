@@ -41,7 +41,7 @@ _DOWNLOAD_HINTS = ("onnx", "download", "could not resolve", "connection", "timed
                    "getaddrinfo", "ssl")
 
 
-def store_error_kind(error: Exception) -> str:
+def store_error_kind(error: BaseException) -> str:
     """Why the store is unusable, as a category the log line can carry instead of the error's text (feature 010):
     `embedding_function_mismatch`, `model_download` or `other`."""
     text = str(error).lower()

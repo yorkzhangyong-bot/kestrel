@@ -56,7 +56,7 @@ the common fields, `message`, `exc_type`, `stack`) is dropped and reported once 
 | `log.truncated` | WARNING (kept row only, never on the stream) | written to the kept log when the cap was hit, as its last row | the common and run-scope fields copied from the run's `run.end`, `kept`, `dropped` |
 | `log.sink_failed` | WARNING | once per error kind per process | `error` (class name), `for_run` (int) |
 | `log.unknown_field` | WARNING | once per field name per process: an emitter passed a field outside the catalogue (the field is dropped) | `field`, `for_event` |
-| `tracing.unavailable` | WARNING | once at start-up: flag on, packages missing | `cause` (`package_missing`), `extra` (`kestrel[otel]`) |
+| `tracing.unavailable` | WARNING | once at start-up: flag on, packages missing — or the tracer could not be set up (an exporter the `OTEL_*` variables misconfigure) | `cause` (`package_missing` / `setup_failed`), `extra` (`kestrel[otel]`, package missing), `error` (class name, setup failed) |
 | `tracing.export_failed` | WARNING | once per process: the collector refused the spans (a failure result) or could not be reached (an exception) | `error` (class name or `failure_result`) |
 | `tracing.span_failed` | WARNING | once per cause: a span could not be created, annotated or ended (the run continues untraced for that span) | `error` (class name) |
 | `log.format_failed` | WARNING | once per cause: a record could not be rendered in full (the line is written with its common fields only) | `error` (class name), `for_event` |

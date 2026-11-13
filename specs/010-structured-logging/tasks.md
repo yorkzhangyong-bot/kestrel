@@ -426,24 +426,24 @@ one warning per cause; no extra calls.
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T042 [P] e2e `tests/e2e/test_us010_run_log.py` (marker `e2e`, `FEATURE = "010"`): one real adaptive run
+- [X] T042 [P] e2e `tests/e2e/test_us010_run_log.py` (marker `e2e`, `FEATURE = "010"`): one real adaptive run
       against the HS-code target through the API; `GET /api/runs/{id}/log` returns lines that parse as JSON, the
       `run.start` carries `attacker:<family>@N` and `judge@N` references and the model slugs, and the target's
       real key appears zero times in the API's log output and in the served lines (010/SC-001, 010/SC-002).
-- [ ] T043 [P] Docs: `docs/technical-design.md` (structured logging, the event catalogue pointer, the run scope,
+- [X] T043 [P] Docs: `docs/technical-design.md` (structured logging, the event catalogue pointer, the run scope,
       schema v8, the provenance correction, tracing with the private provider), `README.md` (reading the log, the
       Log expander, `KESTREL_LOG_FORMAT`, `KESTREL_TRACING`, the `otel` extra and the `OTEL_*` variables), and a
       dated learned note in `CLAUDE.md` (the ChromaDB/FastAPI transitive OpenTelemetry fact and FastAPI's native
       telemetry being switched off; the SDK's unbounded flush; the fields-not-interpolation rule; the deny-list)
       (010/FR-006, 010/FR-013).
-- [ ] T044 Quality gate: `uvx ruff check src ui tests scripts`; `uv run mypy src` (advisory); `uv run pytest
+- [X] T044 Quality gate: `uvx ruff check src ui tests scripts`; `uv run mypy src` (advisory); `uv run pytest
       tests/unit tests/integration` with coverage ≥ 85% on `src`; run the offline suite once more with
       `KESTREL_TEST_BLOCK_OTLP=1` (the exporter import blocked, the real-exporter tests skipped) and record the
       result in the PR description (the SC-007 evidence); walk `quickstart.md` including the rest of the SC-007
       step (a run with the flag off, and with the flag on → the single warning) and the no-behaviour-drift
       check; confirm no existing test was deleted or weakened and that existing assertions changed only in the
       shape of the log lines they read (010/SC-005, 010/SC-007).
-- [ ] T045 Traceability: confirm every new or changed test carries a `010/FR-###`/`010/SC-###` token or
+- [X] T045 Traceability: confirm every new or changed test carries a `010/FR-###`/`010/SC-###` token or
       `FEATURE = "010"`; create `specs/010-structured-logging/traceability.md` mapping ids to tests and justifying
       any id without a dedicated token (expected: none — FR-017 is covered by `test_log_resilience.py`); run
       `uv run python scripts/check_traceability.py` (010/FR-017).

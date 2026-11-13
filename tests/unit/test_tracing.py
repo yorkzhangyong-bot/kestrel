@@ -228,3 +228,20 @@ def test_shutdown_is_bounded_whatever_the_provider_does(on, span_collector):  # 
     tracer.shutdown(0.5)
     tracer.force_flush(0.5)
     assert time.monotonic() - started < 2.0
+
+
+@pytest.mark.real_otlp_exporter
+def test_a_tracing_setup_failure_is_one_warning_and_the_no_op(on, monkeypatch, json_log):  # FR-015
+    """A misconfigured exporter (say, a certificate path that does not exist) never stops Kestrel from starting."""
+    import opentelemetry.exporter.otlp.proto.http.trace_exporter as otlp
+
+    class Misconfigured:
+        def __init__(self, *args, **kwargs):
+            raise FileNotFoundError("certificate /private/ca.pem not found")
+    monkeypatch.setattr(otlp, "OTLPSpanExporter", Misconfigured)
+    tracer = tracing.configure_tracing(on)
+    assert tracer.enabled is False
+    traced_run()
+    warnings = json_log.of("tracing.unavailable")
+    assert len(warnings) == 1 and (warnings[0]["cause"], warnings[0]["error"]) == ("setup_failed", "FileNotFoundError")
+    assert "/private/ca.pem" not in json_log.text()
