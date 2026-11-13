@@ -112,6 +112,16 @@ deterministic, no prompt (see spec Assumptions footnote + research D5).
 
 ---
 
+## Phase 9: Review round 1 (PR #19, 2026-11-13)
+
+- [X] T029 Prompts as versioned files `src/kestrel/prompts/<id>.v<N>.md` (YAML front-matter `id`, `version`); the registry loads the active version from the files (`load_prompt("judge") == (text, "judge@1")`); prompt text removed from `attack/attacker.py` and `judge/client.py`; lock `{id: {version: sha256}}` + guard over the file text; the feature-004 pattern query uses the library family label (009/FR-001, 009/FR-005, 009/FR-006, 009/FR-011).
+- [X] T030 `scripts/bump_prompt.py <id>` copies the active file to `v<N+1>`; `--lock` records the edited file's fingerprint (009/SC-002).
+- [X] T031 Report header prints the judge and attacker prompt versions recorded on the runs next to the model slugs; `Run`/`Turn` expose the v7 provenance (009/FR-003).
+- [X] T032 Unit test: every property of the judge and recommend JSON schemas is `required` at every level (`tests/unit/test_judge_verdict.py`).
+- [X] T033 Docs — `docs/technical-design.md`, `README.md`, `CLAUDE.md`, the spec's Session 2026-11-13 clarifications and Assumptions footnotes (FR numbering unchanged), contracts, data-model, quickstart, research D12, traceability.
+
+---
+
 ## Dependencies & Execution Order
 
 - **Setup (T001)** → **Foundational (T002–T004)** blocks all stories. T002 before T003 (lock seeded from registry) before/with T004 (independent file).

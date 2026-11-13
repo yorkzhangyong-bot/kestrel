@@ -26,7 +26,8 @@ Returns `None` when there is nothing to add (cold run with no purpose). Each ite
 
 The API builds a `hint_provider(conversation) -> str | None` closure that:
 - fetches the target purpose and (warm) the target's memory once,
-- (warm) calls `experience.retrieve_patterns(family, query_text=<family goal + recent conversation>, k)` each turn,
+- (warm) calls `experience.retrieve_patterns(family, query_text=<family label + recent conversation>, k)` each turn
+  (the family label from `attacks/library.py`; feature 009 moved the goal sentences into the prompt files),
 - calls `format_hints(...)` and returns the block.
 
 `attack/graph.py`'s `attacker_node` calls `hint_provider` and passes the result to `next_message(hints=...)`. The graph imports no ChromaDB (R7). Cold runs still receive a provider that yields the purpose-only block (or `None`).

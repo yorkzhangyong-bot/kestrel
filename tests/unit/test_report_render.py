@@ -12,7 +12,8 @@ def a_model(**changes) -> ReportModel:
         header=Header(target_name="My agent", purpose="a customs classification assistant",
                       generated_at="2026-10-28T10:00:00Z", run_count=3,
                       attacker_models=("deepseek/deepseek-v4.1-flash",), judge_models=("google/gemini-3.8-flash",),
-                      token_budget=40000, tokens_used=1234),
+                      token_budget=40000, tokens_used=1234, attacker_prompts=("attacker:system_prompt_leak@1",),
+                      judge_prompts=("judge@1",)),
         coverage=(CoverageRow("LLM07: System Prompt Leakage", "system-prompt leak", 2, "2 run(s), 1 confirmed finding"),
                   CoverageRow("LLM01: Prompt Injection", "direct & indirect injection", 0, "not run yet")),
         untested=(UntestedClass("LLM02: Sensitive Information Disclosure", "needs target internals"),),
@@ -30,7 +31,8 @@ def a_model(**changes) -> ReportModel:
 def test_header_fields_are_present():
     md = render_markdown(a_model())
     for piece in ("My agent", "a customs classification assistant", "2026-10-28T10:00:00Z", "3",
-                  "deepseek/deepseek-v4.1-flash", "google/gemini-3.8-flash", "40000", "1234"):
+                  "deepseek/deepseek-v4.1-flash", "google/gemini-3.8-flash", "40000", "1234",
+                  "attacker:system_prompt_leak@1", "judge@1"):
         assert piece in md
 
 

@@ -11,7 +11,8 @@ import time
 from typing import Callable
 
 from kestrel import prompt_registry
-from kestrel.attack.attacker import GOALS, AttackerClient
+from kestrel.attack.attacker import AttackerClient
+from kestrel.attacks.library import family_label
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings
 from kestrel.experience.hints import format_hints
@@ -141,7 +142,7 @@ def _hint_provider(arm, target, seed, experience, settings):
         memory = experience.retrieve_memory(target_id=target.id, family=seed.family,
                                             cap=settings.experience_memory_cap)
         recent = " ".join(text for _, text in conversation[-4:])
-        query = f"{GOALS.get(seed.family, '')} {recent}".strip()
+        query = f"{family_label(seed.family)} {recent}".strip()
         patterns = experience.retrieve_patterns(family=seed.family, query_text=query, k=settings.experience_pattern_k)
         return format_hints(purpose=purpose, patterns=patterns, memory=memory)
     return provider

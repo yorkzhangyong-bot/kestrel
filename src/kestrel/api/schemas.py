@@ -54,7 +54,7 @@ class ExperienceOut(BaseModel):
 
 class PromptVersionOut(BaseModel):
     id: str       # a registry id: "attacker:<family>", "judge", or "recommender" (feature 009)
-    version: str  # the active semantic version; never the prompt text (FR-007, FR-012)
+    version: str  # the active version ("1", "2", …); never the prompt text (FR-007, FR-012)
 
 
 class ConfigOut(BaseModel):

@@ -116,3 +116,17 @@ recomputed in `src/kestrel/api/schemas.py`; `GET /api/config` → `ConfigOut`; j
   judge prompt.
 - **Alternatives**: iterate the eval across every registered judge version in one run (deferred — not required by the
   spec; adds model cost).
+
+## D12 — Review amendment (PR #19, 2026-11-13): prompts as versioned files
+- **Decision**: each prompt version is a file `src/kestrel/prompts/<id>.v<N>.md` (`:` → `_` in the file name; a
+  colon is not a legal Windows file-name character) with a YAML front-matter naming `id` and `version`, parsed with
+  the standard library (the `key: value` subset). The files are the registry: the highest `N` is active and older
+  files are the non-active versions an arm pins — D3's "import the code constants" and the US4 template folder are
+  superseded, and no prompt text stays in Python. Versions are plain integers (D2's semver is dropped: a bump is
+  `N+1`, done by `scripts/bump_prompt.py`). The lock is `{id: {version: sha256}}` over the file text; D4's guard
+  additionally fails on a version file the lock does not pin and on a pinned version with no file. The OWASP
+  report header prints the recorded prompt versions next to the model slugs.
+- **Rationale**: a file per version is reviewable as a plain diff, keeps every historical text readable (an arm
+  can pin it), and removes prompt text from code; integer versions match the "one file per bump" model.
+- **Alternatives**: keep the active text in code and only non-active versions as files (rejected in review — two
+  sources of truth); PyYAML for the front-matter (rejected — a new direct dependency for two `key: value` lines).

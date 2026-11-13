@@ -106,7 +106,7 @@ Every finished run is recorded in a local ChromaDB store next to the database (`
 
 The **Report** panel (after a target's Profile) turns a target's runs into an OWASP-mapped, fix-ready report you can read inline and download as Markdown or HTML (feature 005):
 
-- A header names the target, its purpose, the attacker and judge models, and the token budget used. An **OWASP coverage** table maps Kestrel's attack families to their OWASP LLM Top 10 classes (LLM01 prompt injection, LLM06 excessive agency, LLM07 system prompt leakage) with run counts and results, and the report lists the seven classes it does not test, each with a reason.
+- A header names the target, its purpose, the attacker and judge models with the prompt versions that produced the runs, and the token budget used. An **OWASP coverage** table maps Kestrel's attack families to their OWASP LLM Top 10 classes (LLM01 prompt injection, LLM06 excessive agency, LLM07 system prompt leakage) with run counts and results, and the report lists the seven classes it does not test, each with a reason.
 - Each successful run becomes a **finding**: the winning attacker message, the hard evidence quoted verbatim (a canary match) or the judge's note marked "suspected", and a model-generated **fix suggestion**. Suggestions use the judge model and are cached per run, so regenerating a report does not call the model again.
 - Generating a report is read-only: it starts no attack, sends nothing to the target, and writes nothing to the experience store (it only reads the memory and pattern counts for the limitations note). No URL, header or auth value ever appears in the output.
 

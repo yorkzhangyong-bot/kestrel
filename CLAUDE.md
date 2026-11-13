@@ -88,10 +88,19 @@ When you discover something durable about this repo — a gotcha, a command, a c
 same commit. Before opening any implementation PR, review this file and add anything learned during the feature.
 
 ## Learned notes
-- 2026-11-12 — **Prompt registry (009).** Model-facing prompts (attacker per family, judge, recommender) are
-  versioned in `src/kestrel/prompt_registry.py` against a committed fingerprint lock
-  (`src/kestrel/prompt_versions.lock.json`). To change a prompt: edit its text, bump its version, and re-record the
-  fingerprint — the guard (`verify_lock()`, `tests/unit/test_prompt_guard.py`) fails CI on any text change without a
-  bump. Non-active versions live as template files `src/kestrel/prompt_templates/<id with ':'→'_'>@<ver>.txt`. The
-  memory summariser is deterministic (no model prompt) — three prompt kinds, not four. Schema is v7 (provenance
-  columns on `run_turns`/`runs`, prompt-arm columns on `experiment_arms`).
+- 2026-11-13 — **Prompt registry (009, after the PR #19 review).** Every model-facing prompt (attacker per
+  family, judge, recommender) is a file `src/kestrel/prompts/<id with ':'→'_'>.v<N>.md` with a two-line YAML
+  front-matter (`id`, `version`); **no prompt text lives in Python**. The files are the registry
+  (`src/kestrel/prompt_registry.py`): the highest `N` is active, older files are the non-active versions an A/B
+  arm can pin, and `load_prompt("judge")` returns `(text, "judge@1")`. Versions are plain integers, not semver.
+  The committed lock `src/kestrel/prompt_versions.lock.json` (`{id: {version: sha256}}`) pins every file's
+  fingerprint over the file text; the guard (`verify_lock()`, `tests/unit/test_prompt_guard.py`) fails CI on an
+  edited file without a bump, a version file the lock does not pin, or a pinned version with no file. To change
+  a prompt: `uv run python scripts/bump_prompt.py judge` (copies `judge.v1.md` → `judge.v2.md`), edit the new
+  file, then `uv run python scripts/bump_prompt.py judge --lock` to record it. The OWASP report header prints the
+  judge/attacker prompt versions recorded on the runs next to the model slugs. The memory summariser is
+  deterministic (no model prompt) — three prompt kinds, not four. Schema is v7 (provenance columns on
+  `run_turns`/`runs`, prompt-arm columns on `experiment_arms`). Gotcha: a colon is not a legal Windows file-name
+  character, hence `attacker_direct_injection.v1.md`; the front-matter `id` (`attacker:direct_injection`) is
+  authoritative. The experience store's pattern query uses the library's family label (the per-family goal
+  sentences moved into the prompt files).

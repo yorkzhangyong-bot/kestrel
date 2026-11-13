@@ -77,15 +77,15 @@ def test_each_turn_and_the_verdict_record_their_prompt_version(store, target):  
     assert len(rows) == 2
     # Turn 1 is the library seed: no attacker prompt; the judge ran, so its version is recorded.
     assert rows[0]["attacker_prompt_id"] is None and rows[0]["attacker_prompt_version"] is None
-    assert rows[0]["judge_prompt_id"] == "judge" and rows[0]["judge_prompt_version"] == "1.0.0"
+    assert rows[0]["judge_prompt_id"] == "judge" and rows[0]["judge_prompt_version"] == "1"
     # Turn 2 is produced by the attacker model for this family.
     assert rows[1]["attacker_prompt_id"] == "attacker:system_prompt_leak"
-    assert rows[1]["attacker_prompt_version"] == "1.0.0"
-    assert rows[1]["judge_prompt_id"] == "judge" and rows[1]["judge_prompt_version"] == "1.0.0"
+    assert rows[1]["attacker_prompt_version"] == "1"
+    assert rows[1]["judge_prompt_id"] == "judge" and rows[1]["judge_prompt_version"] == "1"
     # The run's verdict records the judge prompt version.
     with store.connect() as db:
         row = db.execute("SELECT judge_prompt_id, judge_prompt_version FROM runs WHERE id=?", (run.id,)).fetchone()
-    assert row["judge_prompt_id"] == "judge" and row["judge_prompt_version"] == "1.0.0"
+    assert row["judge_prompt_id"] == "judge" and row["judge_prompt_version"] == "1"
 
 
 def test_every_recorded_version_exists_in_the_registry(store, target):  # 009/SC-001

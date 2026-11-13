@@ -21,6 +21,14 @@ composes the writeback summary deterministically with **no model call** — ther
 The registry therefore covers **three** model-facing prompt kinds: `attacker:<family>`, `judge`, `recommender`. No
 behaviour is lost; recommend a one-line spec footnote in the implementation PR.
 
+**Review amendments (PR #19, 2026-11-13):** prompts live as files `src/kestrel/prompts/<id>.v<N>.md` with a YAML
+front-matter (`id`, `version`) — the registry reads the active (highest) version from them and no prompt text
+stays in Python; versions are plain integers; the lock is `{id: {version: sha256}}` over the file text and the
+guard also catches an unpinned version file or a pinned version with no file; `scripts/bump_prompt.py` copies the
+active file to `v<N+1>` and records the fingerprint; the OWASP report header prints the recorded prompt versions
+next to the model slugs; the judge/recommend schema test checks every property is required at every level. The
+front-matter is the `key: value` subset of YAML, read with the standard library — still no new dependency.
+
 ## Technical Context
 
 **Language/Version**: Python 3.12
@@ -83,8 +91,10 @@ specs/009-versioned-prompts/
 ### Source code (files this feature touches)
 ```text
 src/kestrel/
-├── prompt_registry.py        # NEW — PromptEntry, registry(), fingerprint(), has(), text_for(), verify_lock()
+├── prompts/<id>.v<N>.md      # NEW — one file per prompt version: YAML front-matter (id, version) + the text
+├── prompt_registry.py        # NEW — PromptEntry, registry(), load_prompt(), has(), text_for(), verify_lock()
 ├── prompt_versions.lock.json # NEW — committed {id: {version: fingerprint}} (append-only)
+├── report/model.py, render.py # header: judge/attacker prompt versions next to the model slugs
 ├── store.py                  # schema v7: run_turns/runs/experiment_arms columns; _migrate accepts "6"; add_turn/finish_run/create_experiment record provenance; ExperimentArm fields
 ├── attack/attacker.py        # resolve active/arm-pinned attacker version+text from registry; expose provenance
 ├── judge/client.py           # resolve judge + recommender version+text; expose judge-prompt provenance
@@ -93,8 +103,12 @@ src/kestrel/
 │   ├── schemas.py            # ConfigOut.prompts + PromptVersionOut; ARM_DIFF_FIELDS + validate_experiment + experiment_diff for prompt arms
 │   └── main.py               # get_config() returns active prompt versions
 ui/app.py                     # display active prompt versions (read from /api/config)
+scripts/bump_prompt.py        # NEW — copy the active file to v<N+1>; --lock records its fingerprint
 tests/
-├── unit/test_prompt_registry.py        # guard (verify_lock), fingerprint, version validation (US2/FR-005/FR-006)
+├── unit/test_prompt_registry.py        # the file registry: load_prompt/has/text_for, the file format (FR-001/FR-009)
+├── unit/test_prompt_guard.py           # guard (verify_lock) on a copy of the files (US2/FR-005/FR-006)
+├── unit/test_bump_prompt.py            # the bump script (SC-002)
+├── unit/test_report_header_prompts.py  # prompt versions in the report header (FR-003)
 ├── integration/test_provenance_*.py    # run_turns/runs provenance; config prompts; arm validation/refusal
 ├── eval/test_judge_accuracy.py         # group results by judge prompt version (US5/FR-010)
 └── e2e/…                                # one e2e: provenance recorded on a real HS-code run

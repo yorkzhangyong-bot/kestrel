@@ -9,9 +9,9 @@ import api_client
 FEATURE = "009"
 
 APP = str(Path(__file__).resolve().parents[2] / "ui" / "app.py")
-PROMPTS = [{"id": "attacker:direct_injection", "version": "1.0.0"},
-           {"id": "judge", "version": "1.0.0"},
-           {"id": "recommender", "version": "1.0.0"}]
+PROMPTS = [{"id": "attacker:direct_injection", "version": "1"},
+           {"id": "judge", "version": "1"},
+           {"id": "recommender", "version": "1"}]
 CONFIG = {"mode": "local",
           "defaults": {"method": "POST", "body_template": '{"message": "{{prompt}}"}', "response_path": "$.reply"},
           "terms": {"version": "7", "text": "Terms text."},
@@ -42,12 +42,12 @@ def api(monkeypatch):
 def test_the_sidebar_shows_active_prompt_versions(api):  # 009/FR-007, 009/SC-004
     at = AppTest.from_file(APP, default_timeout=10).run()
     captions = [c.value for c in at.caption]
-    assert "attacker:direct_injection · 1.0.0" in captions
-    assert "judge · 1.0.0" in captions
-    assert "recommender · 1.0.0" in captions
+    assert "attacker:direct_injection · 1" in captions
+    assert "judge · 1" in captions
+    assert "recommender · 1" in captions
 
 
 def test_no_prompt_text_is_shown(api):  # 009/SC-004
     at = AppTest.from_file(APP, default_timeout=10).run()
-    rows = [v for v in (c.value for c in at.caption) if " · " in v and v.split(" · ")[-1] == "1.0.0"]
+    rows = [v for v in (c.value for c in at.caption) if " · " in v and v.split(" · ")[-1] == "1"]
     assert rows and all(len(r) < 60 for r in rows)   # only "<id> · <version>", never the template text

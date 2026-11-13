@@ -265,6 +265,9 @@ class Run:
     # Version 4 (feature 004).
     use_prior_experience: bool = True
     memory_written: bool | None = None  # None = write-back not attempted; False = failed; True = written
+    # Version 7 (feature 009): the judge prompt behind this run's verdict; None = not recorded (or no judge).
+    judge_prompt_id: str | None = None
+    judge_prompt_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -277,6 +280,12 @@ class Turn:
     judge_verdict: str | None = None
     judge_reason: str | None = None
     judge_progress: str | None = None
+    # Version 7 (feature 009): which prompt versions produced this turn; None = not recorded (or none applied:
+    # the turn-1 library seed has no attacker prompt, a turn the judge skipped has no judge prompt).
+    attacker_prompt_id: str | None = None
+    attacker_prompt_version: str | None = None
+    judge_prompt_id: str | None = None
+    judge_prompt_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -620,7 +629,10 @@ class TargetStore:
             rows = db.execute("SELECT * FROM run_turns WHERE run_id = ? ORDER BY position", (run_id,)).fetchall()
         return [Turn(position=r["position"], attacker_message=r["attacker_message"], reply_text=r["reply_text"],
                      reply_truncated=bool(r["reply_truncated"]), judge_verdict=r["judge_verdict"],
-                     judge_reason=r["judge_reason"], judge_progress=r["judge_progress"]) for r in rows]
+                     judge_reason=r["judge_reason"], judge_progress=r["judge_progress"],
+                     attacker_prompt_id=r["attacker_prompt_id"], attacker_prompt_version=r["attacker_prompt_version"],
+                     judge_prompt_id=r["judge_prompt_id"], judge_prompt_version=r["judge_prompt_version"])
+                for r in rows]
 
     def list_runs(self, target_id: int) -> list[Run]:
         with self.connect() as db:
@@ -809,7 +821,8 @@ class TargetStore:
                    time_limit_s=row["time_limit_s"], stopping_condition=row["stopping_condition"],
                    succeeded_turn=row["succeeded_turn"],
                    use_prior_experience=bool(row["use_prior_experience"]),
-                   memory_written=None if row["memory_written"] is None else bool(row["memory_written"]))
+                   memory_written=None if row["memory_written"] is None else bool(row["memory_written"]),
+                   judge_prompt_id=row["judge_prompt_id"], judge_prompt_version=row["judge_prompt_version"])
 
     @staticmethod
     def _header_rows(db: sqlite3.Connection, target_id: int) -> list[sqlite3.Row]:

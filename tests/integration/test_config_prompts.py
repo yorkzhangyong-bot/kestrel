@@ -15,7 +15,7 @@ EXPECTED_IDS = {
 def test_config_lists_active_prompt_versions(client):  # 009/FR-007
     prompts = client.get("/api/config").json()["prompts"]
     assert {p["id"] for p in prompts} == EXPECTED_IDS
-    assert all(p["version"] == "1.0.0" for p in prompts)
+    assert all(p["version"] == "1" for p in prompts)
 
 
 def test_config_prompts_carry_only_id_and_version(client):  # 009/SC-004, 009/FR-012

@@ -10,7 +10,8 @@ import logging
 import httpx
 import pytest
 
-from kestrel.attack.attacker import GOALS, MAX_MESSAGE_CHARS, AttackerClient, AttackerError
+from kestrel import prompt_registry
+from kestrel.attack.attacker import MAX_MESSAGE_CHARS, AttackerClient, AttackerError
 from kestrel.retry import RETRY_ATTEMPTS
 
 # Traces feature 008 (hardening): 008/FR-009 (retry transient statuses), 008/FR-010 (deadline, tokens).
@@ -52,9 +53,9 @@ def test_it_reports_the_tokens_the_call_used():
     assert reply.tokens == 321
 
 
-def test_there_is_a_goal_for_every_family():
-    from kestrel.attack.attacker import FAMILIES_WITH_GOALS
-    assert set(GOALS) == set(FAMILIES_WITH_GOALS)
+def test_there_is_an_attacker_prompt_for_every_family():
+    from kestrel.store import FAMILIES
+    assert set(prompt_registry.families()) == set(FAMILIES)   # feature 009: one prompt file per family
 
 
 def test_no_key_means_not_configured_and_no_request():
@@ -86,10 +87,19 @@ def test_the_model_name_is_sent():
     assert sink["body"]["model"] == "deepseek/other"
 
 
-def test_the_goal_reflects_the_family():
+def test_the_system_prompt_reflects_the_family():
     sink = {}
     ask(client(returns(sink=sink)), family="tool_exfiltration")
-    assert GOALS["tool_exfiltration"] in json.dumps(sink["body"])
+    system = sink["body"]["messages"][0]["content"]
+    assert prompt_registry.load_prompt("attacker:tool_exfiltration")[0] in system
+    assert prompt_registry.load_prompt("attacker:system_prompt_leak")[0] not in system
+
+
+def test_a_family_without_a_registered_prompt_is_an_attacker_error():
+    calls = []
+    with pytest.raises(AttackerError):
+        ask(client(lambda r: calls.append(r) or httpx.Response(200, json={})), family="no_such_family")
+    assert calls == []   # refused before any model call (feature 009)
 
 
 @pytest.mark.parametrize("error", [httpx.ConnectError("x"), httpx.ReadTimeout("x")])

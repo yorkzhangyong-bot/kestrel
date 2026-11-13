@@ -25,6 +25,19 @@ attack behaviour by default.
 - Q: Which prompts may be a feature-007 prompt-version A/B arm subject? → A: Only the attacker and judge prompts (the
   ones whose version moves the 007 success metrics); a recommender version arm is refused.
 
+### Session 2026-11-13 (review of PR #19)
+
+- Q: Where does a prompt's text live, and what is its version? → A: In one file per version,
+  `src/kestrel/prompts/<id>.v<N>.md` (a colon in an id becomes `_` in the file name), with a YAML front-matter
+  naming `id` and `version`; the registry loads the active version — the highest `N` — from these files, and no
+  prompt text lives in Python. The version is a plain integer (`1`, `2`, …): "1.0.0" in FR-002, FR-013 and
+  SC-003 reads as `1`, and "semantic version" in FR-001 reads as this integer version.
+- Q: How is a prompt bumped? → A: At the source, with the maintainer script `scripts/bump_prompt.py <id>` (copies
+  the active file to `v<N+1>` for editing) and `scripts/bump_prompt.py <id> --lock` (records the edited file's
+  fingerprint in the lock). Older files stay in the folder as the non-active versions an A/B arm can pin.
+- Q: Does the report show prompt versions? → A: Yes — the OWASP report header prints the judge and attacker
+  prompt versions recorded on the runs next to the model slugs, `not recorded` for rows that predate the migration.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Know which prompt produced a result (Priority: P1)
@@ -258,14 +271,23 @@ confirm the report presents results grouped by judge prompt version.
 - **Footnote (plan finding):** the memory summariser composes its writeback summary deterministically (no model
   call), so no summariser prompt exists to version — the registry covers three model-facing prompt kinds (attacker
   per family, judge, recommender). No behaviour is lost.
+- **Footnote (review of PR #19, 2026-11-13):** the registry is file-backed — see the Session 2026-11-13
+  clarifications. Consequences for the requirements, numbering unchanged: FR-001's "semantic version" is a plain
+  integer version; the "1.0.0" of FR-002, FR-013 and SC-003 is version `1` (the shipped texts are byte-identical,
+  with the same fingerprints); the FR-005/FR-006 guard runs over the file text and also fails on a version file
+  the lock does not pin and on a pinned version with no file; FR-007's display gains the OWASP report header,
+  which prints the versions recorded on the runs (the Out of Scope entry on report headers is withdrawn). The
+  attacker's per-family goal sentences moved into the prompt files with the rest of the prompt text, so the
+  feature-004 pattern query now carries the library's family label instead of the goal sentence.
 
 ## Out of Scope
 
-- Editing prompts or bumping versions through the UI or the command line, and any in-app prompt-authoring workflow —
-  versions are bumped at the source, as prompts are maintained today.
+- Editing prompts or bumping versions through the UI, and any in-app prompt-authoring workflow — versions are
+  bumped at the source (the maintainer script `scripts/bump_prompt.py` edits the source files; it is not an
+  in-app flow).
 - Per-use provenance for the recommender prompt beyond recording and showing its active
   version — only run turns (attacker) and verdicts (judge) record per-use provenance.
-- Extending the OWASP report headers to prompt versions; the report already states the attacker model and version
-  (Principle III), and prompt-version display in this feature is the UI and the API.
+- ~~Extending the OWASP report headers to prompt versions~~ — withdrawn by the PR #19 review: the header prints the
+  recorded judge and attacker prompt versions next to the model slugs (Session 2026-11-13).
 - Rolling back, or re-running, historical runs under a chosen prompt version.
 - Changing any prompt's intent, the attacker or judge models, or the attack library.
