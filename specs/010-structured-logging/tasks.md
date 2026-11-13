@@ -237,24 +237,24 @@ line, span attribute, endpoint response or viewer rendering — proven by tests 
 **Independent Test**: a stub target with known secret/URL/name and a run with known message/reply → zero
 occurrences across every surface that exists at this point (stream; spans/endpoint/viewer join in US3/US4).
 
-- [ ] T023 [P] [US2] Integration test `tests/integration/test_log_redaction.py` (real clients over
+- [X] T023 [P] [US2] Integration test `tests/integration/test_log_redaction.py` (real clients over
       `model_transport`): register a target with `SECRET` header value, `TARGET_URL` and `TARGET_NAME`, run a
       single-turn and an adaptive run whose attacker message is `ATTACK_TEXT` and whose reply is `REPLY_TEXT` (the
       mocked judge returning a reason that quotes the reply); assert each known string, the judge reason and the
       progress note appear zero times in the `json_log` records (serialised) and that a failing model request
       shows `error` as a class name only; extend in US3/US4 with the endpoint response, the viewer rendering and
       the span attributes (010/FR-009, 010/SC-002).
-- [ ] T024 [P] [US2] Unit test `tests/unit/test_tester.py` (update): the connection line is a `connection.test`
+- [X] T024 [P] [US2] Unit test `tests/unit/test_tester.py` (update): the connection line is a `connection.test`
       record with `target_id` (when given), `latency_ms`, `ok`, `status`, `step`, and carries neither the URL (in
       any form) nor the display name; `SECRET` appears zero times in the rendered JSON line; `refused()` logs the
       same shape (010/FR-004, 010/FR-009).
-- [ ] T025 [US2] Structural enforcement in `src/kestrel/events.py` and `src/kestrel/logging_setup.py`: the
+- [X] T025 [US2] Structural enforcement in `src/kestrel/events.py` and `src/kestrel/logging_setup.py`: the
       catalogue is the allow-list (unknown fields dropped, one `log.unknown_field` warning per name); the judge
       and attacker helpers accept lengths and categories only (no `reason`/`progress`/text parameters exist);
       exceptions render as `exc_type` + `stack` only; a unit assertion in `tests/unit/test_events.py` that no
       catalogue field name is `url`, `name`, `reason`, `progress`, `message_text`, `reply_text`, `prompt_text` or
       `value` (010/FR-009).
-- [ ] T026 [US2] Audit and convert every pre-existing `log.*` call for the deny-list and the fields rule: in
+- [X] T026 [US2] Audit and convert every pre-existing `log.*` call for the deny-list and the fields rule: in
       `src/kestrel/api/main.py` the three start-up lines that interpolate exception text become named events with
       `exc_type` and no message text — `library.unavailable`, `experience.unavailable` (`exc_type`, `reason_kind`
       from the categories `describe_store_error` distinguishes) and `experience.seed_failed` — plus the

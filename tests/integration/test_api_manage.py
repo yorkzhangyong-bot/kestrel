@@ -127,13 +127,14 @@ def test_an_unknown_id_is_404_everywhere(api):
 
 
 def test_key_loss_makes_headers_unreadable_until_they_are_re_entered(make_client, settings, recorder, tmp_path,
-                                                                      all_logs):
+                                                                      all_logs, json_log):
     target = saved_target(make_client(transport=recorder.transport))
     other_key = Settings(mode="local", db_path=settings.db_path, key_file=tmp_path / "other.key", secret_key=None,
                          chroma_path=settings.chroma_path)  # reuse the tmp store; never the real data/chroma
     client = make_client(other_key, transport=recorder.transport)
 
     assert "doesn't match" in all_logs()
+    assert json_log.of("key.mismatch")[0]["level"] == "ERROR"   # 010/FR-006: a named event, constant text
     assert client.get(f"/api/targets/{target['id']}").json()["headers"][0]["readable"] is False
 
     recorder.requests.clear()
@@ -149,4 +150,7 @@ def test_key_loss_makes_headers_unreadable_until_they_are_re_entered(make_client
                           json=save_body(form_id, headers=[{"name": "X-API-Key", "value": new_value}]))
     assert response.status_code == 200
     assert response.json()["headers"][0]["readable"] is True
+    # 010/SC-005: values are JSON fields since feature 010, so the count runs over the rendered JSON lines too (caplog
+    # shows only constant messages now).
     assert all_logs().count(SECRET) == 0 and all_logs().count(new_value) == 0
+    assert json_log.text().count(SECRET) == 0 and json_log.text().count(new_value) == 0

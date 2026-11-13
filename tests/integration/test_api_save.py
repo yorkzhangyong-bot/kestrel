@@ -121,7 +121,7 @@ def test_config_includes_the_terms(client):
     assert "written permission" in terms["text"]
 
 
-def test_the_saved_header_value_never_appears_in_logs_or_responses(api, all_logs):
+def test_the_saved_header_value_never_appears_in_logs_or_responses(api, all_logs, json_log):
     responses = []
     form_id = str(uuid.uuid4())
     responses.append(api.post("/api/connection-tests", json=connection_request(form_id)))
@@ -130,4 +130,6 @@ def test_the_saved_header_value_never_appears_in_logs_or_responses(api, all_logs
     responses.append(api.get("/api/targets"))
     responses.append(api.post("/api/targets", json=save_request(str(uuid.uuid4()), name="Other")))  # not tested
     assert all(SECRET not in response.text for response in responses)
-    assert all_logs().count(SECRET) == 0
+    # 010/SC-005: values are JSON fields since feature 010, so the count runs over the rendered JSON lines too (caplog
+    # shows only constant messages now).
+    assert all_logs().count(SECRET) == 0 and json_log.text().count(SECRET) == 0

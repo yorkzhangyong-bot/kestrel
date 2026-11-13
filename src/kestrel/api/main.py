@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, family_label, load_library
 from kestrel.experience.hints import format_hints
-from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
+from kestrel.experience.store import ExperienceStore, ExperienceStoreError, store_error_kind
 from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
 from kestrel.experiments import results as exp_results
@@ -87,18 +88,22 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     vault = Vault(key)
     terms = load_terms()
     store = TargetStore(settings.db_path, vault)
+    # Start-up lines (feature 010): constant text, values as fields, a failure as its class and kind — never its
+    # message, which may quote a path, a host or a provider error (FR-006, FR-009).
     if not store.key_matches():
-        logger.error("The encryption key doesn't match the one used to save targets, so saved auth header values "
-                     "can't be read. Restore the old key, or re-enter the values.")
+        events.emit("key.mismatch", logging.ERROR,
+                    message="The encryption key doesn't match the one used to save targets, so saved auth header "
+                            "values can't be read. Restore the old key, or re-enter the values.")
     closed = store.close_interrupted_runs()  # release any run the last process left in progress (FR-031)
     if closed:
-        logger.info("Closed %d run(s) that were interrupted by a previous shutdown.", closed)
+        events.emit("message", message="Closed run(s) that were interrupted by a previous shutdown.", count=closed)
 
     if library is None:
         try:
             library = load_library()
-        except LibraryError as error:
-            logger.warning("The attack library could not be loaded, so attacks are unavailable: %s", error)
+        except LibraryError:
+            events.emit("library.unavailable", logging.WARNING, exc_info=True,
+                        message="The attack library could not be loaded, so attacks are unavailable.")
     # Capture any injected test doubles before defaulting: experiments build a client per arm, so in tests the
     # injected stub is reused for every arm, while production builds a real per-arm client from settings.
     injected_judge, injected_attacker = judge, attacker
@@ -111,17 +116,21 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             experience = ExperienceStore(settings.chroma_path)
             experience.self_check()  # surface a bad store (mismatched EF, failed model download) clearly, now
         except Exception as error:
-            reason = error.args[0] if isinstance(error, ExperienceStoreError) else describe_store_error(error)
-            logger.error("The experience store at %s is unavailable, so runs will record loudly as not written "
-                         "back (Principle V): %s", settings.chroma_path, reason)
+            # The self-check wraps the store's own error: name that one (its class and kind, never its text).
+            cause = error.__cause__ if isinstance(error, ExperienceStoreError) and error.__cause__ else error
+            events.emit("experience.unavailable", logging.ERROR, exc_info=(type(cause), cause, cause.__traceback__),
+                        reason_kind=store_error_kind(cause),
+                        message="The experience store is unavailable, so runs will record loudly as not written "
+                                "back (Principle V).")
             experience = None
     if experience is not None and library is not None:
         try:
             seeded = experience.seed_patterns(library)  # idempotent (FR-004)
-            logger.info("Seeded %d attack pattern(s) into the experience store.", seeded)
+            events.emit("message", message="Seeded attack patterns into the experience store.", count=seeded)
         except Exception as error:
-            logger.error("The experience store could not be seeded, so runs will record loudly as not written "
-                         "back: %s", describe_store_error(error))
+            events.emit("experience.seed_failed", logging.ERROR, exc_info=True, reason_kind=store_error_kind(error),
+                        message="The experience store could not be seeded, so runs will record loudly as not "
+                                "written back.")
             experience = None
 
     app = FastAPI(title="Kestrel API", version="0.1.0", dependencies=[Depends(require_token)])
@@ -263,7 +272,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             try:
                 app.state.experience.delete_target_memory(target_id)
             except Exception:
-                logger.exception("could not delete experience memory for target %s", target_id)
+                events.emit("experience.delete_failed", logging.ERROR, exc_info=True, target_id=target_id)
         return Response(status_code=204)
 
     @app.post("/api/runs", status_code=201, response_model=RunDetail)

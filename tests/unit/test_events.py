@@ -233,3 +233,41 @@ def test_a_judge_configured_turn_without_a_judge_request_carries_a_null_judge_pr
     turn = fields(next(r for r in records if r.kestrel_event == "turn"))
     assert turn["judge_model"] == "j/m" and "judge_prompt" in turn and turn["judge_prompt"] is None
     assert turn["canary_hit"] is True and turn["hard_evidence"] is True
+
+
+# ---- T025: the catalogue is the allow-list, and nothing interpolates values into text (FR-006, FR-009) ----
+
+DENY_NAMES = {"url", "name", "reason", "progress", "message_text", "reply_text", "prompt_text", "value"}
+
+
+def test_no_catalogued_field_can_carry_free_text():  # FR-009
+    names = set(events.SCOPE_FIELDS) | set(events.ANY_EVENT_FIELDS)
+    names |= {field for fields in events.CATALOGUE.values() for field in fields}
+    assert not names & DENY_NAMES
+
+
+def test_the_helpers_take_identifiers_lengths_and_categories_only():  # FR-009
+    import inspect
+    text_like = DENY_NAMES | {"text", "reply", "attack", "conversation", "headers", "display_name", "evidence"}
+    for helper in (events.run_started, events.turn_ended, events.model_request, events.target_request,
+                   events.connection_test, events.memory_retrieval, events.memory_writeback,
+                   events.experiment_started, events.experiment_cap, events.experiment_ended):
+        assert not set(inspect.signature(helper).parameters) & text_like, helper.__name__
+
+
+def test_no_log_call_in_kestrel_interpolates_a_value():  # FR-006
+    """Every value travels as a field: a logging call in src/kestrel passes its (constant) message and nothing to
+    %-format into it."""
+    import ast
+    from pathlib import Path
+    levels = {"debug", "info", "warning", "error", "exception", "critical"}
+    offenders = []
+    for path in sorted((Path(events.__file__).parent).rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id in ("log", "logger")):
+                continue
+            allowed = 1 if node.func.attr in levels else 2 if node.func.attr == "log" else None
+            if allowed is not None and len(node.args) > allowed:
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == []
