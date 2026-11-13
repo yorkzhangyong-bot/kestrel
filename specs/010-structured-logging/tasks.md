@@ -337,7 +337,7 @@ packages or an unreachable or refusing collector mean exactly one warning and a 
 blocked import shows the single warning; the real exporter against a closed port leaves the run unchanged within
 the bound; no trace header reaches the target.
 
-- [ ] T035 [P] [US4] Unit test `tests/unit/test_tracing.py`: a static check that `src/kestrel/tracing.py` has no
+- [X] T035 [P] [US4] Unit test `tests/unit/test_tracing.py`: a static check that `src/kestrel/tracing.py` has no
       module-level `opentelemetry` import (parse it with `ast`); flag off → `configure_tracing` returns the no-op
       without touching `opentelemetry.exporter.otlp.proto.http.trace_exporter` (the module is blocked with
       `sys.modules[...] = None`; no error, no warning, `enabled False`); flag on + blocked import → exactly one
@@ -354,7 +354,7 @@ the bound; no trace header reaches the target.
       (this real-exporter case carries the marker the `KESTREL_TEST_BLOCK_OTLP=1` switch skips); the
       `opentelemetry` loggers do not propagate to the stream (010/FR-013, 010/FR-014, 010/FR-015, 010/SC-004,
       010/SC-007).
-- [ ] T036 [P] [US4] Integration test `tests/integration/test_tracing_run.py`: with tracing on and
+- [X] T036 [P] [US4] Integration test `tests/integration/test_tracing_run.py`: with tracing on and
       `span_collector` and the real clients over `model_transport`, an adaptive run against the stub target started
       through `POST /api/runs` and a two-run experiment started through `POST /api/experiments` yield **only**
       `kestrel.*` spans and, per run, exactly one parentless `kestrel.run` carrying that run's id whose child spans
@@ -364,7 +364,7 @@ the bound; no trace header reaches the target.
       `TARGET_NAME`, `ATTACK_TEXT` or `REPLY_TEXT`; the stub target's recorded requests carry no `traceparent`,
       `tracestate` or `baggage` header; with the flag off the collector stays empty (010/FR-013, 010/SC-002,
       010/SC-004).
-- [ ] T037 [US4] Implement `src/kestrel/tracing.py` per `contracts/tracing.md`: no module-level `opentelemetry`
+- [X] T037 [US4] Implement `src/kestrel/tracing.py` per `contracts/tracing.md`: no module-level `opentelemetry`
       import; `Tracing` protocol, the no-op, the OpenTelemetry adapter with lazy imports inside
       `configure_tracing(settings, *, exporter=None)` — the OTLP/HTTP exporter module imported only when no
       `exporter` was injected; a **private** `TracerProvider(Resource.create({"service.name":
@@ -377,7 +377,7 @@ the bound; no trace header reaches the target.
       on `ctx.run_span`; `span(name, *, parent, **attrs)` with an explicit parent; `set_attributes` (scalars only);
       `shutdown(timeout_s=5.0)` running `provider.shutdown()` in a daemon thread joined for at most `timeout_s`,
       never raising; no propagator, no header injection (010/FR-013, 010/FR-014, 010/FR-015).
-- [ ] T038 [US4] Wire the spans: `src/kestrel/api/main.py` creates the app with
+- [X] T038 [US4] Wire the spans: `src/kestrel/api/main.py` creates the app with
       `FastAPI(..., telemetry={"tracing": False, "metrics": False, "logs": False})`, calls
       `configure_tracing(settings, exporter=span_exporter)` (`create_app` gains the `span_exporter=None` test seam)
       and adds a `lifespan` whose exit calls `tracing.current().shutdown(5.0)`;

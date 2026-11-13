@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  ExperimentSummaryOut, PromptVersionOut, RateOut, RunLogOut, experiment_diff,
                                  validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
-from kestrel import events, prompt_registry
+from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, family_label, load_library
 from kestrel.experience.hints import format_hints
@@ -80,12 +81,14 @@ def _unauthorized_handler(request: Request, exc: _Unauthorized) -> JSONResponse:
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
                resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
-               attacker: Any = None, experience: Any = None) -> FastAPI:
-    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker
-    and an experience store (a stub-backed one keeps tests offline)."""
+               attacker: Any = None, experience: Any = None, span_exporter: Any = None) -> FastAPI:
+    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker,
+    an experience store (a stub-backed one keeps tests offline) and a span exporter (an in-process collector)."""
     settings = settings or load_settings()
     logger = configure_logging(settings)            # the JSON (or text) stream of the `kestrel` logger (feature 010)
     events.configure(prices=settings.model_prices)  # every model-request line is costed with the feature-007 prices
+    # Optional traces (feature 010, FR-013): the no-op unless KESTREL_TRACING=on; a private provider, never global.
+    app_tracing = tracing.configure_tracing(settings, exporter=span_exporter)
     key, _source = load_or_create_key(settings, logger)
     vault = Vault(key)
     terms = load_terms()
@@ -135,7 +138,14 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                 "written back.")
             experience = None
 
-    app = FastAPI(title="Kestrel API", version="0.1.0", dependencies=[Depends(require_token)])
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        await asyncio.to_thread(app_tracing.shutdown, 5.0)   # deliver what is queued, waiting at most 5 s (FR-015)
+
+    # The framework's own OpenTelemetry stays off: no request span exists, so a run's trace is its own (FR-013).
+    app = FastAPI(title="Kestrel API", version="0.1.0", dependencies=[Depends(require_token)], lifespan=lifespan,
+                  telemetry={"tracing": False, "metrics": False, "logs": False})
     app.state.settings = settings
     app.state.vault = vault
     app.state.store = store
