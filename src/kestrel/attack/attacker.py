@@ -113,6 +113,7 @@ class AttackerClient:
         payload = self._payload(conversation, progress, family, hints)
         remaining = self._remaining(limit)
         tokens = 0
+        prompt_ref = self.prompt_ref(family)   # the reference this request sends, for its line
         tally, started = CallTally(), time.perf_counter()
         reply: AttackerReply | None = None
         error_kind: str | None = None
@@ -155,7 +156,7 @@ class AttackerClient:
                 raise
             finally:
                 # One line for the whole logical request, retries included; the class of a failure, never its text.
-                events.model_request(kind="attacker", model=self._model, prompt=self.prompt_ref(family),
+                events.model_request(kind="attacker", model=self._model, prompt=prompt_ref,
                                      latency_ms=int((time.perf_counter() - started) * 1000), ok=reply is not None,
                                      status=tally.status, attempts=tally.attempts, prompt_tokens=tally.prompt_tokens,
                                      completion_tokens=tally.completion_tokens, total_tokens=tally.total_tokens,

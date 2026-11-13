@@ -157,6 +157,7 @@ class JudgeClient:
             raise JudgeError("No judge is configured; set KESTREL_JUDGE_API_KEY or OPENROUTER_API_KEY.")
         limit = self._timeout if timeout is None else min(self._timeout, timeout)
         messages = self._judge_messages(attack, reply, conversation)
+        prompt_ref = self.judge_prompt_ref   # the reference this request sends, for its line
         tally, started = CallTally(), time.perf_counter()
         parsed: ParsedVerdict | None = None
         error_kind: str | None = None
@@ -178,7 +179,7 @@ class JudgeClient:
                 raise
             finally:
                 # The verdict category only: the reason and the progress note may quote the reply (FR-009).
-                self._log_request("judge", self.judge_prompt_ref, tally, started, ok=parsed is not None,
+                self._log_request("judge", prompt_ref, tally, started, ok=parsed is not None,
                                   error=error_kind, verdict=parsed.verdict if parsed is not None else None, span=span)
 
     async def recommend(self, *, family: str, owasp_category: str, attack: str, evidence: str,
@@ -192,6 +193,7 @@ class JudgeClient:
             raise JudgeError("No judge is configured; set KESTREL_JUDGE_API_KEY or OPENROUTER_API_KEY.")
         limit = self._timeout if timeout is None else min(self._timeout, timeout)
         messages = self._recommend_messages(family, owasp_category, attack, evidence)
+        prompt_ref = self.recommender_prompt_ref
         tally, started = CallTally(), time.perf_counter()
         done = False
         error_kind: str | None = None
@@ -214,7 +216,7 @@ class JudgeClient:
             error_kind = error_kind or type(error).__name__
             raise
         finally:
-            self._log_request("recommender", self.recommender_prompt_ref, tally, started, ok=done, error=error_kind)
+            self._log_request("recommender", prompt_ref, tally, started, ok=done, error=error_kind)
 
     def _log_request(self, kind: str, prompt: str | None, tally: CallTally, started: float, *, ok: bool,
                      error: str | None, verdict: str | None = None, span=None) -> None:
