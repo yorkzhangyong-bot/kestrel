@@ -1,6 +1,9 @@
 """Shared test helpers. A synthetic attack library and a stub judge, so integration tests need no real content."""
 from __future__ import annotations
 
+import json
+
+import httpx
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 from kestrel.attacks.library import FAMILIES, build_library
@@ -104,3 +107,130 @@ class StubEmbeddingFunction(EmbeddingFunction):
     @classmethod
     def build_from_config(cls, config: dict) -> "StubEmbeddingFunction":
         return cls(dim=config.get("dim", 32))
+
+
+# ---- feature 010: known strings, and one offline transport for the target and the real model clients ----
+
+# Known strings the redaction tests count on every surface (010/SC-002). Placeholders only, never attack text.
+SECRET = "KESTREL-TEST-AUTH-VALUE-9f3a71"              # the target's auth header value
+TARGET_URL = "http://target.kestrel.test/agent/chat"    # the target's URL
+TARGET_NAME = "Redaction Probe Agent 7"                 # the target's display name
+ATTACK_TEXT = "<attack message placeholder 4471>"       # the message sent to the target
+REPLY_TEXT = "<target reply placeholder 8823>"          # the target's reply
+JUDGE_REASON = "The reply quoted <target reply placeholder 8823> back."   # judge free text quoting the reply
+JUDGE_PROGRESS = "progress note placeholder 5531"
+MODEL_KEY = "KESTREL-TEST-MODEL-KEY-c0ffee"             # the attacker/judge API key
+MODEL_BASE_URL = "http://models.kestrel.test/v1"        # the model endpoint the real clients call
+
+
+async def no_sleep(_delay):
+    return None
+
+
+class ModelTransport:
+    """One httpx.MockTransport for a whole offline run (010/T003): it answers the model endpoint — attacker, judge and
+    recommender requests, told apart by the request's response_format — with canned OpenAI-style bodies carrying a
+    `usage` object, and every other host as the stub target ({"reply": ...}). Every request is recorded with its
+    headers, so a test can check what reached the target. Pass `.transport` both as the app's transport and as the
+    real clients' transport."""
+
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        self.target_reply = REPLY_TEXT
+        self.target_status = 200
+        self.attacker_message = ATTACK_TEXT
+        self.attacker_statuses: list[int] = []      # consumed one per attacker POST; 200 once empty
+        self.verdict = "failed"
+        self.judge_reason = JUDGE_REASON
+        self.judge_progress = JUDGE_PROGRESS
+        self.judge_statuses: list[int] = []
+        self.recommendation = "Keep the system prompt out of replies."
+        self.usage = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+        self.error_usage: dict | None = None        # usage an error response reports (a retried, billed attempt)
+        self.transport = httpx.MockTransport(self.handle)
+
+    # -- what a test reads back --
+
+    def target_requests(self) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.host != httpx.URL(MODEL_BASE_URL).host]
+
+    def model_requests(self, kind: str) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.host == httpx.URL(MODEL_BASE_URL).host and _kind(r) == kind]
+
+    # -- the handler --
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.url.host != httpx.URL(MODEL_BASE_URL).host:
+            return httpx.Response(self.target_status, json={"reply": self.target_reply})
+        kind = _kind(request)
+        if kind == "attacker":
+            status = self.attacker_statuses.pop(0) if self.attacker_statuses else 200
+            content = self.attacker_message
+        elif kind == "judge":
+            status = self.judge_statuses.pop(0) if self.judge_statuses else 200
+            content = json.dumps({"verdict": self.verdict, "reason": self.judge_reason,
+                                  "progress": self.judge_progress})
+        else:
+            status, content = 200, json.dumps({"recommendation": self.recommendation})
+        if status != 200:
+            body: dict = {"error": {"message": "placeholder provider error"}}
+            if self.error_usage is not None:
+                body["usage"] = dict(self.error_usage)
+            return httpx.Response(status, json=body)
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+                                         "usage": dict(self.usage)})
+
+
+def _kind(request: httpx.Request) -> str:
+    """attacker (no response_format), judge (schema "verdict") or recommender (schema "recommendation")."""
+    body = json.loads(request.content or b"{}")
+    schema = ((body.get("response_format") or {}).get("json_schema") or {}).get("name")
+    return {"verdict": "judge", "recommendation": "recommender"}.get(schema, "attacker")
+
+
+def real_judge(model_transport: ModelTransport, *, model: str = "google/gemini-3.8-flash", system_prompt=None):
+    """The real JudgeClient over the offline transport (010, research D10)."""
+    from kestrel.judge.client import JudgeClient
+    return JudgeClient(model=model, api_key=MODEL_KEY, base_url=MODEL_BASE_URL, transport=model_transport.transport,
+                       sleep=no_sleep, system_prompt=system_prompt)
+
+
+def real_attacker(model_transport: ModelTransport, *, model: str = "deepseek/deepseek-v4.1-flash",
+                  system_overrides=None):
+    """The real AttackerClient over the offline transport (010, research D10)."""
+    from kestrel.attack.attacker import AttackerClient
+    return AttackerClient(model=model, api_key=MODEL_KEY, base_url=MODEL_BASE_URL,
+                          transport=model_transport.transport, sleep=no_sleep, system_overrides=system_overrides)
+
+
+def saved_target(store, *, name: str = TARGET_NAME, url: str = TARGET_URL, secret: str = SECRET,
+                 canaries: list[str] | None = None, description: str | None = None):
+    """A saved, permission-confirmed target under the current terms, written straight to the store (feature 010)."""
+    from kestrel.api.main import load_terms
+    target = store.create_target(name=name, url=url, method="POST", headers=[("X-API-Key", secret)],
+                                 body_template='{"message": "{{prompt}}"}', response_path="$.reply",
+                                 terms_version=load_terms().version, description=description)
+    if canaries:
+        store.set_canaries(target.id, canaries)
+    return target
+
+
+def model_settings(settings):
+    """Settings whose model clients — built by the app or by the experiment engine's own factories — reach the
+    offline model transport (feature 010, research D10)."""
+    import dataclasses
+    return dataclasses.replace(settings, judge_api_key=MODEL_KEY, judge_base_url=MODEL_BASE_URL,
+                               attacker_api_key=MODEL_KEY, attacker_base_url=MODEL_BASE_URL)
+
+
+def await_experiment(client, experiment_id: int, timeout_s: float = 30.0) -> dict:
+    """Poll the status endpoint until the experiment leaves 'running'."""
+    import time
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/experiments/{experiment_id}/status").json()
+        if status["status"] != "running":
+            return status
+        time.sleep(0.05)
+    raise AssertionError(f"experiment {experiment_id} did not finish within {timeout_s}s")

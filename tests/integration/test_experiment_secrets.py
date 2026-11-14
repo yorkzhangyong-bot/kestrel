@@ -25,7 +25,7 @@ def _await_finished(client, experiment_id, timeout_s=10.0):
     raise AssertionError("experiment did not finish")
 
 
-def test_no_secret_in_arm_result_or_logs(make_client, caplog):
+def test_no_secret_in_arm_result_or_logs(make_client, caplog, json_log):
     caplog.set_level(logging.DEBUG)
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"reply": "the agent held"}))
     client = make_client(transport=transport, library=fixture_library(), judge=StubJudge(verdict="failed"))
@@ -44,5 +44,8 @@ def test_no_secret_in_arm_result_or_logs(make_client, caplog):
     assert SECRET not in status_text
     assert SECRET not in result_text
     assert SECRET not in caplog.text
+    # 010/SC-005: values are JSON fields since feature 010, so the count runs over the rendered JSON lines too (caplog
+    # shows only constant messages now).
+    assert SECRET not in json_log.text() and json_log.of("experiment.end")
     for arm in client.app.state.store.get_experiment(experiment_id).arms:
         assert SECRET not in arm.attacker_model and SECRET not in arm.judge_model   # arms carry names only

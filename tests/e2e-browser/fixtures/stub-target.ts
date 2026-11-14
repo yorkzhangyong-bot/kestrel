@@ -11,6 +11,8 @@ export interface StubCall {
 
 interface StubState {
   reply: string;
+  /** A scripted reply list: each call takes the next one, the last one repeats (used by the adaptive run). */
+  replies: string[];
   delayMs: number;
   calls: StubCall[];
 }
@@ -49,6 +51,12 @@ export class StubTarget {
 
   setReply(text: string): void {
     this.state.reply = text;
+    this.state.replies = [];
+  }
+
+  /** Answer the calls in sequence; the last reply repeats for any further request. */
+  setReplies(replies: string[]): void {
+    this.state.replies = [...replies];
   }
 
   setDelay(ms: number): void {
@@ -66,7 +74,7 @@ export class StubTarget {
 }
 
 export async function startStubTarget(): Promise<StubTarget> {
-  const state: StubState = { reply: DEFAULT_REPLY, delayMs: 0, calls: [] };
+  const state: StubState = { reply: DEFAULT_REPLY, replies: [], delayMs: 0, calls: [] };
   const server = createServer(async (request, response) => {
     const body = await readBody(request);
     state.calls.push({
@@ -78,8 +86,9 @@ export async function startStubTarget(): Promise<StubTarget> {
     if (state.delayMs > 0) {
       await scheduler.wait(state.delayMs);
     }
+    const reply = state.replies.length > 1 ? (state.replies.shift() as string) : (state.replies[0] ?? state.reply);
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ reply: state.reply }));
+    response.end(JSON.stringify({ reply }));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

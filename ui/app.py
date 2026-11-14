@@ -5,7 +5,9 @@ st.success and st.error carry only Kestrel's own wording.
 """
 from __future__ import annotations
 
+import json
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -519,6 +521,7 @@ def _render_finding(run: dict, judge: dict) -> None:
         # Prefer Kestrel's own wording for the step (feature 001); fall back for any unmapped step.
         fallback = f"The attack could not be sent: {run.get('reason') or run['failure_step']}."
         st.error(run.get("failure_message") or fallback)
+        _render_log(run)   # a run whose send failed has kept lines too (feature 010, FR-012)
         return
     verdict, by_judge = run["verdict"], run["judge_used"]
     model = run.get("judge_model") or judge.get("model") or "the judge"
@@ -552,6 +555,43 @@ def _render_finding(run: dict, judge: dict) -> None:
         st.caption(f"Attacker: {source}" + (f" · {owasp}" if owasp else ""))
     if run.get("memory_written") is False:  # FR-010: a loud, visible warning that write-back failed
         st.warning("This run's result was saved, but it could not be written to the experience store.")
+    _render_log(run)
+
+
+LOG_COLUMNS = {"Time": "ts", "Event": "event", "Turn": "turn", "Model": "model", "Prompt": "prompt",
+               "Latency ms": "latency_ms", "Tokens": "total_tokens", "Cost": "cost_usd"}
+
+
+def _log_cell(value) -> str:
+    """One table cell: blank when the line has no such field; a cost in plain decimals, never scientific notation."""
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return format(Decimal(str(value)), "f")
+    return str(value)
+
+
+def _render_log(run: dict) -> None:
+    """The run's kept log lines, read through the API only (feature 010, FR-012): a table and the raw JSON lines.
+    Every value is an allow-listed field of the API's records, shown as plain cells and code — never markdown."""
+    if run.get("id") is None:
+        return
+    with st.expander("Log"):
+        try:
+            log = api_client.get_run_log(run["id"])
+        except api_client.ApiError as error:
+            st.error(api_message(error))
+            return
+        lines = log.get("lines") or []
+        if not lines:
+            st.caption("No log lines were recorded for this run.")
+            return
+        frame = pd.DataFrame([{column: _log_cell(line.get(field)) for column, field in LOG_COLUMNS.items()}
+                              for line in lines])
+        st.dataframe(frame, hide_index=True, alt="This run's log lines, in order")
+        if log.get("truncated"):
+            st.caption(f"Log truncated: {log.get('dropped')} line(s) were not kept after the first {log.get('kept')}.")
+        st.code("\n".join(json.dumps(line) for line in lines), language="json")
 
 
 def _render_conversation(run: dict) -> None:

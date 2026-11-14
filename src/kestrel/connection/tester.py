@@ -1,9 +1,13 @@
-"""One connection test: guard, send, name the outcome, mask, cut, log one line (research R1, R2, R9)."""
+"""One connection test: guard, send, name the outcome, mask, cut, log one line (research R1, R2, R9).
+
+The line (feature 010) is a `target.request` inside a run and a `connection.test` otherwise: the step, the status,
+the timing and the reply's length — never the URL, a header, the body, the reply or the target's display name
+(FR-004, FR-009).
+"""
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -11,12 +15,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from kestrel import events
 from kestrel.connection.address_guard import Resolver, default_resolver, is_allowed
 from kestrel.connection.response_path import PathNotFound, extract
 from kestrel.connection.template import build_request
 from kestrel.secrets import mask_values
-
-log = logging.getLogger("kestrel.connection")
 
 GREETING = "Hello"
 USER_AGENT = "Kestrel/0.1 (connection test)"
@@ -73,37 +76,46 @@ def outcome(step: str, *, detail: str | None = None, status: int | None = None) 
     return TestOutcome(ok=step == "success", step=step, message=MESSAGES[step], detail=detail, status_code=status)
 
 
-async def run_test(settings: ResolvedSettings, *, mode: str, display_name: str = "",
+async def run_test(settings: ResolvedSettings, *, mode: str, display_name: str = "", target_id: int | None = None,
                    transport: httpx.AsyncBaseTransport | None = None, resolver: Resolver = default_resolver,
                    deadline_s: float = 60.0, connect_timeout_s: float = 10.0, max_bytes: int = 1_048_576,
                    max_reply_chars: int = 2000, prompt: str = GREETING) -> TestOutcome:
-    """Send one message (the greeting by default; an attack prompt supplies its own text) and read the reply."""
-    started = time.perf_counter()
-    result = await _run(settings, mode, transport, resolver, deadline_s, connect_timeout_s, max_bytes, prompt)
+    """Send one message (the greeting by default; an attack prompt supplies its own text) and read the reply.
 
-    secrets = [value for _, value in settings.headers]
-    if result.detail is not None:
-        result.detail = mask_values(result.detail, secrets)
-    if result.reply_text is not None:
-        reply = mask_values(result.reply_text, secrets)  # mask before cutting, so no value is half shown
-        result.reply_truncated = len(reply) > max_reply_chars
-        result.reply_text = reply[:max_reply_chars]
-    result.duration_ms = int((time.perf_counter() - started) * 1000)
-    _log(result, settings, display_name)
+    `display_name` stays accepted but is never logged; `target_id` names a saved target on the connection-test line."""
+    started = time.perf_counter()
+    with events.child_span("kestrel.target_request") as span:   # traced only inside a traced run (FR-013)
+        result = await _run(settings, mode, transport, resolver, deadline_s, connect_timeout_s, max_bytes, prompt)
+
+        secrets = [value for _, value in settings.headers]
+        if result.detail is not None:
+            result.detail = mask_values(result.detail, secrets)
+        if result.reply_text is not None:
+            reply = mask_values(result.reply_text, secrets)  # mask before cutting, so no value is half shown
+            result.reply_truncated = len(reply) > max_reply_chars
+            result.reply_text = reply[:max_reply_chars]
+        result.duration_ms = int((time.perf_counter() - started) * 1000)
+        _log(result, target_id, span)
     return result
 
 
-def refused(step: str, settings: ResolvedSettings, display_name: str = "") -> TestOutcome:
+def refused(step: str, settings: ResolvedSettings, display_name: str = "", target_id: int | None = None) -> TestOutcome:
     """An outcome decided before anything is sent (for example credentials_unreadable), logged like any test."""
     result = outcome(step)
-    _log(result, settings, display_name)
+    _log(result, target_id)
     return result
 
 
-def _log(result: TestOutcome, settings: ResolvedSettings, display_name: str) -> None:
-    log.info("connection test target=%r url=%r method=%s step=%s status=%s duration_ms=%d",
-             display_name or "(unsaved)", _loggable_url(settings.url), settings.method, result.step,
-             result.status_code if result.status_code is not None else "-", result.duration_ms)
+def _log(result: TestOutcome, target_id: int | None, span: Any = None) -> None:
+    """One line: `target.request` inside a run (the turn comes from the run's scope), `connection.test` otherwise."""
+    if events.in_run():
+        reply_chars = None if result.reply_text is None else len(result.reply_text)
+        events.target_request(latency_ms=result.duration_ms, ok=result.ok, status=result.status_code,
+                              step=result.step, reply_chars=reply_chars, reply_truncated=result.reply_truncated,
+                              span=span)
+    else:
+        events.connection_test(target_id=target_id, latency_ms=result.duration_ms, ok=result.ok,
+                               status=result.status_code, step=result.step)
 
 
 async def _run(settings: ResolvedSettings, mode: str, transport: httpx.AsyncBaseTransport | None, resolver: Resolver,
@@ -184,7 +196,8 @@ def _json_type(value: Any) -> str:
 
 
 def _loggable_url(url: str) -> str:
-    """Scheme, host, port and path only: never the query string or user info (research R9)."""
+    """Scheme, host, port and path only: never the query string or user info (research R9). Used by the repr only;
+    since feature 010 no log line carries the URL in any form (FR-009)."""
     parts = urlsplit(url)
     host = parts.netloc.rsplit("@", 1)[-1]
     return f"{parts.scheme}://{host}{parts.path}"

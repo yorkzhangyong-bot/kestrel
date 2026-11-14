@@ -94,6 +94,11 @@ def get_run(run_id: int) -> dict[str, Any]:
     return _request("GET", f"/api/runs/{run_id}")
 
 
+def get_run_log(run_id: int) -> dict[str, Any]:
+    """A run's kept log lines, in order (feature 010): {run_id, lines, kept, dropped, truncated}."""
+    return _request("GET", f"/api/runs/{run_id}/log")
+
+
 def get_profile(target_id: int) -> dict[str, Any]:
     return _request("GET", f"/api/targets/{target_id}/profile")
 

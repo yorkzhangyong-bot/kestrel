@@ -14,9 +14,8 @@ from typing import Any
 
 import chromadb
 
+from kestrel import events
 from kestrel.store import utc_now
-
-log = logging.getLogger("kestrel")
 
 
 @dataclass(frozen=True)
@@ -38,14 +37,28 @@ class ExperienceStoreError(Exception):
     """The store can't be used: a mismatched persisted embedding function, or the local model couldn't load."""
 
 
-def describe_store_error(error: Exception) -> str:
-    """A plain, actionable one-liner for why the store is unusable (surfaced at start-up and in logs)."""
+_DOWNLOAD_HINTS = ("onnx", "download", "could not resolve", "connection", "timed out", "temporary failure",
+                   "getaddrinfo", "ssl")
+
+
+def store_error_kind(error: BaseException) -> str:
+    """Why the store is unusable, as a category the log line can carry instead of the error's text (feature 010):
+    `embedding_function_mismatch`, `model_download` or `other`."""
     text = str(error).lower()
     if "embedding function" in text and "not found" in text:
+        return "embedding_function_mismatch"
+    if any(hint in text for hint in _DOWNLOAD_HINTS):
+        return "model_download"
+    return "other"
+
+
+def describe_store_error(error: Exception) -> str:
+    """A plain, actionable one-liner for why the store is unusable (surfaced at start-up and in logs)."""
+    kind = store_error_kind(error)
+    if kind == "embedding_function_mismatch":
         return ("its collection was created with a different embedding function (often leftover test data). "
                 "Delete the store directory and restart so it can be rebuilt with the default embeddings.")
-    if any(hint in text for hint in ("onnx", "download", "could not resolve", "connection", "timed out",
-                                     "temporary failure", "getaddrinfo", "ssl")):
+    if kind == "model_download":
         return ("the local embedding model could not be loaded — the first run downloads it (about 80 MB), "
                 "so this needs network once. Check your connection and restart.")
     return f"{type(error).__name__}: {error}"
@@ -70,8 +83,9 @@ class ExperienceStore:
         stored = (self._collection.metadata or {}).get(VERSION_KEY, store_version)
         self.version = str(stored)
         if self.version != store_version:
-            log.warning("The experience store is at version %s, but this Kestrel writes version %s; "
-                        "reconciling it is not handled yet.", self.version, store_version)
+            events.emit("message", logging.WARNING, stored_version=self.version, expected_version=store_version,
+                        message="The experience store's version differs from the one this Kestrel writes; "
+                                "reconciling it is not handled yet.")
 
     def self_check(self) -> None:
         """Surface an unusable store early (bad persisted embedding function, or a failed first-use model
@@ -133,12 +147,19 @@ class ExperienceStore:
 
     def retrieve_patterns(self, *, family: str, query_text: str, k: int) -> list[str]:
         """Up to k patterns of this family, by semantic similarity to query_text (FR-016/17, SC-014)."""
+        return [document for _, document in self.retrieve_patterns_with_ids(family=family, query_text=query_text,
+                                                                            k=k)]
+
+    def retrieve_patterns_with_ids(self, *, family: str, query_text: str, k: int) -> list[tuple[str, str]]:
+        """The same patterns as `(id, document)` pairs: the ids (`pattern:lib:<prompt_id>`, `pattern:run:<run_id>`)
+        are what the retrieval line names (feature 010, FR-016) — identifiers, never the text."""
         if k <= 0:
             return []
         result = self._collection.query(query_texts=[query_text or ""], n_results=k,
                                         where=_and({"type": "pattern"}, {"family": family}))
+        ids = (result.get("ids") or [[]])[0]
         documents = (result.get("documents") or [[]])[0]
-        return list(documents)
+        return list(zip(ids, documents))
 
     def retrieve_memory(self, *, target_id: int, family: str, cap: int) -> list[MemoryRecord]:
         """This target's memory, by exact id (never semantic): recent-first to cap, keeping same-family successes."""

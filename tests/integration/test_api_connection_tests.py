@@ -122,9 +122,12 @@ def test_an_unknown_target_id_is_404(make_client):
     assert response.status_code == 404
 
 
-def test_the_header_value_never_reaches_the_logs(make_client, all_logs):
+def test_the_header_value_never_reaches_the_logs(make_client, all_logs, json_log):
     client = make_client(transport=replying({"reply": f"echo {SECRET}"}))
     client.post("/api/connection-tests", json=payload())
     client.post("/api/connection-tests", json=payload(response_path="$.missing"))
     client.post("/api/connection-tests", json=payload(url=""))
-    assert all_logs().count(SECRET) == 0
+    # 010/SC-005: values are JSON fields since feature 010, so the count runs over the rendered JSON lines too (caplog
+    # shows only constant messages now).
+    assert all_logs().count(SECRET) == 0 and json_log.text().count(SECRET) == 0
+    assert json_log.of("connection.test")   # the tests were logged, as JSON lines (010/FR-009)

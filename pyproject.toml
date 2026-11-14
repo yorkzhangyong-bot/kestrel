@@ -21,6 +21,14 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
+[project.optional-dependencies]
+# Feature 010: OpenTelemetry traces behind KESTREL_TRACING=on. Optional, imported only when the flag is on, so the
+# required stack is unchanged (Principle X): the SDK plus the standard OTLP/HTTP exporter.
+otel = [
+    "opentelemetry-sdk>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+]
+
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
@@ -33,6 +41,10 @@ dev = [
     "mypy>=1.11",
     "mutmut>=2.4,<3.0",
     "pip-audit>=2.7",
+    # Feature 010: the suite drives the real tracing adapter against an in-process span collector (test tooling,
+    # never a runtime requirement; the same two packages as the optional `otel` extra).
+    "opentelemetry-sdk>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
 ]
 
 [tool.pytest.ini_options]
@@ -41,6 +53,7 @@ pythonpath = ["src", "ui", "scripts"]
 markers = [
     "e2e: starts the sacrificial target and the API; needs OPENROUTER_API_KEY",
     "judge_eval: judge-accuracy evaluation against a human-labelled golden set; needs OPENROUTER_API_KEY",
+    "real_otlp_exporter: drives the real OTLP/HTTP exporter (feature 010); skipped when KESTREL_TEST_BLOCK_OTLP=1",
 ]
 addopts = "-m 'not e2e and not judge_eval' --import-mode=importlib"
 

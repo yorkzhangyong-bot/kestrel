@@ -40,14 +40,15 @@ def test_invalid_key_file_is_refused(tmp_path):
         load_or_create_key(make_settings(tmp_path, key_file=path), LOGGER)
 
 
-def test_missing_key_file_is_created_and_announced(tmp_path, caplog):
+def test_missing_key_file_is_created_and_announced(tmp_path, caplog, json_log):
     path = tmp_path / "nested" / "folder" / "secret.key"
     with caplog.at_level(logging.WARNING):
         key, source = load_or_create_key(make_settings(tmp_path, key_file=path), LOGGER)
     assert source == "generated"
     assert path.read_bytes().strip() == key
     Fernet(key)
-    assert str(path) in caplog.text
+    # 010/SC-005: since feature 010 the path is a field of the JSON line, never interpolated into the message.
+    assert json_log.of("message")[0]["path"] == str(path)
     assert "back this file up" in caplog.text
 
 

@@ -34,9 +34,11 @@ Exceptions appear as `exc_type` (class name) and `stack` (frames `file:line in f
 | `started_at` | monotonic float | `run_started` — `run.end.duration_ms` is measured from it |
 | `attacker_model`, `judge_model`, `attacker_prompt`, `judge_prompt` | str \| None | `run_started`, from the clients' references (D5/D15); copied onto `turn` lines where applicable |
 | `turn_tokens` / `turn_cost`, `cost_usd`, `cost_missing` | per-turn and per-run accumulators | `events.model_request(...)`: sums of reported tokens and priced costs, or the first reason a request could not be priced |
-| `judge_requests` | int | incremented by every judge `model.request`; `run.end.judge_used = judge_requests > 0` |
+| `judge_requests` | int | incremented by `events.judge_requested(…)`, which the run loops call just before each judge request (so a judge that fails before any HTTP call still counts); `run.end.judge_used = judge_requests > 0` |
 | `outcome` | the finished run's verdict, hard_evidence, stopping_condition, failure_step, turns_used, tokens_used, succeeded_turn | `run_finished(ctx, run)` after `finish_run` |
 | `memory_written` | bool \| None | the write-back, inside the scope |
+| `store` | the run's `TargetStore` | `run_started(store, …)` — the run's own database, where the `RunLogHandler` keeps the scope's records (FR-010) |
+| `log_kept`, `log_dropped` | int | the `RunLogHandler`, per in-scope record (D3): the cap counters live on the run's own context; there is no separate order counter — a kept row's `seq` is `log_kept + 1` |
 | `run_span`, `turn_span` | tracer span handles or None | D8: the root span (opened by `run_started`, ended at the scope's exit) and the current turn span; children are opened with an explicit parent |
 
 Lifecycle (D4): the **caller** of a run function opens `run_scope()` (`api/main.py::start_run`,
@@ -72,9 +74,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_run_log_seq ON run_log (run_id, seq);
   `seq`, never a counter change, so a report generation leaves a run's kept log and its marker unchanged.
 - **Cap**: `RUN_LOG_CAP = 1000` (a module constant, not a setting). The `RunLogHandler` keeps the first 1,000
   in-scope records of a run; on the scope's `run.end` it writes one `log.truncated` row (`seq = kept + 1`,
-  `event = "log.truncated"`, record `{"event": "log.truncated", "run_id": …, "kept": 1000, "dropped": n}`) when
-  `n > 0`, then drops the run's counters. Records the experiment engine emits outside a run (no `run_id`) are never
-  kept.
+  `event = "log.truncated"`, record = the `run.end` record's common and run-scope fields with `event`
+  `log.truncated`, `level` `WARNING`, `kept` and `dropped`, e.g. `{"ts": …, "level": "WARNING", "logger":
+  "kestrel", "event": "log.truncated", "run_id": …, "target_id": …, "mode": …, "family": …, "kept": 1000,
+  "dropped": n}`) when `n > 0`. Records the experiment engine emits outside a run (no `run_id`) are never kept.
+- **Which database**: the handler is installed once per process (`configure_logging(settings)`, idempotent) and
+  keeps each record through the store on **that record's own run context** (`RunContext.store`, set by
+  `run_started(store, …)`), so a process holding several stores (the test suite builds one app per test; the
+  engine can be driven directly) can never keep a line in another run's database. The per-run `kept`/`dropped`
+  counters (a kept row's `seq` is `kept + 1`) live on the same context and die with it.
 - **Store API** (`src/kestrel/store.py`): `add_log_line(run_id, *, seq, ts, event, record) -> None`,
   `list_log_lines(run_id) -> list[LogLine]` ordered by `seq`, `LogLine(seq, ts, event, record)` frozen dataclass.
   Deleting a target cascades to its runs and their lines (existing `ON DELETE CASCADE` chain).
@@ -115,6 +123,7 @@ request_cost(total_tokens, model, prices):
   else                            -> (total_tokens / 1000 * prices[model], None)        # pricing.arm_cost
 turn total:  sum of the turn's priced requests, or (None, first reason) if any was unpriced   # turn lines
 run total:   sum of priced requests, or (None, first reason) if any request was unpriced       # run.end
+no request:  a turn or run that made no model request costs 0 (nothing was spent); its token totals are null
 ```
 
 `prices` is `settings.model_prices` (the feature-007 table, one blended price per 1,000 tokens per model slug),

@@ -7,10 +7,16 @@ from typing import Iterable
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from kestrel import events
 from kestrel.settings import Settings, SettingsError
 
 MASK = "••••"
 MIN_MASK_LENGTH = 4  # FR-004 rejects shorter header values; this is a guard against garbling text
+# Constant text; the key file's path travels as a field of the line (feature 010, FR-006).
+KEY_GENERATED = ("Generated a new encryption key; back this file up, because saved auth header values can't be read "
+                 "without it.")
+KEY_FILE_HOSTED = ("Running hosted with the encryption key in a file. A redeploy may lose the file; set "
+                   "KESTREL_SECRET_KEY instead.")
 
 
 def load_or_create_key(settings: Settings, logger: logging.Logger) -> tuple[bytes, str]:
@@ -33,13 +39,11 @@ def load_or_create_key(settings: Settings, logger: logging.Logger) -> tuple[byte
             os.chmod(path, 0o600)
         except OSError:
             pass  # not supported on every OS; the file still sits in the user's own folder
-        logger.warning("Generated a new encryption key at %s; back this file up, because saved auth header "
-                       "values can't be read without it.", path)
+        events.emit("message", logging.WARNING, logger=logger, message=KEY_GENERATED, path=str(path))
         source = "generated"
 
     if settings.mode == "hosted":
-        logger.warning("Running hosted with the encryption key in a file (%s). A redeploy may lose the file; "
-                       "set KESTREL_SECRET_KEY instead.", path)
+        events.emit("message", logging.WARNING, logger=logger, message=KEY_FILE_HOSTED, path=str(path))
     return key, source
 
 

@@ -202,3 +202,83 @@ def test_the_timeout_passed_in_is_honoured():
     sink = {}
     judge(client(content_handler(sink), timeout=5.0))
     assert sink["timeout"]["read"] == 5.0
+
+
+# ---- feature 010: one model.request line per logical call, and the prompt references the client sends ----
+
+
+def test_a_judge_call_emits_one_line_with_its_verdict_and_no_hard_evidence(json_log):  # 010/FR-003
+    judge(client(ok("failed", tokens=222)))
+    lines = json_log.of("model.request")
+    assert len(lines) == 1
+    line = lines[0]
+    assert (line["kind"], line["model"], line["prompt"]) == ("judge", "google/gemini-3.8-flash", "judge@1")
+    assert line["ok"] is True and line["status"] == 200 and line["attempts"] == 1 and line["latency_ms"] >= 0
+    assert line["total_tokens"] == 222 and line["verdict"] == "failed" and line["hard_evidence"] is False
+    assert "reason" not in line and "The agent refused." not in json_log.text()   # a category, never the reason
+
+
+def test_a_schema_retry_counts_both_attempts_on_one_line(json_log):  # 010/FR-003
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            bad = json.dumps({"verdict": "definitely", "reason": "x", "progress": None})
+            return httpx.Response(200, json={"choices": [{"message": {"content": bad}}], "usage": {"total_tokens": 7}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": _verdict("unclear")}}],
+                                         "usage": {"total_tokens": 9}})
+    judge(client(handler))
+    line = json_log.of("model.request")[0]
+    assert line["attempts"] == 2 and line["total_tokens"] == 16 and line["verdict"] == "unclear"
+
+
+def test_a_failed_judge_call_logs_status_and_class_without_a_verdict(json_log):  # 010/FR-003, 010/FR-009
+    with pytest.raises(JudgeError):
+        judge(client(lambda request: httpx.Response(503, json={"error": "upstream detail text"})))
+    line = json_log.of("model.request")[0]
+    assert line["ok"] is False and line["status"] == 503 and line["error"] == "JudgeError"
+    assert line["attempts"] == RETRY_ATTEMPTS and "verdict" not in line and line["hard_evidence"] is False
+    assert "upstream detail text" not in json_log.text()
+
+
+def test_no_request_no_line(json_log):  # 010/FR-003: an unconfigured judge makes no request and logs none
+    with pytest.raises(JudgeError):
+        judge(client(ok(), api_key=None))
+    assert json_log.of("model.request") == []
+
+
+def test_a_recommender_call_names_the_bound_run_and_is_never_kept(json_log):  # 010/FR-003, 010/FR-010
+    from types import SimpleNamespace
+
+    from kestrel import events
+    run = SimpleNamespace(id=12, target_id=4, mode="single_turn", family="tool_exfiltration")
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(
+            {"recommendation": "Validate tool arguments."})}}], "usage": {"total_tokens": 30}})
+    with events.bind_run_reference(run):
+        text, _tokens = asyncio.run(client(handler).recommend(family="tool_exfiltration", owasp_category="LLM06",
+                                                              attack="<winning message>", evidence="<evidence>"))
+    line = json_log.of("model.request")[0]
+    assert (line["kind"], line["prompt"], line["run_id"], line["target_id"]) == ("recommender", "recommender@1", 12, 4)
+    assert (line["mode"], line["family"]) == ("single_turn", "tool_exfiltration")
+    assert "verdict" not in line and text not in json_log.text()
+
+
+def test_the_client_exposes_the_references_it_sends(json_log):  # 010/FR-007
+    active = JudgeClient(model="j", api_key="k", base_url="https://judge.test/v1")
+    assert active.judge_prompt_ref == "judge@1" and active.recommender_prompt_ref == "recommender@1"
+    pinned = JudgeClient(model="j", api_key="k", base_url="https://judge.test/v1",
+                         system_prompt=("PINNED JUDGE TEXT", "judge@7"))
+    assert pinned.judge_prompt_ref == "judge@7"
+    assert "PINNED JUDGE TEXT" in pinned._judge_messages("attack", "reply", None)[0]["content"]
+    plain = JudgeClient(model="j", api_key="k", base_url="https://judge.test/v1", system_prompt="PLAIN PINNED TEXT")
+    assert plain.judge_prompt_ref is None   # the feature-009 form: the reference is not known
+
+
+def test_a_pinned_reference_is_the_one_on_the_line(json_log):  # 010/FR-007
+    pinned = JudgeClient(model="google/gemini-3.8-flash", api_key="k", base_url="https://judge.test/v1",
+                         transport=httpx.MockTransport(ok()), sleep=_noop, system_prompt=("PINNED", "judge@7"))
+    judge(pinned)
+    assert json_log.of("model.request")[0]["prompt"] == "judge@7"

@@ -3,16 +3,18 @@
 The only I/O-touching report function: it reads/writes the per-run recommendation cache and may call the judge
 model once per uncached success. It never calls the target and never writes the experience store. Inputs to the
 model are non-secret only (family, OWASP class, the winning attacker message, the evidence) — see FR-018.
+Feature 010: each recommender call is a `model.request` line naming the finding's run (a run reference — the line
+goes to the stream only and never touches the run's kept log, FR-010); a failed call is `recommendation.unavailable`
+with the error's class, never its text.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from kestrel import events
 from kestrel.judge.client import JudgeError
 from kestrel.report.model import Recommendation, proof, winning_message
-
-logger = logging.getLogger("kestrel")
 
 
 async def recommendations_for(store: Any, judge: Any, runs: list, turns_by_run: dict) -> dict[int, Recommendation]:
@@ -33,13 +35,14 @@ async def recommendations_for(store: Any, judge: Any, runs: list, turns_by_run: 
             continue
         turns = turns_by_run.get(run.id, ())
         evidence, judge_note = proof(run, turns)
-        try:
-            text, _tokens = await judge.recommend(
-                family=run.family, owasp_category=run.owasp_category,
-                attack=winning_message(run, turns), evidence=evidence if evidence is not None else (judge_note or ""))
-        except JudgeError as error:
-            logger.warning("No recommendation for run %s: %s", run.id, error)
-            continue
+        with events.bind_run_reference(run):
+            try:
+                text, _tokens = await judge.recommend(
+                    family=run.family, owasp_category=run.owasp_category, attack=winning_message(run, turns),
+                    evidence=evidence if evidence is not None else (judge_note or ""))
+            except JudgeError as error:
+                events.emit("recommendation.unavailable", logging.WARNING, error=type(error).__name__)
+                continue
         store.save_recommendation(run.id, recommendation=text, model=judge.model)
         out[run.id] = Recommendation(text=text, model=judge.model)
     return out

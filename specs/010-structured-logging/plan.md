@@ -119,7 +119,7 @@ pyproject.toml                       # [project.optional-dependencies] otel; dev
 .env.example                         # KESTREL_LOG_FORMAT, KESTREL_TRACING, the OTEL_* variables
 src/kestrel/
 ├── events.py                        # NEW — RunContext, run_scope/run_started/run_finished, bind_experiment, bind_run_reference, emit(), per-event helpers, request_cost
-├── logging_setup.py                 # NEW — JsonFormatter, TextFormatter, RunLogHandler (in-scope records only; cap + marker + sink_failed), configure_logging
+├── logging_setup.py                 # NEW — JsonFormatter, TextFormatter, RunLogHandler (in-scope records only, kept in the record's own run's store; cap + marker + sink_failed), configure_logging
 ├── tracing.py                       # NEW — no-op/OTel adapters (private provider, guarded exporter, explicit parents), configure_tracing, run_span/span, bounded shutdown, logger bridge
 ├── settings.py                      # log_format (KESTREL_LOG_FORMAT), tracing (KESTREL_TRACING)
 ├── store.py                         # schema v8: run_log table, LogLine, add_log_line, list_log_lines, RUN_LOG_CAP
@@ -134,7 +134,7 @@ src/kestrel/
 ├── experiments/engine.py            # bind_experiment + run_scope per repetition (enclosing the write-back); experiment.start/cap/end; pinned prompt references
 ├── report/recommend.py              # recommender call under bind_run_reference (stream only, not kept)
 ├── api/schemas.py                   # RunLogOut
-└── api/main.py                      # FastAPI(telemetry off); configure_logging/configure_tracing/events.configure; run_scope around start_run's run + write-back; lifespan shutdown; GET /api/runs/{id}/log; memory.retrieval in hint_provider; start-up failures as named events; target_id to run_test
+└── api/main.py                      # FastAPI(telemetry off); configure_logging/configure_tracing (span_exporter test seam)/events.configure; run_scope around start_run's run + write-back; lifespan shutdown; GET /api/runs/{id}/log; memory.retrieval in hint_provider; start-up failures as named events; target_id to run_test; injected-double factories accept the pin keywords
 ui/
 ├── api_client.py                    # get_run_log
 └── app.py                           # "Log" expander in _render_finding

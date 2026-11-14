@@ -81,3 +81,32 @@ def test_the_interrupted_sweep_marks_adaptive_runs(store):
     run = store.get_run(run_id)
     assert run.verdict == "unclear" and run.stopping_condition == "interrupted"
     assert len(store.list_turns(run_id)) == 1  # the turns so far are kept
+
+
+# ---- feature 010 (T046): provenance is written from the reference the client used, split at the '@' ----
+
+
+@pytest.mark.parametrize("ref, parts", [("judge@1", ("judge", "1")),
+                                        ("attacker:direct_injection@12", ("attacker:direct_injection", "12")),
+                                        (None, (None, None)), ("", (None, None)), ("no-version", (None, None))])
+def test_a_prompt_reference_splits_into_the_provenance_columns(ref, parts):  # 010/FR-007
+    from kestrel.prompt_registry import split_ref
+    assert split_ref(ref) == parts
+
+
+def test_a_split_reference_round_trips_through_the_turn_and_run_columns(store):  # 010/FR-007
+    from kestrel.prompt_registry import split_ref
+    t = target(store)
+    run_id = store.claim_run(t.id, mode="adaptive", attacker_model="m", **PROMPT)
+    attacker_id, attacker_version = split_ref("attacker:system_prompt_leak@3")
+    judge_id, judge_version = split_ref("judge@2")
+    store.add_turn(run_id, position=2, attacker_message="<m2>", attacker_prompt_id=attacker_id,
+                   attacker_prompt_version=attacker_version, judge_prompt_id=judge_id,
+                   judge_prompt_version=judge_version)
+    store.finish_run(run_id, verdict="failed", judge_used=True, judge_prompt_id=judge_id,
+                     judge_prompt_version=judge_version)
+    turn = store.list_turns(run_id)[0]
+    assert (turn.attacker_prompt_id, turn.attacker_prompt_version) == ("attacker:system_prompt_leak", "3")
+    assert (turn.judge_prompt_id, turn.judge_prompt_version) == ("judge", "2")
+    run = store.get_run(run_id)
+    assert (run.judge_prompt_id, run.judge_prompt_version) == ("judge", "2")

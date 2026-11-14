@@ -104,3 +104,37 @@ same commit. Before opening any implementation PR, review this file and add anyt
   character, hence `attacker_direct_injection.v1.md`; the front-matter `id` (`attacker:direct_injection`) is
   authoritative. The experience store's pattern query uses the library's family label (the per-family goal
   sentences moved into the prompt files).
+- 2026-11-13 — **Structured logging and tracing (010).** Every line on stderr from the `kestrel` logger is one JSON
+  object (`KESTREL_LOG_FORMAT=text` renders the same fields as `ts level event key=value`); uvicorn's own lines are
+  not part of the stream. Emit only through `kestrel.events` (`emit(event, **fields)` or the helpers): values are
+  fields, never %-interpolated — `tests/unit/test_events.py` fails CI on a `log.*(…, value)` call in `src/kestrel` —
+  and `events.CATALOGUE` is the allow-list: a new field must be added there (and to
+  `specs/010-*/contracts/log-records.md`) or it is dropped with a `log.unknown_field` warning. No URL, display name,
+  auth value, prompt/reply text, judge reason/progress or exception message on any line; exceptions render as
+  `exc_type` + `stack`. The **run scope** (`events.run_scope()`) is opened by the caller around the run function
+  **and** `write_back` (`api/main.py::start_run`, `experiments/engine.py::_run_rep`); `run_started(store, …)` after
+  `claim_run` binds the ids and the run's store, and the scope's exit emits `run.end` last. A line about a run outside
+  its scope uses `events.bind_run_reference(run)` (stream only, never kept). Kept lines: schema **v8** `run_log`
+  (cap `store.RUN_LOG_CAP = 1000` + one `log.truncated` marker), written by `logging_setup.RunLogHandler` through the
+  record's own run-context store, served by `GET /api/runs/{id}/log`, shown in the run page's **Log** expander.
+  **Tracing**: `KESTREL_TRACING=on` + `uv sync --extra otel` (dev group has it); standard `OTEL_EXPORTER_OTLP_*` /
+  `OTEL_SERVICE_NAME` (default `kestrel`; the Python exporter reads `OTEL_EXPORTER_OTLP_TIMEOUT` in **seconds**).
+  Gotchas: ChromaDB and FastAPI already pull the OpenTelemetry API/SDK (`import chromadb` loads the SDK), so "no
+  tracing import with the flag off" means `kestrel/tracing.py` imports nothing at module level; FastAPI 0.161 traces
+  every request natively once a global provider exists, so the app is created with
+  `telemetry={"tracing": False, "metrics": False, "logs": False}` and Kestrel's provider is private (never
+  `set_tracer_provider`); the SDK ignores its flush timeout and its shutdown can wait 30 s, so Kestrel joins it in a
+  daemon thread for at most 5 s; an `InMemorySpanExporter` is dead after its provider shuts down (do not reuse one
+  across `configure_tracing` calls). Tests: `caplog.text` shows only event names now — count secrets over the
+  `json_log` fixture; pytest 9 attaches its capture handler to non-propagating loggers (probe the root logger, not
+  caplog, for the silenced `opentelemetry` loggers), but only to those already non-propagating when a test phase
+  starts: `configure_logging` makes `kestrel` non-propagating (no root handler may render an exception message), so
+  `tests/conftest.py` does so at import and every test captures it alike; real clients run offline via the
+  `model_transport` fixture (`tests/support.py`: `real_judge`, `real_attacker`, `model_settings`); experiments with
+  pinned prompts need the engine's own factories (no injected doubles); UI tests get an autouse offline
+  `get_run_log` stub (no `raising=False`; `tests/unit/test_api_client_run_log.py` puts the real client back).
+  Every app's `configure_logging` installs the stream and the run log handler on the process-wide `kestrel` logger;
+  the autouse `_reset_observability` takes them off after each test (`logging_setup.reset()`) — a leftover run log
+  handler kept a later test's records twice. Provenance is now written from the reference the client actually
+  sends (a pinned arm's version; a single-turn verdict's judge version), judge provenance only when a judge request
+  was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks the OTLP exporter import for a whole test session (SC-007).

@@ -121,6 +121,26 @@ The **Experiments** screen runs one campaign under two **arms** that differ in e
 - Hard caps bound every experiment — `KESTREL_EXPERIMENT_MAX_RUNS` (default 50), `KESTREL_EXPERIMENT_TOKEN_BUDGET` (default 500000) and `KESTREL_EXPERIMENT_WALL_CLOCK_S` (default 3600) — and a cap stops it cleanly with usable partial results. Cost is estimated from tokens and a configured per-model price, set with `KESTREL_MODEL_PRICES` — one blended USD price per 1,000 tokens per model, e.g. `deepseek/deepseek-v4.1-flash=0.00006,google/gemini-3.8-flash=0.0015` (from OpenRouter pricing as of Nov 2026); tokens are always shown, and cost reads "unavailable" when a model has no configured price.
 - `POST /api/experiments` starts one in the background; `GET /api/experiments/{id}/status` and `/result` report progress and the comparison; `/report?format=md|html` downloads it in the feature-005 formats. The database moves to schema v6 (three new tables); existing databases migrate automatically.
 
+## Reading the log
+
+Every line Kestrel writes to stderr is one JSON object (JSON Lines): one `run.start`, one `turn` per turn, one
+`model.request` per attacker/judge/recommender call (model, prompt version such as `judge@1`, latency, attempts,
+tokens and the estimated cost from `KESTREL_MODEL_PRICES`), one `target.request` per message sent, the write-back
+and the `run.end`. Lines carry identifiers, counts, model slugs, prompt versions, timings, tokens and cost only —
+never an auth header value, the target URL or name, an attack message or a reply. Filter them with
+`Select-String '"event":"'` (PowerShell) or `grep '"event":"'` (bash); set `KESTREL_LOG_FORMAT=text` to read the same
+fields as `ts level event key=value …`.
+
+On the screen, open any run (Runs tab → **Open a run**, or right after a run) and expand **Log**: the run's own lines
+as a table (time, event, turn, model, prompt, latency, tokens, cost) and as raw JSON. The API serves them at
+`GET /api/runs/{id}/log`.
+
+**Optional tracing.** With a tracing collector (OTLP/HTTP, e.g. Jaeger on port 4318), set `KESTREL_TRACING=on` to get
+one trace per run (`kestrel.run` → `kestrel.turn` → model and target requests). It needs the optional extra
+(`uv sync --extra otel`; the dev environment has it already); the standard `OTEL_EXPORTER_OTLP_*` variables and
+`OTEL_SERVICE_NAME` (default `kestrel`) configure it. Without the extra Kestrel logs one `tracing.unavailable` warning
+and runs untraced.
+
 ## Your encryption key
 
 Kestrel encrypts auth header values with a key. On first start, the API creates `~/.kestrel/secret.key` and logs where it is. **Back that file up.** Without it, saved header values can't be read, and you'll have to type them in again; everything else about your targets is kept.

@@ -102,3 +102,45 @@ def test_retry_after_is_used_as_the_backoff_delay():
         return httpx.Response(200, json={})
     run(handler, sleep=record)
     assert waits and waits[0] == 2.0
+
+
+# ---- feature 010: attempts and the provider's usage, for the model-request line (010/FR-003) ----
+
+
+def test_the_result_counts_attempts_and_sums_each_usage_kind_over_them():  # 010/FR-003
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, json={"usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}})
+        return httpx.Response(200, json={"usage": {"prompt_tokens": 30, "completion_tokens": 10,
+                                                   "total_tokens": 40}})
+    result = run(handler)
+    assert result.attempts == 2
+    assert (result.prompt_tokens, result.completion_tokens, result.total_tokens) == (33, 11, 44)
+    assert result.tokens == 44   # the budget figure keeps its integer meaning
+
+
+def test_usage_is_none_when_no_attempt_reported_it_while_tokens_stays_zero():  # 010/FR-003
+    result = run(lambda request: httpx.Response(200, json={"choices": []}))
+    assert result.attempts == 1
+    assert (result.prompt_tokens, result.completion_tokens, result.total_tokens) == (None, None, None)
+    assert result.tokens == 0
+
+
+def test_a_kind_reported_on_only_some_attempts_sums_those():  # 010/FR-003
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(503, text="not json")
+        return httpx.Response(200, json={"usage": {"total_tokens": 9}})
+    result = run(handler)
+    assert result.attempts == 2 and result.total_tokens == 9 and result.prompt_tokens is None
+
+
+def test_every_retried_attempt_is_counted():  # 010/FR-003
+    result = run(lambda request: httpx.Response(503, json={"usage": {"total_tokens": 2}}))
+    assert result.attempts == RETRY_ATTEMPTS and result.total_tokens == 2 * RETRY_ATTEMPTS

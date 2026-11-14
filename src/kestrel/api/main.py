@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
-import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,13 +20,14 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut,
                                  ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
-                                 ExperimentSummaryOut, PromptVersionOut, RateOut, experiment_diff, validate_canaries,
+                                 ExperimentSummaryOut, PromptVersionOut, RateOut, RunLogOut, experiment_diff,
+                                 validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
-from kestrel import prompt_registry
+from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, family_label, load_library
 from kestrel.experience.hints import format_hints
-from kestrel.experience.store import ExperienceStore, ExperienceStoreError, describe_store_error
+from kestrel.experience.store import ExperienceStore, ExperienceStoreError, store_error_kind
 from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
 from kestrel.experiments import results as exp_results
@@ -38,6 +40,7 @@ from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
+from kestrel.logging_setup import configure_logging
 from kestrel.runs import execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
@@ -45,7 +48,6 @@ from kestrel.settings import Settings, load_settings
 from kestrel.store import (ExperimentInProgress, NameTaken, Run, RunInProgress, Target, TargetNotFound,
                            TargetStore, utc_now)
 
-LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
 TERMS_PATH = Path(__file__).with_name("terms.md")
 NOT_TESTED = "Run a successful test with these settings before saving."
@@ -79,27 +81,34 @@ def _unauthorized_handler(request: Request, exc: _Unauthorized) -> JSONResponse:
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
                resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
-               attacker: Any = None, experience: Any = None) -> FastAPI:
-    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker
-    and an experience store (a stub-backed one keeps tests offline)."""
+               attacker: Any = None, experience: Any = None, span_exporter: Any = None) -> FastAPI:
+    """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker,
+    an experience store (a stub-backed one keeps tests offline) and a span exporter (an in-process collector)."""
     settings = settings or load_settings()
-    logger = _configure_logging()
+    logger = configure_logging(settings)            # the JSON (or text) stream of the `kestrel` logger (feature 010)
+    events.configure(prices=settings.model_prices)  # every model-request line is costed with the feature-007 prices
+    # Optional traces (feature 010, FR-013): the no-op unless KESTREL_TRACING=on; a private provider, never global.
+    app_tracing = tracing.configure_tracing(settings, exporter=span_exporter)
     key, _source = load_or_create_key(settings, logger)
     vault = Vault(key)
     terms = load_terms()
     store = TargetStore(settings.db_path, vault)
+    # Start-up lines (feature 010): constant text, values as fields, a failure as its class and kind — never its
+    # message, which may quote a path, a host or a provider error (FR-006, FR-009).
     if not store.key_matches():
-        logger.error("The encryption key doesn't match the one used to save targets, so saved auth header values "
-                     "can't be read. Restore the old key, or re-enter the values.")
+        events.emit("key.mismatch", logging.ERROR,
+                    message="The encryption key doesn't match the one used to save targets, so saved auth header "
+                            "values can't be read. Restore the old key, or re-enter the values.")
     closed = store.close_interrupted_runs()  # release any run the last process left in progress (FR-031)
     if closed:
-        logger.info("Closed %d run(s) that were interrupted by a previous shutdown.", closed)
+        events.emit("message", message="Closed run(s) that were interrupted by a previous shutdown.", count=closed)
 
     if library is None:
         try:
             library = load_library()
-        except LibraryError as error:
-            logger.warning("The attack library could not be loaded, so attacks are unavailable: %s", error)
+        except LibraryError:
+            events.emit("library.unavailable", logging.WARNING, exc_info=True,
+                        message="The attack library could not be loaded, so attacks are unavailable.")
     # Capture any injected test doubles before defaulting: experiments build a client per arm, so in tests the
     # injected stub is reused for every arm, while production builds a real per-arm client from settings.
     injected_judge, injected_attacker = judge, attacker
@@ -112,20 +121,31 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             experience = ExperienceStore(settings.chroma_path)
             experience.self_check()  # surface a bad store (mismatched EF, failed model download) clearly, now
         except Exception as error:
-            reason = error.args[0] if isinstance(error, ExperienceStoreError) else describe_store_error(error)
-            logger.error("The experience store at %s is unavailable, so runs will record loudly as not written "
-                         "back (Principle V): %s", settings.chroma_path, reason)
+            # The self-check wraps the store's own error: name that one (its class and kind, never its text).
+            cause = error.__cause__ if isinstance(error, ExperienceStoreError) and error.__cause__ else error
+            events.emit("experience.unavailable", logging.ERROR, exc_info=(type(cause), cause, cause.__traceback__),
+                        reason_kind=store_error_kind(cause),
+                        message="The experience store is unavailable, so runs will record loudly as not written "
+                                "back (Principle V).")
             experience = None
     if experience is not None and library is not None:
         try:
             seeded = experience.seed_patterns(library)  # idempotent (FR-004)
-            logger.info("Seeded %d attack pattern(s) into the experience store.", seeded)
+            events.emit("message", message="Seeded attack patterns into the experience store.", count=seeded)
         except Exception as error:
-            logger.error("The experience store could not be seeded, so runs will record loudly as not written "
-                         "back: %s", describe_store_error(error))
+            events.emit("experience.seed_failed", logging.ERROR, exc_info=True, reason_kind=store_error_kind(error),
+                        message="The experience store could not be seeded, so runs will record loudly as not "
+                                "written back.")
             experience = None
 
-    app = FastAPI(title="Kestrel API", version="0.1.0", dependencies=[Depends(require_token)])
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        await asyncio.to_thread(app_tracing.shutdown, 5.0)   # deliver what is queued, waiting at most 5 s (FR-015)
+
+    # The framework's own OpenTelemetry stays off: no request span exists, so a run's trace is its own (FR-013).
+    app = FastAPI(title="Kestrel API", version="0.1.0", dependencies=[Depends(require_token)], lifespan=lifespan,
+                  telemetry={"tracing": False, "metrics": False, "logs": False})
     app.state.settings = settings
     app.state.vault = vault
     app.state.store = store
@@ -181,8 +201,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         fingerprint = None
         try:
             if stored is not None and needs_unreadable_value(body.settings, stored):
-                return refused("credentials_unreadable", resolved, display_name).as_dict()  # nothing is sent
-            result = await run_test(resolved, mode=settings.mode, display_name=display_name,
+                return refused("credentials_unreadable", resolved, display_name,   # nothing is sent
+                               target_id=body.target_id).as_dict()
+            result = await run_test(resolved, mode=settings.mode, display_name=display_name, target_id=body.target_id,
                                     transport=request.app.state.transport, resolver=request.app.state.resolver)
             if result.ok:
                 fingerprint = sessions.fingerprint(resolved)
@@ -263,7 +284,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             try:
                 app.state.experience.delete_target_memory(target_id)
             except Exception:
-                logger.exception("could not delete experience memory for target %s", target_id)
+                events.emit("experience.delete_failed", logging.ERROR, exc_info=True, target_id=target_id)
         return Response(status_code=204)
 
     @app.post("/api/runs", status_code=201, response_model=RunDetail)
@@ -307,32 +328,39 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             memory = experience.retrieve_memory(target_id=target.id, family=prompt.family,
                                                  cap=settings.experience_memory_cap)
             query = f"{family_label(prompt.family)} {_recent_conversation(conversation)}".strip()
-            patterns = experience.retrieve_patterns(family=prompt.family, query_text=query,
-                                                    k=settings.experience_pattern_k)
-            return format_hints(purpose=purpose, patterns=patterns, memory=memory)
+            found = experience.retrieve_patterns_with_ids(family=prompt.family, query_text=query,
+                                                          k=settings.experience_pattern_k)
+            # Feature 010 (FR-016): counts and pattern ids, whenever the store was asked — zero when nothing came back.
+            events.memory_retrieval(pattern_ids=[pattern_id for pattern_id, _ in found], memory_count=len(memory))
+            return format_hints(purpose=purpose, patterns=[document for _, document in found], memory=memory)
 
-        try:
-            if body.mode == "adaptive":
-                run = await execute_adaptive_run(
-                    store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
-                    canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
-                    attacker=request.app.state.attacker, judge=request.app.state.judge,
-                    max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
-                    time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
-                    resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
-                    hint_provider=hint_provider)
-            else:
-                run = await execute_run(store, target_id=target.id, prompt=prompt,
-                                        attacker_source=library.attacker_source,
-                                        canaries=store.list_canaries(target.id), resolved=resolved,
-                                        mode=settings.mode, judge=request.app.state.judge,
-                                        transport=request.app.state.transport, resolver=request.app.state.resolver,
-                                        use_prior_experience=body.use_prior_experience)
-        except RunInProgress:
-            return api_error(409, "run_in_progress", "A run against this target is already in progress.")
-        # Write back to the experience store after every run; a failure is loud, never discards the run (FR-006/10).
-        turns = store.list_turns(run.id)
-        write_back(request.app.state.experience, store, run, turns)
+        # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
+        # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
+        with events.run_scope():
+            try:
+                if body.mode == "adaptive":
+                    run = await execute_adaptive_run(
+                        store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
+                        canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
+                        attacker=request.app.state.attacker, judge=request.app.state.judge,
+                        max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
+                        time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
+                        resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
+                        hint_provider=hint_provider)
+                else:
+                    run = await execute_run(store, target_id=target.id, prompt=prompt,
+                                            attacker_source=library.attacker_source,
+                                            canaries=store.list_canaries(target.id), resolved=resolved,
+                                            mode=settings.mode, judge=request.app.state.judge,
+                                            transport=request.app.state.transport,
+                                            resolver=request.app.state.resolver,
+                                            use_prior_experience=body.use_prior_experience)
+            except RunInProgress:
+                return api_error(409, "run_in_progress", "A run against this target is already in progress.")
+            # Write back to the experience store after every run; a failure is loud, never discards the run
+            # (FR-006/10).
+            turns = store.list_turns(run.id)
+            write_back(request.app.state.experience, store, run, turns)
         return run_detail(store.get_run(run.id), turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
@@ -380,6 +408,16 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return run_detail(store.get_run(run_id), store.list_turns(run_id))
         except LookupError:
             return api_error(404, "not_found", f"No run with id {run_id}.")
+
+    @app.get("/api/runs/{run_id}/log", response_model=RunLogOut)
+    def get_run_log(run_id: int) -> Any:
+        """A run's kept log lines, in order (feature 010, FR-011): read-only, the records as the stream carried them.
+        A run in progress answers with the lines kept so far; a run without kept lines with an empty list."""
+        try:
+            store.get_run(run_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+        return run_log(run_id, store.list_log_lines(run_id))
 
     @app.get("/api/attack-families")
     def attack_families(request: Request) -> Any:
@@ -580,10 +618,27 @@ def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
                             for t in (turns or [])])
 
 
+def run_log(run_id: int, kept_lines: list) -> RunLogOut:
+    """The kept lines parsed back to objects; the `log.truncated` marker (last) gives the drop count."""
+    lines, dropped = [], 0
+    for kept in kept_lines:
+        try:
+            record = json.loads(kept.record)
+        except ValueError:
+            continue   # a row that cannot be read is skipped, never echoed
+        if kept.event == "log.truncated":
+            dropped = int(record.get("dropped", 0))
+        lines.append(record)
+    kept_count = sum(1 for kept in kept_lines if kept.event != "log.truncated")
+    return RunLogOut(run_id=run_id, lines=lines, kept=kept_count, dropped=dropped, truncated=dropped > 0)
+
+
 def _schedule_experiment(app: FastAPI, store: TargetStore, settings: Settings, experiment_id: int) -> None:
     """Run the experiment in the background; keep the task referenced so it is not garbage-collected (R4)."""
-    make_judge = (lambda model: app.state.injected_judge) if app.state.injected_judge is not None else None
-    make_attacker = (lambda model: app.state.injected_attacker) if app.state.injected_attacker is not None else None
+    # An injected test double serves every arm; it ignores a pinned prompt (the pin keywords are accepted, not used).
+    make_judge = (lambda model, **_: app.state.injected_judge) if app.state.injected_judge is not None else None
+    make_attacker = ((lambda model, **_: app.state.injected_attacker) if app.state.injected_attacker is not None
+                     else None)
     task = asyncio.create_task(run_experiment(
         store, experiment_id=experiment_id, settings=settings, library=app.state.library,
         experience=app.state.experience, transport=app.state.transport, resolver=app.state.resolver,
@@ -706,13 +761,3 @@ def _field_error(error: dict[str, Any]) -> dict[str, str]:
     message = str(error.get("msg") or "Invalid value.").removeprefix("Value error, ")
     return {"field": field, "message": message}
 
-
-def _configure_logging() -> logging.Logger:
-    logger = logging.getLogger("kestrel")
-    logger.setLevel(logging.INFO)
-    if not any(getattr(handler, "_kestrel", False) for handler in logger.handlers):
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter(LOG_FORMAT))
-        handler._kestrel = True  # type: ignore[attr-defined]
-        logger.addHandler(handler)
-    return logger

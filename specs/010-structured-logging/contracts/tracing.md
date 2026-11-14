@@ -21,7 +21,7 @@ test suite drives the real adapter.
 |------|----------|-----------|--------|
 | off | any | any | `configure_tracing` returns the no-op tracer **without importing** anything from the tracing packages (and `kestrel/tracing.py` has no module-level import of one); no span anywhere |
 | on | present | reachable | one trace per run, delivered in batches by the SDK's background processor; spans never block the run |
-| on | absent | — | exactly one `tracing.unavailable` warning at start-up (`reason: package_missing`, `extra: kestrel[otel]`); runs proceed exactly as with the flag off |
+| on | absent | — | exactly one `tracing.unavailable` warning at start-up (`cause: package_missing`, `extra: kestrel[otel]`); runs proceed exactly as with the flag off |
 | on | present | unreachable, or refusing the spans | runs proceed unchanged; exactly one `tracing.export_failed` warning per process (`error`: the exception's class name, or `failure_result`); spans are dropped; shutdown waits at most 5 s |
 
 The "exactly one warning" rule covers both failure shapes and the exporter's own logging: Kestrel wraps the
@@ -80,13 +80,21 @@ process. The FastAPI app's `lifespan` calls it on exit. It never raises.
 ```python
 def configure_tracing(settings: Settings, *, exporter: object | None = None) -> Tracing: ...  # called by create_app
 def current() -> Tracing: ...                       # the configured tracer, or the no-op
-class Tracing(Protocol):
+class Tracing(Protocol):                            # NoopTracing / OtelTracing
     enabled: bool
-    def run_span(self, ctx: RunContext) -> ContextManager[Span]: ...              # root, from an empty context; entered by run_started, exited at the run scope's exit
-    def span(self, name: str, *, parent: Span, **attributes) -> ContextManager[Span]: ...  # explicit parent
-    def set_attributes(self, span: Span, **attributes) -> None: ...
-    def shutdown(self, timeout_s: float = 5.0) -> None: ...   # provider.shutdown() in a daemon thread, joined ≤ timeout_s
+    def start_root(self, name: str, **attributes) -> Span | None: ...   # from an empty context: no parent (run_started)
+    def start_span(self, name: str, *, parent: Span, **attributes) -> Span | None: ...  # explicit parent (a turn)
+    def end_span(self, span: Span | None, **attributes) -> None: ...    # set the closing attributes, end
+    def span(self, name: str, *, parent: Span, **attributes) -> ContextManager[Span | None]: ...  # a request span
+    def set_attributes(self, span: Span | None, **attributes) -> None: ...
+    def force_flush(self, timeout_s: float = 5.0) -> None: ...  # provider.force_flush() in a daemon thread, joined
+    def shutdown(self, timeout_s: float = 5.0) -> None: ...     # provider.shutdown() in a daemon thread, joined
 ```
+
+The run's root is started by `events.run_started` and ended at the run scope's exit; the turn span by
+`events.turn_started`/`turn_ended` (a turn spans several graph nodes); a request span by `events.child_span(name)`
+around the client call, under the current turn. A tracer that cannot be set up (an exporter the `OTEL_*` variables
+misconfigure) is one `tracing.unavailable` warning (`cause: setup_failed`) and the no-op — Kestrel still starts.
 
 `exporter` lets tests inject the SDK's `InMemorySpanExporter` or a stub — the OTLP/HTTP exporter module is
 imported only when no exporter is injected; production uses the OTLP/HTTP exporter constructed without arguments

@@ -4,7 +4,8 @@ The attacker and the judge each make one OpenAI-compatible POST per call. A 429 
 usually transient, so ``post_with_retry`` retries up to ``RETRY_ATTEMPTS`` times with exponential backoff and
 jitter, honouring a ``Retry-After`` header, but never sleeping past what is left of the run's deadline. The tokens
 every attempt reports are summed, so a retry can't hide spend from the run's token budget (R7). Any ``httpx``
-transport error propagates unchanged — both clients already turn that into their own "unreachable" error.
+transport error propagates unchanged — both clients already turn that into their own "unreachable" error. Feature 010:
+the result also counts the attempts and sums each usage kind the provider reported, for the model-request line.
 """
 from __future__ import annotations
 
@@ -25,20 +26,65 @@ BACKOFF_CAP_S = 8.0
 class RetryResult:
     response: httpx.Response
     tokens: int   # summed usage tokens across every attempt, retried ones included (R7)
+    # Feature 010 (FR-003): the HTTP posts made, and each usage kind summed over the attempts that reported it —
+    # None when no attempt did (`tokens` keeps its integer budget meaning, 0 when nothing was reported).
+    attempts: int = 1
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
 
-def _usage_tokens(response: httpx.Response) -> int:
-    """``usage.total_tokens`` from a JSON body, or 0 when the body is missing, non-JSON, or has no usage."""
+USAGE_KINDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+@dataclass
+class CallTally:
+    """One logical model request across a client's own attempts (an empty-content or schema retry, each one a
+    `post_with_retry`): HTTP posts made, the last status, and each usage kind summed — what its model-request line
+    reports (feature 010, FR-003)."""
+    attempts: int = 0
+    status: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+    def add(self, result: RetryResult) -> None:
+        self.attempts += result.attempts
+        self.status = result.response.status_code
+        self.prompt_tokens = _plus(self.prompt_tokens, result.prompt_tokens)
+        self.completion_tokens = _plus(self.completion_tokens, result.completion_tokens)
+        self.total_tokens = _plus(self.total_tokens, result.total_tokens)
+
+    def failed_to_connect(self) -> None:
+        """A post that raised (unreachable, timed out) was still an attempt."""
+        self.attempts += 1
+
+
+def _plus(a: int | None, b: int | None) -> int | None:
+    if b is None:
+        return a
+    return b if a is None else a + b
+
+
+def _usage(response: httpx.Response) -> dict[str, int]:
+    """The usage counts a JSON body reports, by kind; empty when the body is missing, non-JSON, or has no usage."""
     try:
         body = response.json()
     except (ValueError, TypeError):
-        return 0
-    if not isinstance(body, dict):
-        return 0
-    try:
-        return int((body.get("usage") or {}).get("total_tokens", 0) or 0)
-    except (TypeError, ValueError):
-        return 0
+        return {}
+    if not isinstance(body, dict) or not isinstance(body.get("usage"), dict):
+        return {}
+    counts: dict[str, int] = {}
+    for kind in USAGE_KINDS:
+        value = body["usage"].get(kind)
+        if value is None:
+            continue
+        try:
+            counts[kind] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return counts
+
 
 
 def _retry_after_s(response: httpx.Response) -> float | None:
@@ -70,10 +116,16 @@ async def post_with_retry(http: httpx.AsyncClient, url: str, *, json: dict, head
     fail) rather than blowing the deadline.
     """
     tokens = 0
+    made = 0
+    usage: dict[str, int] = {}
     response: httpx.Response | None = None
     for attempt in range(1, attempts + 1):
         response = await http.post(url, json=json, headers=headers)
-        tokens += _usage_tokens(response)
+        made = attempt
+        reported = _usage(response)
+        tokens += reported.get("total_tokens", 0)
+        for kind, value in reported.items():
+            usage[kind] = usage.get(kind, 0) + value
         if response.status_code not in RETRYABLE_STATUSES or attempt == attempts:
             break
         wait = _retry_after_s(response)
@@ -85,4 +137,5 @@ async def post_with_retry(http: httpx.AsyncClient, url: str, *, json: dict, head
                 break
         await sleep(wait)
     assert response is not None  # the loop always runs at least once
-    return RetryResult(response=response, tokens=tokens)
+    return RetryResult(response=response, tokens=tokens, attempts=made, prompt_tokens=usage.get("prompt_tokens"),
+                       completion_tokens=usage.get("completion_tokens"), total_tokens=usage.get("total_tokens"))

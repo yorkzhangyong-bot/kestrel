@@ -60,7 +60,10 @@ Code facts this builds on (verified in the worktree):
 - **Decision**: a small module `src/kestrel/events.py` is the only way feature code emits structured events:
   `emit(event: str, level=logging.INFO, **fields)` calls `logging.getLogger("kestrel").log(level, event,
   extra={"kestrel_event": event, "kestrel_fields": fields, "kestrel_keep": <in a live run scope>})`. Every value
-  is a field; the record's message is the event name. The run context (D4) is merged into every record
+  is a field; the record's message is the event name, or — when the emitter passes `message=` — that **constant**
+  text (never a value, never interpolated), which is also carried as the `message` field; this keeps a converted
+  pre-existing line readable by any other handler on the logger (a test's `caplog` keeps seeing "doesn't match",
+  "interrupted", "back this file up"). The run context (D4) is merged into every record
   automatically. Convenience wrappers build the per-event field sets (`run_started`, `turn`, `model_request`,
   `target_request`, `connection_test`, `memory_retrieval`, `memory_writeback`, `run_ended`, …) so field names are
   defined once (contracts/log-records.md); the field catalogue is the allow-list — a field name outside it is
@@ -101,10 +104,13 @@ Code facts this builds on (verified in the worktree):
 - **Decision**: `SCHEMA_VERSION "7" → "8"` adds `run_log(id, run_id REFERENCES runs ON DELETE CASCADE, seq, ts,
   event, record TEXT)` with `UNIQUE(run_id, seq)`; `_migrate` accepts `"7"` as a prior version; the table comes
   from the schema script (`CREATE TABLE IF NOT EXISTS`), so a v7 database migrates without an ALTER. A
-  `RunLogHandler(logging.Handler)` installed on the `kestrel` logger keeps **exactly the records emitted inside a
-  live run scope** (`kestrel_keep` true — set by the scope binder of D4, never by the reference binder): it
-  serialises the record with the `JsonFormatter`, counts per run (`kept`, `dropped`) under a lock, writes rows
-  through `store.add_log_line(...)` up to the cap of 1,000, drops the rest from the table (never from the stream),
+  `RunLogHandler(logging.Handler)` installed once on the `kestrel` logger keeps **exactly the records emitted inside
+  a live run scope** (`kestrel_keep` true — set by the scope binder of D4, never by the reference binder): it
+  serialises the record with the `JsonFormatter`, counts per run (`kept`, `dropped`, on the record's own run
+  context, under the handler's lock), writes rows through **that run's** `store.add_log_line(...)` (the store
+  `run_started` put on the context — never a store fixed at install time, so a process holding several stores
+  cannot keep a line in another run's database) up to the cap of 1,000, drops the rest from the table (never from
+  the stream),
   and on the scope's `run.end` record writes one final `log.truncated` row (`seq = kept + 1`, `kept`, `dropped`)
   when anything was dropped, then forgets the run's counters. A record that carries a run id but was emitted
   outside the scope (the recommender line at report time, D4) is ignored by the handler: it never touches `seq`,
@@ -167,8 +173,10 @@ Code facts this builds on (verified in the worktree):
   last HTTP status (or `None`) and `error` = the exception class name on failure — never the message. The clients
   also expose the prompt reference they used (`AttackerClient.prompt_ref(family)`, `JudgeClient.judge_prompt_ref`,
   `JudgeClient.recommender_prompt_ref`): `load_prompt(...)[1]` for the active version, or the pinned
-  `"<id>@<version>"` an arm supplied (`system_overrides` becomes `{family: (text, ref)}`, `system_prompt` becomes
-  `(text, ref)`, and `engine._prompt_overrides` returns the references alongside the texts). That reference is the
+  `"<id>@<version>"` an arm supplied (`system_overrides` also accepts `{family: (text, ref)}`, `system_prompt` also
+  accepts `(text, ref)`, and `engine._prompt_overrides` returns the references alongside the texts; a plain text —
+  the feature-009 form, still used by `tests/integration/test_prompt_arm.py` — keeps working with an unknown
+  reference, `None`, rather than being mislabelled as the active version). That reference is the
   **single source** both for the lines and for the provenance written to `runs`/`run_turns` (D15). When a client
   lacks the accessor — the `StubJudge`/`StubAttacker` doubles of `tests/support.py` — the run functions fall back
   to the registry's active reference (`load_prompt(...)[1]`), so the existing tests keep passing (SC-005).
@@ -204,7 +212,9 @@ Code facts this builds on (verified in the worktree):
 
 - **Decision**: `src/kestrel/tracing.py` exposes `configure_tracing(settings, *, exporter=None) -> Tracing`,
   `current()`, `run_span(ctx)`, `span(name, parent, **attrs)`, `set_attributes(span, **attrs)` and
-  `shutdown(timeout_s=5.0)`. The module has **no module-level import** of any `opentelemetry` package. With
+  `shutdown(timeout_s=5.0)`. `create_app(..., span_exporter=None)` passes its `span_exporter` through as
+  `exporter` — a test seam like the app's existing `transport`/`judge`/`experience` injections, so an
+  integration test hands the in-process span collector to an app built through the API. The module has **no module-level import** of any `opentelemetry` package. With
   `settings.tracing` off it returns the no-op implementation without importing anything from the tracing
   packages. With it on, it imports `opentelemetry.sdk.trace`, `opentelemetry.sdk.trace.export` and
   `opentelemetry.context` inside the function, and `opentelemetry.exporter.otlp.proto.http.trace_exporter` **only
@@ -284,9 +294,20 @@ Code facts this builds on (verified in the worktree):
   `test_api_manage.py`, `test_experiment_secrets.py`) moves to the rendered JSON lines through the `json_log`
   fixture (the real `JsonFormatter` on a `StringIO` handler attached to the `kestrel` logger), so the counts stay
   meaningful; plain-message assertions (`"doesn't match"`, the interrupted-run and key-file messages) keep working
-  on `caplog`. Two tests change with the lines they read: `tests/unit/test_tester.py` (the `kestrel.connection`
-  message no longer carries target/URL; assert on the record's fields) and `tests/unit/test_attacker_client.py`
-  (the empty-content warning's counters are fields). No existing test is deleted or weakened (SC-005).
+  on `caplog` because those records keep a constant `message` (D1). Tests change with the lines they read:
+  `tests/unit/test_tester.py` (the `kestrel.connection` message no longer carries target/URL; assert on the
+  record's fields), `tests/unit/test_attacker_client.py` (the empty-content warning's counters are fields),
+  `tests/unit/test_secrets.py` (the key path is a field: `str(path) in caplog.text` becomes the `path` field of the
+  JSON line) and `tests/integration/test_writeback.py` (the run id is the `run_id` field of the `memory.writeback`
+  line, which a direct call outside a scope still carries by binding the run as a reference). No existing test is
+  deleted or weakened (SC-005).
+- **Experiments with real clients**: `api/main.py::_schedule_experiment` reuses an *injected* test double for every
+  arm (`make_judge = lambda model: injected`), so a pinned arm never reaches a real client that way. The tests that
+  need real clients inside an experiment (T013, T047) inject no judge/attacker double: settings carry the model
+  keys, the app's `transport` is the `model_transport` that answers both the stub target and the model endpoints
+  (routing by host), and the engine's own factories build real `JudgeClient`/`AttackerClient`s over it with the
+  pinned `(text, ref)`. The injected-double factories accept and ignore the pin keywords, so a pinned arm with a
+  double no longer fails on a `TypeError`.
 - **Rationale**: review finding 9; tests must observe the real stream format and the real emitters (SC-001/SC-002).
 
 ## D11 — Settings
