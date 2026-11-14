@@ -2,7 +2,7 @@
 
 Autonomous red-teaming agent for tool-using AI agents: register an HTTP chat target you own, pick an attack
 family, and Kestrel runs single-turn or adaptive multi-turn attacks, judges them (hard evidence first), learns
-across runs, and reports mapped to the OWASP LLM Top 10. Features 001–009 are merged.
+across runs, and reports mapped to the OWASP LLM Top 10. Features 001–010 are merged.
 
 ## Working with me
 - Keep replies short.
@@ -78,6 +78,7 @@ have written permission".
   the real app's `data/chroma`. Tests must use a tmp `chroma_path`, never the repo's.
 - **No `.env` auto-load:** the app reads real environment variables and does **not** load `.env`. Export settings
   into the shell first (`set -a; . ./.env; set +a`) or pass `uvicorn --env-file`, then start the API.
+- **ChromaDB systems must be stopped in tests:** `SharedSystemClient.clear_system_cache()` only forgets chroma Systems; on Windows every seeded persistent store keeps 3–4 C-runtime descriptors (limit 8192) until `System.stop()`, so `tests/conftest.py::_release_chroma` stops every cached System after each test. Without it, running the integration suite before the unit suite fails the connection-tester test with "Too many open files".
 
 ## More
 Longer detail lives under `docs/`: [technical-design.md](docs/technical-design.md),

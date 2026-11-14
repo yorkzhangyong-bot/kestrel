@@ -93,10 +93,19 @@ def all_logs(caplog):
 
 @pytest.fixture(autouse=True)
 def _release_chroma():
-    """Each test opens its own ChromaDB store under tmp; release the cached clients so file handles don't pile up."""
+    """Each test opens its own ChromaDB store under tmp. Chroma caches one System per store path, and
+    `clear_system_cache` only forgets those Systems: the persistent-index components they started keep their file
+    descriptors until the process ends, which on Windows exhausted the C-runtime limit when the integration suite ran
+    before the unit suite (the connection-tester tests then failed with "Too many open files"). Stop every cached
+    System first, then clear the cache."""
     yield
     try:
         from chromadb.api.shared_system_client import SharedSystemClient
+        for system in list(SharedSystemClient._identifier_to_system.values()):
+            try:
+                system.stop()
+            except Exception:
+                pass
         SharedSystemClient.clear_system_cache()
     except Exception:
         pass
