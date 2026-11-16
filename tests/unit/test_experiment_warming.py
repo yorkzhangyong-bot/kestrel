@@ -37,6 +37,12 @@ class _Experience:
     def retrieve_patterns(self, **kw):
         return []
 
+    def count(self, type=None, *, family=None, target_id=None):   # 011/FR-015, 011/SC-009: the shared path's pool
+        return 0
+
+    def query_patterns(self, **kw):
+        return []
+
 
 def _settings(tmp_path):
     return Settings(mode="local", db_path=tmp_path / "k.db", key_file=tmp_path / "key", secret_key=None,

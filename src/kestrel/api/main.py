@@ -25,8 +25,8 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  validate_experiment, validate_save, validate_settings)
 from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
-from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, family_label, load_library
-from kestrel.experience.hints import format_hints
+from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
+from kestrel.experience.retrieval import background_provider
 from kestrel.experience.store import ExperienceStore, ExperienceStoreError, store_error_kind
 from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
@@ -320,21 +320,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
-        experience = request.app.state.experience
-
-        def hint_provider(conversation: list[tuple[str, str]]) -> str | None:
-            """The attacker's background each turn: purpose always; patterns + memory only on a warm run (FR-021)."""
-            purpose = target.description
-            if not body.use_prior_experience or experience is None:
-                return format_hints(purpose=purpose, patterns=[], memory=[])  # cold: purpose only (FR-015)
-            memory = experience.retrieve_memory(target_id=target.id, family=prompt.family,
-                                                 cap=settings.experience_memory_cap)
-            query = f"{family_label(prompt.family)} {_recent_conversation(conversation)}".strip()
-            found = experience.retrieve_patterns_with_ids(family=prompt.family, query_text=query,
-                                                          k=settings.experience_pattern_k)
-            # Feature 010 (FR-016): counts and pattern ids, whenever the store was asked — zero when nothing came back.
-            events.memory_retrieval(pattern_ids=[pattern_id for pattern_id, _ in found], memory_count=len(memory))
-            return format_hints(purpose=purpose, patterns=[document for _, document in found], memory=memory)
+        # The attacker's background each turn (feature 004 FR-021): the one shared retrieval path of feature 011 —
+        # the attacker-only query, the floor and the de-duplication — identical for an experiment-executed run.
+        hint_provider = background_provider(request.app.state.experience, target_id=target.id,
+                                            purpose=target.description, family=prompt.family, settings=settings,
+                                            use_prior_experience=body.use_prior_experience)
 
         # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
         # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
@@ -579,11 +569,6 @@ def _clean_description(description: str | None) -> str | None:
     """Trim the optional purpose description; an empty one is stored as nothing (FR-020)."""
     cleaned = (description or "").strip()
     return cleaned or None
-
-
-def _recent_conversation(conversation: list[tuple[str, str]], turns: int = 2) -> str:
-    """The text of the last `turns` turns (up to 2*turns messages), for the pattern-retrieval query (U1)."""
-    return " ".join(text for _, text in conversation[-2 * turns:])
 
 
 def _experience_counts(experience: Any, target_id: int) -> dict | None:

@@ -22,10 +22,13 @@ ARM_B = {"attacker_model": "m-b", "judge_model": "j", "use_prior_experience": Tr
 
 
 class _Experience:
+    """The store surface the engine's shared retrieval path calls (feature 011: `count` and `query_patterns`)."""
     def write_memory(self, **kw): pass
     def write_pattern(self, **kw): pass
     def retrieve_memory(self, **kw): return []
     def retrieve_patterns(self, **kw): return []
+    def count(self, type=None, *, family=None, target_id=None): return 0   # 011/FR-015: an empty pool
+    def query_patterns(self, **kw): return []
 
 
 def _settings(tmp_path) -> Settings:

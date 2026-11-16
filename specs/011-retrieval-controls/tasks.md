@@ -126,12 +126,12 @@ appear every time from turn 2; the same holds for a run executed by a warm exper
 
 ### Tests for User Story 1
 
-- [ ] T009 [P] [US1] Unit test `tests/unit/test_retrieval_query.py` for `build_query(family, conversation)`
+- [X] T009 [P] [US1] Unit test `tests/unit/test_retrieval_query.py` for `build_query(family, conversation)`
       (`FEATURE = "011"`): with `[("attacker", "<seed>")]` it returns `("<label> <seed>", 1)` where `<label>` is
       `family_label(family)`; with attacker/agent pairs the `agent` texts never appear; with three attacker messages
       only the last two appear, in order, after the label; an empty conversation returns `(label, 0)`; roles other
       than exactly `"attacker"` are ignored; `QUERY_MESSAGES == 2` (011/FR-001).
-- [ ] T010 [P] [US1] Integration test `tests/integration/test_retrieval_query_isolation.py`: build the app with
+- [X] T010 [P] [US1] Integration test `tests/integration/test_retrieval_query_isolation.py`: build the app with
       `make_client(experience=SpyExperienceStore(settings.chroma_path, embedding_function=StubEmbeddingFunction()))`
       seeded from `fixture_library()`, a `StubAttacker` and a `StubJudge(verdict="failed", reason=JUDGE_REASON,
       progress=JUDGE_PROGRESS)`, and a stub target transport replying `REPLY_TEXT`; save a target whose auth header
@@ -146,7 +146,7 @@ appear every time from turn 2; the same holds for a run executed by a warm exper
       the spy recorded no query. Repeat the warm case through `POST /api/experiments` with one warm adaptive arm
       (`use_prior_experience` true, `reps` 1, polled to completion) and assert the same for its queries
       (011/FR-002, 011/FR-015, 011/FR-017, 011/SC-001).
-- [ ] T011 [P] [US1] Unit test `tests/unit/test_experience_store_controls.py` (`FEATURE = "011"`), the
+- [X] T011 [P] [US1] Unit test `tests/unit/test_experience_store_controls.py` (`FEATURE = "011"`), the
       `query_patterns` part: on a temporary store seeded with `fixture_library()`, `query_patterns(family=
       "system_prompt_leak", query_text=…, n=10)` returns only that family's patterns, nearest first (distances
       non-decreasing), each `Candidate` carrying `id`, `document`, a float `distance` and a tuple `embedding` whose
@@ -155,14 +155,14 @@ appear every time from turn 2; the same holds for a run executed by a warm exper
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] In `src/kestrel/experience/store.py` add `Candidate` (frozen dataclass: `id`, `document`,
+- [X] T012 [US1] In `src/kestrel/experience/store.py` add `Candidate` (frozen dataclass: `id`, `document`,
       `distance`, `embedding: tuple[float, ...]` — defined here, imported by `retrieval.py`) and
       `query_patterns(*, family, query_text, n) -> list[Candidate]` per `contracts/experience-store.md`: clamp `n`
       to `count("pattern", family=family)`, return `[]` for `0` without querying, otherwise one family-scoped
       `query` with `include=["documents", "distances", "embeddings"]`, candidates in the collection's order; mark
       `retrieve_patterns` / `retrieve_patterns_with_ids` as legacy (k nearest, no controls) in their docstrings
       (011/FR-003, 011/FR-005).
-- [ ] T013 [US1] Create `src/kestrel/experience/retrieval.py` per `contracts/retrieval.md`: `QUERY_MESSAGES = 2`,
+- [X] T013 [US1] Create `src/kestrel/experience/retrieval.py` per `contracts/retrieval.md`: `QUERY_MESSAGES = 2`,
       `CANDIDATE_MULTIPLIER = 4`, `Selection` (`selected`, `candidate_count`, `dropped_floor`, `dropped_duplicate`;
       properties `pattern_ids`, `documents`, `distances` rounded to 4 decimals), `build_query(family,
       conversation) -> (text, count)` (attacker role only, last two, label first), a first `select_patterns(
@@ -173,12 +173,12 @@ appear every time from turn 2; the same holds for a run executed by a warm exper
       `min(k * 4, experience.count("pattern", family=family))`, `query_patterns`, `select_patterns` with
       `settings.retrieval`, `events.memory_retrieval(...)` with every field of T007, then `format_hints(...)` with
       the selected documents in order (011/FR-001, 011/FR-002, 011/FR-013).
-- [ ] T014 [US1] Wire both callers: in `src/kestrel/api/main.py::start_run` replace the local `hint_provider` with
+- [X] T014 [US1] Wire both callers: in `src/kestrel/api/main.py::start_run` replace the local `hint_provider` with
       `background_provider(experience, target_id=target.id, purpose=target.description, family=prompt.family,
       settings=settings, use_prior_experience=body.use_prior_experience)` and delete `_recent_conversation`; in
       `src/kestrel/experiments/engine.py` replace `_hint_provider(...)` with the same factory (`arm.
       use_prior_experience`, `seed.family`); `attack/graph.py` is untouched (011/FR-002, 011/FR-015).
-- [ ] T015 [US1] Update the engine test doubles so the shared path runs against them: `_Experience` in
+- [X] T015 [US1] Update the engine test doubles so the shared path runs against them: `_Experience` in
       `tests/unit/test_experiment_engine.py` and `tests/unit/test_experiment_warming.py` gain `count(self, type=None,
       *, family=None, target_id=None) -> 0` and `query_patterns(self, **kw) -> []`; keep every existing assertion
       (011/FR-015, 011/SC-009).

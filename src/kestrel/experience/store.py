@@ -28,6 +28,17 @@ class MemoryRecord:
     run_id: int
     created_at: str = ""
 
+
+@dataclass(frozen=True)
+class Candidate:
+    """One family-scoped pattern hit for a retrieval query (feature 011): its id, its text, the collection's own
+    `l2` distance from the query, and its stored embedding — what the selection in `retrieval.py` de-duplicates
+    on, with the same squared-Euclidean measure and the standard library (research D2)."""
+    id: str
+    document: str
+    distance: float
+    embedding: tuple[float, ...]
+
 COLLECTION = "kestrel_experience"
 STORE_VERSION = "1"
 VERSION_KEY = "kestrel_store_version"
@@ -143,16 +154,39 @@ class ExperienceStore:
             metadatas=[{"type": "pattern", "family": family, "owasp_category": owasp_category,
                         "source": f"run:{run_id}", "origin_run_id": int(run_id)}])
 
-    # ---- retrieval (FR-016, FR-017, FR-018) ----
+    # ---- retrieval (FR-016, FR-017, FR-018; feature 011 query_patterns) ----
+
+    def query_patterns(self, *, family: str, query_text: str, n: int) -> list[Candidate]:
+        """The up-to-n nearest patterns of this family for a query, nearest first, each with the collection's own
+        `l2` distance and its stored embedding (feature 011, contracts/experience-store.md). `n` is clamped to the
+        family's pattern count, so an empty family (or n <= 0) returns `[]` without querying; memory records are
+        never candidates (`004/SC-014` still holds). The selection — floor and de-duplication — is `retrieval.py`'s."""
+        n = max(0, min(int(n), self.count("pattern", family=family)))
+        if n == 0:
+            return []
+        result = self._collection.query(query_texts=[query_text or ""], n_results=n,
+                                        where=_and({"type": "pattern"}, {"family": family}),
+                                        include=["documents", "distances", "embeddings"])
+        ids = (result.get("ids") or [[]])[0]
+        documents = (result.get("documents") or [[]])[0]
+        distances = (result.get("distances") or [[]])[0]
+        embeddings = result.get("embeddings")
+        vectors = embeddings[0] if embeddings is not None and len(embeddings) else []
+        return [Candidate(id=str(pattern_id), document=str(document), distance=float(distance),
+                          embedding=tuple(float(value) for value in vector))
+                for pattern_id, document, distance, vector in zip(ids, documents, distances, vectors)]
 
     def retrieve_patterns(self, *, family: str, query_text: str, k: int) -> list[str]:
-        """Up to k patterns of this family, by semantic similarity to query_text (FR-016/17, SC-014)."""
+        """Legacy (feature 004): the k nearest patterns of this family, with no floor and no de-duplication
+        (FR-016/17, SC-014). Production retrieval goes through `query_patterns` and `retrieval.select_patterns`
+        since feature 011; this stays for the feature-004 tests."""
         return [document for _, document in self.retrieve_patterns_with_ids(family=family, query_text=query_text,
                                                                             k=k)]
 
     def retrieve_patterns_with_ids(self, *, family: str, query_text: str, k: int) -> list[tuple[str, str]]:
-        """The same patterns as `(id, document)` pairs: the ids (`pattern:lib:<prompt_id>`, `pattern:run:<run_id>`)
-        are what the retrieval line names (feature 010, FR-016) — identifiers, never the text."""
+        """Legacy (feature 004): the same k nearest patterns as `(id, document)` pairs, no floor, no
+        de-duplication; the ids (`pattern:lib:<prompt_id>`, `pattern:run:<run_id>`) are what a retrieval line
+        names (feature 010, FR-016) — identifiers, never the text. Not called by production code since 011."""
         if k <= 0:
             return []
         result = self._collection.query(query_texts=[query_text or ""], n_results=k,
