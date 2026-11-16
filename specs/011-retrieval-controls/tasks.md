@@ -335,7 +335,7 @@ and confirm it opens and is stamped with both keys.
 
 ### Tests for User Story 4
 
-- [ ] T026 [P] [US4] Unit test `tests/unit/test_experience_store_model.py` (`FEATURE = "011"`): a fresh store's
+- [X] T026 [P] [US4] Unit test `tests/unit/test_experience_store_model.py` (`FEATURE = "011"`): a fresh store's
       collection metadata carries `kestrel_embedding_model == "kestrel-lexical-stub"` and `kestrel_distance_space ==
       "l2"` beside `kestrel_store_version`, its `configuration_json["hnsw"]["space"]` is `l2`, and
       `store.embedding_model == store.stored_embedding_model`; reopening under the same stub emits no `message` or
@@ -357,7 +357,7 @@ and confirm it opens and is stamped with both keys.
       stamped and emits no stamp `message` line; `embedding_model_name(None) == "all-MiniLM-L6-v2"`,
       `embedding_model_name(stub) == "kestrel-lexical-stub"`, and a function without `MODEL_NAME` falls back to its
       `name()` (011/FR-009, 011/FR-010, 011/FR-011, 011/SC-006).
-- [ ] T027 [P] [US4] Integration test `tests/integration/test_startup_model_mismatch.py`: first create the store
+- [X] T027 [P] [US4] Integration test `tests/integration/test_startup_model_mismatch.py`: first create the store
       at `settings.chroma_path` under the stub (so its metadata records `kestrel-lexical-stub` and `l2`), then
       monkeypatch `kestrel.api.main.ExperienceStore` with a subclass whose `__init__(path, **kwargs)` calls
       `super().__init__(path, embedding_function=StubEmbeddingFunction(), embedding_model="other-model")` — the
@@ -377,7 +377,7 @@ and confirm it opens and is stamped with both keys.
 
 ### Implementation for User Story 4
 
-- [ ] T028 [US4] In `src/kestrel/experience/store.py` add `EMBEDDING_MODEL_KEY = "kestrel_embedding_model"`,
+- [X] T028 [US4] In `src/kestrel/experience/store.py` add `EMBEDDING_MODEL_KEY = "kestrel_embedding_model"`,
       `DISTANCE_SPACE_KEY = "kestrel_distance_space"`, `DISTANCE_SPACE = "l2"`, `DEFAULT_EMBEDDING_MODEL =
       ONNXMiniLM_L6_V2.MODEL_NAME` (imported from `chromadb.utils.embedding_functions`; `DefaultEmbeddingFunction`
       delegates every call to a fresh `ONNXMiniLM_L6_V2()`, research D5), `embedding_model_name(embedding_function)`
@@ -396,7 +396,7 @@ and confirm it opens and is stamped with both keys.
       `store_error_kind` (`EmbeddingModelMismatch` → `"embedding_model_mismatch"`, `SpaceMismatch` →
       `"space_mismatch"`) and `describe_store_error` (both values and the remedy) (011/FR-009, 011/FR-010,
       011/FR-011).
-- [ ] T029 [US4] In `src/kestrel/api/main.py` extend the `experience.unavailable` emission: when the caught error
+- [X] T029 [US4] In `src/kestrel/api/main.py` extend the `experience.unavailable` emission: when the caught error
       (or its cause) is an `EmbeddingModelMismatch`, emit the line with `stored_model=error.stored,
       expected_model=error.expected` and the mismatch-specific constant `message` of
       `contracts/log-records-delta.md` (it states the remedy); when it is a `SpaceMismatch`, emit `stored_space`,

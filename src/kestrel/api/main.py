@@ -27,7 +27,9 @@ from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
 from kestrel.experience.retrieval import background_provider
-from kestrel.experience.store import ExperienceStore, ExperienceStoreError, store_error_kind
+from kestrel.experience.store import (EMBEDDING_MODEL_MISMATCH_MESSAGE, SPACE_MISMATCH_MESSAGE,
+                                      EmbeddingModelMismatch, ExperienceStore, ExperienceStoreError, SpaceMismatch,
+                                      store_error_kind)
 from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
 from kestrel.experiments import results as exp_results
@@ -121,12 +123,13 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             experience = ExperienceStore(settings.chroma_path)
             experience.self_check()  # surface a bad store (mismatched EF, failed model download) clearly, now
         except Exception as error:
-            # The self-check wraps the store's own error: name that one (its class and kind, never its text).
+            # The self-check wraps the store's own error: name that one (its class and kind, never its text). A
+            # mismatch of the embedding model or the distance space (feature 011) carries both values as fields
+            # and a mismatch-specific constant message that states the remedy.
             cause = error.__cause__ if isinstance(error, ExperienceStoreError) and error.__cause__ else error
             events.emit("experience.unavailable", logging.ERROR, exc_info=(type(cause), cause, cause.__traceback__),
-                        reason_kind=store_error_kind(cause),
-                        message="The experience store is unavailable, so runs will record loudly as not written "
-                                "back (Principle V).")
+                        reason_kind=store_error_kind(cause), message=_unavailable_message(cause),
+                        **_mismatch_fields(cause))
             experience = None
     if experience is not None and library is not None:
         try:
@@ -570,6 +573,29 @@ def _clean_description(description: str | None) -> str | None:
     """Trim the optional purpose description; an empty one is stored as nothing (FR-020)."""
     cleaned = (description or "").strip()
     return cleaned or None
+
+
+EXPERIENCE_UNAVAILABLE = ("The experience store is unavailable, so runs will record loudly as not written back "
+                          "(Principle V).")
+
+
+def _unavailable_message(error: BaseException) -> str:
+    """The constant `message` of the `experience.unavailable` line: mismatch-specific text with the remedy for an
+    embedding-model or distance-space mismatch (feature 011), the generic constant for every other cause."""
+    if isinstance(error, EmbeddingModelMismatch):
+        return EMBEDDING_MODEL_MISMATCH_MESSAGE
+    if isinstance(error, SpaceMismatch):
+        return SPACE_MISMATCH_MESSAGE
+    return EXPERIENCE_UNAVAILABLE
+
+
+def _mismatch_fields(error: BaseException) -> dict[str, str]:
+    """Both values of a mismatch as line fields (model and space names are not secrets); nothing otherwise."""
+    if isinstance(error, EmbeddingModelMismatch):
+        return {"stored_model": error.stored, "expected_model": error.expected}
+    if isinstance(error, SpaceMismatch):
+        return {"stored_space": error.stored, "expected_space": error.expected}
+    return {}
 
 
 def _experience_counts(experience: Any, target_id: int) -> dict | None:

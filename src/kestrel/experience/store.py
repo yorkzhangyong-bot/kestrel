@@ -54,10 +54,49 @@ class PatternWrite:
 COLLECTION = "kestrel_experience"
 STORE_VERSION = "1"
 VERSION_KEY = "kestrel_store_version"
+# Feature 011 (research D5, D13): the collection records the embedding model that produced its vectors and the
+# distance space its index uses, and is created with that space pinned; `self_check` compares both at start-up.
+EMBEDDING_MODEL_KEY = "kestrel_embedding_model"
+DISTANCE_SPACE_KEY = "kestrel_distance_space"
+DISTANCE_SPACE = "l2"   # squared Euclidean: the measure every distance the floor and the threshold read is in
+try:
+    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2 as _ONNXMiniLM
+    DEFAULT_EMBEDDING_MODEL = str(_ONNXMiniLM.MODEL_NAME)
+except Exception:  # pragma: no cover - a future ChromaDB layout; the e2e probe (FR-018) would catch a drift
+    DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+# The constant `message` of the `experience.unavailable` line for each mismatch (contracts/log-records-delta.md):
+# the remedy reaches the operator on the line itself; the exception's own text never does.
+EMBEDDING_MODEL_MISMATCH_MESSAGE = ("The experience store was built by a different embedding model, so it is disabled "
+                                    "for this session and runs will record loudly as not written back (Principle V). "
+                                    "Rebuild the store directory, or run Kestrel with the model that built it.")
+SPACE_MISMATCH_MESSAGE = ("The experience store's index uses a different distance space than Kestrel expects, so it "
+                          "is disabled for this session and runs will record loudly as not written back "
+                          "(Principle V). Rebuild the store directory.")
+STAMPED_MESSAGE = "Recorded the embedding model name and distance space on the experience store."
 
 
 class ExperienceStoreError(Exception):
     """The store can't be used: a mismatched persisted embedding function, or the local model couldn't load."""
+
+
+class EmbeddingModelMismatch(ExperienceStoreError):
+    """The collection records vectors from one embedding model and Kestrel is running another (feature 011): their
+    distances are not comparable, so the store is unusable until it is rebuilt or the model restored."""
+
+    def __init__(self, *, stored: str, expected: str) -> None:
+        self.stored, self.expected = stored, expected
+        super().__init__(f"The experience store records the embedding model {stored!r} but Kestrel is running "
+                         f"{expected!r}. Rebuild the store directory, or run Kestrel with the model that built it.")
+
+
+class SpaceMismatch(ExperienceStoreError):
+    """The collection's index uses a distance space other than the pinned `l2` (feature 011): every floor and
+    threshold would read a different scale, so the store is unusable until it is rebuilt."""
+
+    def __init__(self, *, stored: str, expected: str) -> None:
+        self.stored, self.expected = stored, expected
+        super().__init__(f"The experience store's index uses the distance space {stored!r} but Kestrel expects "
+                         f"{expected!r}. Rebuild the store directory.")
 
 
 _DOWNLOAD_HINTS = ("onnx", "download", "could not resolve", "connection", "timed out", "temporary failure",
@@ -66,7 +105,12 @@ _DOWNLOAD_HINTS = ("onnx", "download", "could not resolve", "connection", "timed
 
 def store_error_kind(error: BaseException) -> str:
     """Why the store is unusable, as a category the log line can carry instead of the error's text (feature 010):
-    `embedding_function_mismatch`, `model_download` or `other`."""
+    `embedding_model_mismatch` and `space_mismatch` (feature 011), `embedding_function_mismatch`, `model_download`
+    or `other`."""
+    if isinstance(error, EmbeddingModelMismatch):
+        return "embedding_model_mismatch"
+    if isinstance(error, SpaceMismatch):
+        return "space_mismatch"
     text = str(error).lower()
     if "embedding function" in text and "not found" in text:
         return "embedding_function_mismatch"
@@ -78,6 +122,8 @@ def store_error_kind(error: BaseException) -> str:
 def describe_store_error(error: Exception) -> str:
     """A plain, actionable one-liner for why the store is unusable (surfaced at start-up and in logs)."""
     kind = store_error_kind(error)
+    if kind in ("embedding_model_mismatch", "space_mismatch"):
+        return str(error)   # names both values and the remedy
     if kind == "embedding_function_mismatch":
         return ("its collection was created with a different embedding function (often leftover test data). "
                 "Delete the store directory and restart so it can be rebuilt with the default embeddings.")
@@ -95,25 +141,94 @@ def _and(*clauses: dict) -> dict:
     return {"$and": clauses}
 
 
+def embedding_model_name(embedding_function: Any) -> str:
+    """The name of the model behind an embedding function (feature 011, research D5): the shipped default (`None`,
+    or ChromaDB's `DefaultEmbeddingFunction`, which delegates every call to `ONNXMiniLM_L6_V2`) is that model's
+    name; any other function reports its `MODEL_NAME` when it has one, else its registered `name()`."""
+    if embedding_function is None or _is_chromadb_default(embedding_function):
+        return DEFAULT_EMBEDDING_MODEL
+    model_name = getattr(embedding_function, "MODEL_NAME", None)
+    if isinstance(model_name, str) and model_name:
+        return model_name
+    return str(embedding_function.name())
+
+
+def _is_chromadb_default(embedding_function: Any) -> bool:
+    try:
+        from chromadb.api.types import DefaultEmbeddingFunction
+    except Exception:  # pragma: no cover - a future ChromaDB layout
+        return False
+    return isinstance(embedding_function, DefaultEmbeddingFunction)
+
+
+def _index_space(collection: Any) -> str:
+    """The distance space the collection's index actually uses, read back from its configuration (a reopen ignores
+    a conflicting creation argument, research D13); `unknown` when ChromaDB does not say — which `self_check`
+    then reports as a space mismatch rather than assuming anything."""
+    try:
+        configuration = collection.configuration_json or {}
+        for index in ("hnsw", "spann"):
+            space = (configuration.get(index) or {}).get("space")
+            if space:
+                return str(space)
+    except Exception:
+        pass
+    return "unknown"
+
+
 class ExperienceStore:
-    def __init__(self, path: str | Path, *, embedding_function: Any = None, store_version: str = STORE_VERSION) -> None:
+    def __init__(self, path: str | Path, *, embedding_function: Any = None, store_version: str = STORE_VERSION,
+                 embedding_model: str | None = None) -> None:
         Path(path).mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(path))
+        # The model name the store is compared against: derived from the function in use unless given (the test
+        # seam for "a different model" — ChromaDB's own check on the registered function *name* fires first).
+        self.embedding_model = embedding_model or embedding_model_name(embedding_function)
         # Pass the embedding function only when given; otherwise ChromaDB uses its built-in local default (R2).
         kwargs: dict[str, Any] = {} if embedding_function is None else {"embedding_function": embedding_function}
+        # Created with the distance space pinned and the model name recorded (feature 011, FR-009); on a reopen
+        # ChromaDB keeps the existing configuration and metadata, so both are read back below, never assumed.
         self._collection = self._client.get_or_create_collection(
-            COLLECTION, metadata={VERSION_KEY: store_version}, **kwargs)
-        stored = (self._collection.metadata or {}).get(VERSION_KEY, store_version)
-        self.version = str(stored)
+            COLLECTION, configuration={"hnsw": {"space": DISTANCE_SPACE}},
+            metadata={VERSION_KEY: store_version, EMBEDDING_MODEL_KEY: self.embedding_model,
+                      DISTANCE_SPACE_KEY: DISTANCE_SPACE}, **kwargs)
+        metadata = dict(self._collection.metadata or {})
+        self.version = str(metadata.get(VERSION_KEY, store_version))
+        self.distance_space = _index_space(self._collection)
+        self.stored_embedding_model: str | None = metadata.get(EMBEDDING_MODEL_KEY)
+        self.stored_distance_space: str | None = metadata.get(DISTANCE_SPACE_KEY)
+        self._stamp_if_missing()
         if self.version != store_version:
             events.emit("message", logging.WARNING, stored_version=self.version, expected_version=store_version,
                         message="The experience store's version differs from the one this Kestrel writes; "
                                 "reconciling it is not handled yet.")
 
+    def _stamp_if_missing(self) -> None:
+        """A feature-004 store (version only) is stamped with the running model's name and the space on its first
+        open — only when its index really is `l2`, which every feature-004 store is; a recorded name is never
+        overwritten, so a store missing only the space key keeps its name and still fails `self_check` on a model
+        mismatch; a non-`l2` index is left unstamped and unlogged for `self_check` to fail (FR-011, research D5)."""
+        if self.stored_embedding_model is not None and self.stored_distance_space is not None:
+            return
+        if self.distance_space != DISTANCE_SPACE:
+            return
+        stamped = {VERSION_KEY: self.version, EMBEDDING_MODEL_KEY: self.stored_embedding_model or self.embedding_model,
+                   DISTANCE_SPACE_KEY: DISTANCE_SPACE}
+        self._collection.modify(metadata=stamped)   # `modify` replaces the whole dict: every key is carried along
+        self.stored_embedding_model = str(stamped[EMBEDDING_MODEL_KEY])
+        self.stored_distance_space = DISTANCE_SPACE
+        events.emit("message", message=STAMPED_MESSAGE)
+
     def self_check(self) -> None:
-        """Surface an unusable store early (bad persisted embedding function, or a failed first-use model
-        download) by forcing one embedding, so the failure is a clear start-up message rather than a cryptic
-        error on the first write-back mid-run. A probe record is written and removed, so it leaves no trace."""
+        """Surface an unusable store early, so the failure is a clear start-up message rather than a cryptic error
+        on the first write-back mid-run: an index in another distance space, a collection built by another
+        embedding model (feature 011, FR-010 — nothing is written on a mismatch), then — the feature-004 probe — a
+        bad persisted embedding function or a failed first-use model download, by forcing one embedding. The probe
+        record is written and removed, so it leaves no trace."""
+        if self.distance_space != DISTANCE_SPACE:
+            raise SpaceMismatch(stored=self.distance_space, expected=DISTANCE_SPACE)
+        if self.stored_embedding_model != self.embedding_model:
+            raise EmbeddingModelMismatch(stored=str(self.stored_embedding_model), expected=self.embedding_model)
         probe = "kestrel:self-check"
         try:
             self._collection.upsert(ids=[probe], documents=["ping"], metadatas=[{"type": "selfcheck"}])
