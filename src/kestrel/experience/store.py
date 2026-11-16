@@ -10,7 +10,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import chromadb
 
@@ -59,6 +59,9 @@ VERSION_KEY = "kestrel_store_version"
 EMBEDDING_MODEL_KEY = "kestrel_embedding_model"
 DISTANCE_SPACE_KEY = "kestrel_distance_space"
 DISTANCE_SPACE = "l2"   # squared Euclidean: the measure every distance the floor and the threshold read is in
+# The index configuration every collection this version creates is made with (ChromaDB types it as its own
+# TypedDict; a plain dict is what the client accepts).
+_CREATE_CONFIGURATION: Any = {"hnsw": {"space": DISTANCE_SPACE}}
 try:
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2 as _ONNXMiniLM
     DEFAULT_EMBEDDING_MODEL = str(_ONNXMiniLM.MODEL_NAME)
@@ -133,6 +136,12 @@ def describe_store_error(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"
 
 
+def _stored_hit_count(metadata: Mapping[str, Any]) -> int:
+    """A pattern's recorded hit count; a pattern without the key (written before feature 011) counts as one."""
+    value = metadata.get("hit_count")
+    return int(value) if isinstance(value, (int, float)) else 1
+
+
 def _and(*clauses: dict) -> dict:
     """A ChromaDB `where` filter: a single clause as-is, several joined with $and."""
     clauses = [c for c in clauses if c]
@@ -189,7 +198,7 @@ class ExperienceStore:
         # Created with the distance space pinned and the model name recorded (feature 011, FR-009); on a reopen
         # ChromaDB keeps the existing configuration and metadata, so both are read back below, never assumed.
         self._collection = self._client.get_or_create_collection(
-            COLLECTION, configuration={"hnsw": {"space": DISTANCE_SPACE}},
+            COLLECTION, configuration=_CREATE_CONFIGURATION,
             metadata={VERSION_KEY: store_version, EMBEDDING_MODEL_KEY: self.embedding_model,
                       DISTANCE_SPACE_KEY: DISTANCE_SPACE}, **kwargs)
         metadata = dict(self._collection.metadata or {})
@@ -257,7 +266,7 @@ class ExperienceStore:
             return 0
         ids = [f"pattern:lib:{p.id}" for p in library.prompts]
         existing = set(self._collection.get(ids=ids, include=[])["ids"])
-        metadatas = []
+        metadatas: list[Any] = []
         for pattern_id, prompt in zip(ids, library.prompts):
             metadata: dict[str, Any] = {"type": "pattern", "family": prompt.family,
                                         "owasp_category": prompt.owasp_category,
@@ -299,7 +308,7 @@ class ExperienceStore:
                 distance = float((nearest.get("distances") or [[0.0]])[0][0])
                 metadata = ((nearest.get("metadatas") or [[{}]])[0][0]) or {}
                 if distance <= dedupe_threshold:
-                    hit_count = int(metadata.get("hit_count", 1)) + 1   # a pattern without the key counts as one
+                    hit_count = _stored_hit_count(metadata) + 1
                     self._collection.update(ids=[nearest_id],
                                             metadatas=[{"hit_count": hit_count, "last_hit_run_id": int(run_id)}])
                     return PatternWrite("merged", nearest_id, hit_count, distance)

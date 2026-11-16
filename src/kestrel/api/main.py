@@ -589,7 +589,7 @@ def _unavailable_message(error: BaseException) -> str:
     return EXPERIENCE_UNAVAILABLE
 
 
-def _mismatch_fields(error: BaseException) -> dict[str, str]:
+def _mismatch_fields(error: BaseException) -> dict[str, Any]:
     """Both values of a mismatch as line fields (model and space names are not secrets); nothing otherwise."""
     if isinstance(error, EmbeddingModelMismatch):
         return {"stored_model": error.stored, "expected_model": error.expected}
