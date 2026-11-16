@@ -54,7 +54,7 @@ def test_a_non_negative_number_is_the_value(raw, expected):  # 011/FR-012
 
 
 @pytest.mark.parametrize("name", ["KESTREL_EXPERIENCE_DISTANCE_FLOOR", "KESTREL_EXPERIENCE_DEDUPE_THRESHOLD"])
-@pytest.mark.parametrize("value", ["-1", "abc", "on", "nan"])
+@pytest.mark.parametrize("value", ["-1", "abc", "on", "nan", "inf", "-inf", "1e999"])
 def test_an_invalid_control_value_refuses_to_start_naming_the_variable(name, value):  # 011/FR-012
     with pytest.raises(SettingsError, match=name):
         load_settings({name: value})

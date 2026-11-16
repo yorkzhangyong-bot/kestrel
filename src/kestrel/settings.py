@@ -1,6 +1,7 @@
 """Kestrel's settings, read from KESTREL_* environment variables (research R5, R6, R8)."""
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,7 +177,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             value = float(raw)
         except ValueError:
             raise SettingsError(f"{name} must be a non-negative number or 'off', not {raw!r}.") from None
-        if not value >= 0:   # also refuses NaN, which no comparison accepts
+        if not (math.isfinite(value) and value >= 0):   # NaN and ±inf are no usable distance either
             raise SettingsError(f"{name} must be a non-negative number or 'off', not {raw!r}.")
         return value
 

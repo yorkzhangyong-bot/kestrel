@@ -2,7 +2,8 @@
 the collection is created with an explicit `l2` index and records the model name and the space beside the store
 version; the same model reopens silently; a different model name, or an index in another space, fails `self_check`
 with a named mismatch that writes nothing; a feature-004 store (version only) opens cleanly and is stamped once,
-and a stamp never overwrites a recorded name (FR-009, FR-010, FR-011, SC-006). Temporary stores on the lexical stub."""
+and a stamp never overwrites a recorded name (FR-009, FR-010, FR-011, SC-006). Temporary stores on the lexical stub;
+two of them open the shipped default beside it (the constructor embeds nothing, so that stays offline)."""
 import chromadb
 import pytest
 
@@ -103,6 +104,32 @@ def test_a_stamp_never_overwrites_a_recorded_model_name(tmp_path, json_log):  # 
     with pytest.raises(EmbeddingModelMismatch) as caught:
         store.self_check()
     assert (caught.value.stored, caught.value.expected) == ("other-model", STUB_MODEL)
+
+
+def persisted_function(store: ExperienceStore) -> str:
+    """The embedding function name ChromaDB persisted in the collection's configuration."""
+    return store._collection.configuration_json["embedding_function"]["name"]
+
+
+def test_a_default_store_after_a_stub_store_keeps_its_own_embedding_function(tmp_path):  # FR-009, SC-006
+    """ChromaDB writes the embedding function of a call into the configuration dict it is given: a configuration
+    shared between calls pinned the first store's function onto every later one — a default store built on the
+    stub while recording the shipped model's name, the silent mismatch the stamp exists to prevent."""
+    stub = open_store(tmp_path / "stub-first")
+    default = ExperienceStore(tmp_path / "default-after")   # the shipped default; no ValueError
+    assert persisted_function(stub) == "kestrel_stub" and stub.embedding_model == STUB_MODEL
+    assert persisted_function(default) == "default" and default.embedding_model == "all-MiniLM-L6-v2"
+    assert default._collection.metadata[EMBEDDING_MODEL_KEY] == "all-MiniLM-L6-v2"
+
+
+def test_a_stub_store_after_a_default_store_keeps_its_own_embedding_function(tmp_path):  # FR-009, SC-006
+    """The reverse order: with a shared configuration the stub store failed in the constructor ("Multiple
+    embedding functions provided"); each store now carries its own."""
+    default = ExperienceStore(tmp_path / "default-first")
+    stub = open_store(tmp_path / "stub-after")                 # no ValueError
+    assert persisted_function(default) == "default" and default.embedding_model == "all-MiniLM-L6-v2"
+    assert persisted_function(stub) == "kestrel_stub" and stub.embedding_model == STUB_MODEL
+    assert stub._collection.metadata[EMBEDDING_MODEL_KEY] == STUB_MODEL
 
 
 def test_the_model_name_is_derived_from_the_embedding_function_in_use():  # FR-009

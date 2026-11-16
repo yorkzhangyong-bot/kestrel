@@ -59,9 +59,6 @@ VERSION_KEY = "kestrel_store_version"
 EMBEDDING_MODEL_KEY = "kestrel_embedding_model"
 DISTANCE_SPACE_KEY = "kestrel_distance_space"
 DISTANCE_SPACE = "l2"   # squared Euclidean: the measure every distance the floor and the threshold read is in
-# The index configuration every collection this version creates is made with (ChromaDB types it as its own
-# TypedDict; a plain dict is what the client accepts).
-_CREATE_CONFIGURATION: Any = {"hnsw": {"space": DISTANCE_SPACE}}
 try:
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2 as _ONNXMiniLM
     DEFAULT_EMBEDDING_MODEL = str(_ONNXMiniLM.MODEL_NAME)
@@ -197,8 +194,12 @@ class ExperienceStore:
         kwargs: dict[str, Any] = {} if embedding_function is None else {"embedding_function": embedding_function}
         # Created with the distance space pinned and the model name recorded (feature 011, FR-009); on a reopen
         # ChromaDB keeps the existing configuration and metadata, so both are read back below, never assumed.
+        # The configuration is built fresh for every call and never shared: ChromaDB writes the embedding
+        # function of the call into the dict it is given, so a shared dict would pin the first store's function
+        # onto every later store in the process (it types the dict as its own TypedDict; a plain one is accepted).
+        configuration: Any = {"hnsw": {"space": DISTANCE_SPACE}}
         self._collection = self._client.get_or_create_collection(
-            COLLECTION, configuration=_CREATE_CONFIGURATION,
+            COLLECTION, configuration=configuration,
             metadata={VERSION_KEY: store_version, EMBEDDING_MODEL_KEY: self.embedding_model,
                       DISTANCE_SPACE_KEY: DISTANCE_SPACE}, **kwargs)
         metadata = dict(self._collection.metadata or {})

@@ -76,6 +76,13 @@ have written permission".
   permitted default is `deepseek/deepseek-v4.1-flash`.
 - **ChromaDB embedding function:** the store persists the embedding function by name, so a stub-EF store poisons
   the real app's `data/chroma`. Tests must use a tmp `chroma_path`, never the repo's.
+- **ChromaDB mutates the collection configuration it is given:** `get_or_create_collection(configuration=...)`
+  writes the call's embedding function into that dict (chromadb 1.5.9, `api/client.py`), so a dict shared between
+  calls pins the first store's function onto every later store in the process — a default store silently built
+  on the stub while recording `all-MiniLM-L6-v2`, or `ValueError: Multiple embedding functions provided` the other
+  way round, and an order-dependent offline suite. Never share a mutable configuration between ChromaDB calls;
+  `ExperienceStore.__init__` builds a fresh one per call (`tests/unit/test_experience_store_model.py` proves both
+  orders).
 - **No `.env` auto-load:** the app reads real environment variables and does **not** load `.env`. Export settings
   into the shell first (`set -a; . ./.env; set +a`) or pass `uvicorn --env-file`, then start the API.
 - **ChromaDB systems must be stopped in tests:** `SharedSystemClient.clear_system_cache()` only forgets chroma Systems; on Windows every seeded persistent store keeps 3–4 C-runtime descriptors (limit 8192) until `System.stop()`, so `tests/conftest.py::_release_chroma` stops every cached System after each test. Without it, running the integration suite before the unit suite fails the connection-tester test with "Too many open files".
@@ -140,8 +147,8 @@ same commit. Before opening any implementation PR, review this file and add anyt
   sends (a pinned arm's version; a single-turn verdict's judge version), judge provenance only when a judge request
   was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks the OTLP exporter import for a whole test session (SC-007).
 - 2026-11-16 — **Retrieval controls (011).** Settings: `KESTREL_EXPERIENCE_DISTANCE_FLOOR=1.8` and
-  `KESTREL_EXPERIENCE_DEDUPE_THRESHOLD=0.15` (both on by default; `off` disables one; a negative or non-numeric value
-  refuses to start), parsed by `settings.non_negative_float_or_off`, read as `Settings.retrieval` →
+  `KESTREL_EXPERIENCE_DEDUPE_THRESHOLD=0.15` (both on by default; `off` disables one; a negative, non-finite or
+  non-numeric value refuses to start), parsed by `settings.non_negative_float_or_off`, read as `Settings.retrieval` →
   `RetrievalSettings(k, distance_floor, dedupe_threshold)`, reported on `GET /api/config`. Distances are the
   collection's own `l2` (squared Euclidean) values. **One retrieval path**: `experience/retrieval.py` —
   `background_provider(...)` is the per-turn callable both `api/main.py::start_run` and `experiments/engine.py::_run_rep`
