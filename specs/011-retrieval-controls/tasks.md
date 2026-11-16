@@ -489,12 +489,12 @@ for the `no_relevant` query, exactly one hit per duplicate pair, and every publi
 - [X] T035 Write `specs/011-retrieval-controls/traceability.md` (the id → tests table in the feature-010 shape;
       "Untraced ids: none") and run `uv run python scripts/check_traceability.py` until every `011/FR-###` and
       `011/SC-###` is traced (011/SC-008).
-- [ ] T036 Gates and quickstart validation: `uv run pytest tests/unit tests/integration` (coverage ≥ 85 % on
+- [X] T036 Gates and quickstart validation: `uv run pytest tests/unit tests/integration` (coverage ≥ 85 % on
       `src`, every pre-existing test unchanged in intent apart from T025), `uvx ruff check src ui tests` clean,
       `uv run mypy src` advisory, `git diff --stat -- pyproject.toml uv.lock` empty, and the offline sections of
       `specs/011-retrieval-controls/quickstart.md` reproduced; fix anything that fails (011/FR-016, 011/SC-008,
       011/SC-009).
-- [ ] T037 LAST — Roadmap: in `docs/roadmap.md` move the "Retrieval controls" bullet out of "From reviewer
+- [X] T037 LAST — Roadmap: in `docs/roadmap.md` move the "Retrieval controls" bullet out of "From reviewer
       feedback" into "Done" as **011 — Retrieval controls** (one bullet in the Done style: attacker-only query,
       distance floor, de-duplication at retrieval and at write-back with hit counts, the embedding model name and
       distance space stamped and checked, the recall@k fixture, the settings on the `memory.retrieval` line;
