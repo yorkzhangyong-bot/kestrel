@@ -28,6 +28,14 @@ warm/cold switch, single-turn runs, memory retrieval and the hints block unchang
 their intent — the one expectation this feature changes on purpose is the feature-004 deletion test's single-turn
 success, which now merges into its library seed (T025, SC-009).
 
+**Analysis remediation (2026-11-16, `/speckit-analyze` on the implementation branch, 29 of 37 tasks done)**: one
+medium finding, fixed here and in `contracts/recall-fixture.md` — the recall check reproduces the published
+distances *rounded to 4 decimals* within 1e-6 (the table publishes 4-decimal values, so a literal 1e-6 comparison
+could never pass). Low findings, left as they are: T032's `assert_no_secret_in_logs` fixture needs the subprocess
+`kestrel_api`, so the in-process e2e checks the target's log and the served lines for the key directly; the spec's
+"distance measure" is the plan's and code's "distance space" (FR-010 names `space_mismatch` itself);
+`Selection.selected` is a tuple in code, a list in data-model.md. No requirement was reopened.
+
 ## Phase 1: Setup
 
 - [X] T001 [P] Document the two settings in `.env.example` beside `KESTREL_EXPERIENCE_PATTERN_K` /
@@ -428,7 +436,8 @@ for the `no_relevant` query, exactly one hit per duplicate pair, and every publi
       `k * 4` clamped) + `select_patterns` with the fixture's settings; assert mean recall@k over queries with a
       non-empty `expected` is `>= min_recall`, every `no_relevant` query selects nothing, exactly one id of each
       `duplicate_pairs` entry is selected for the query that names one of them, every `expected` id exists in
-      `patterns`, every distance in the fixture's `expected_distances` table is reproduced within 1e-6, every
+      `patterns`, every distance in the fixture's `expected_distances` table is reproduced — the store's own value
+      rounded to 4 decimals, as the table publishes them — within 1e-6, every
       published distance lies at least 0.1 from both `distance_floor` and `dedupe_threshold` (the contract's margin
       table), no two vocabulary words share a hash bucket, and every text in the file is
       drawn from the vocabulary the contract lists (a guard against attack wording) (011/FR-014, 011/SC-005).

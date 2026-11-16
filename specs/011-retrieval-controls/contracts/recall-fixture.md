@@ -63,8 +63,9 @@ either control:
 | query-to-pattern vs the threshold 0.5 (never compared) | 0.2679 | 1.2697 | 0.23 / 0.77 |
 | pattern-to-pattern vs the floor 0.8 (never compared) | 0.1292 | 1.0 | 0.67 / 0.20 |
 
-The check (T031) reproduces every published distance within 1e-6 and asserts that each lies at least 0.1 from both
-`distance_floor` and `dedupe_threshold`, so a stub or fixture change that erodes a margin fails loudly.
+The check (T031) reproduces every published distance — the store's own value rounded to 4 decimals, as the table
+publishes them — within 1e-6 and asserts that each lies at least 0.1 from both `distance_floor` and
+`dedupe_threshold`, so a stub or fixture change that erodes a margin fails loudly.
 
 Worked example: `fx-001` and `fx-002` share 7 of 8 tokens → 0.1292 (a duplicate under 0.5); query 0 shares 6 of
 `fx-001`'s 7 tokens → 0.1484 (selected) and 6 of `fx-002`'s 8 → 0.2679 (within the floor, then skipped as a
@@ -85,8 +86,8 @@ Rules:
 - The check is a unit test (`tests/unit/test_retrieval_recall.py`, token `011/FR-014`, `011/SC-005`): a fresh
   temporary store, `seed_patterns(fixture_library)`, then for every query `query_patterns` + `select_patterns` with
   the fixture's `k`, `distance_floor` and `dedupe_threshold`; it asserts `mean recall >= min_recall`, zero hits for
-  every `no_relevant` query, exactly one of each duplicate pair, every `expected_distances` entry reproduced within
-  1e-6, the ≥ 0.1 margins of the table above, no two vocabulary words sharing a hash bucket, and that no text in the
+  every `no_relevant` query, exactly one of each duplicate pair, every `expected_distances` entry reproduced (rounded
+  to 4 decimals) within 1e-6, the ≥ 0.1 margins of the table above, no two vocabulary words sharing a hash bucket, and that no text in the
   file contains anything but the placeholder vocabulary (a guard against attack wording creeping in).
 - Measured on the lexical stub (research D8), the shipped values would also pass this fixture, but the fixture states
   its own values so that the offline proof never depends on the shipped defaults.
