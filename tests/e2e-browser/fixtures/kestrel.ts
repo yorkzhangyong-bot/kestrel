@@ -11,7 +11,14 @@ export interface KestrelConfig {
   judge: { model: string; configured: boolean };
   attacker: { model: string; configured: boolean };
   adaptive: { max_turns: number; token_budget: number; time_limit_s: number };
-  experience: { pattern_k: number; memory_cap: number; use_prior_experience_default: boolean };
+  /** Feature 011 adds the floor and the de-duplication threshold; each is `null` when switched off at start-up. */
+  experience: {
+    pattern_k: number;
+    memory_cap: number;
+    distance_floor: number | null;
+    dedupe_threshold: number | null;
+    use_prior_experience_default: boolean;
+  };
   /** The active prompt versions, as `{id, version}` entries; never the prompt text (feature 009). */
   prompts: Array<{ id: string; version: string }>;
 }
