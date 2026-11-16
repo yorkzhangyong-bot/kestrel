@@ -425,12 +425,12 @@ tests/integration/test_startup_events.py` green.
 **Independent Test**: seed a temporary store from the fixture and assert mean recall@k ≥ `min_recall`, zero hits
 for the `no_relevant` query, exactly one hit per duplicate pair, and every published distance with its margin.
 
-- [ ] T030 [P] [US5] Create `tests/fixtures/retrieval_recall.json` exactly per `contracts/recall-fixture.md`
+- [X] T030 [P] [US5] Create `tests/fixtures/retrieval_recall.json` exactly per `contracts/recall-fixture.md`
       (`k`, `distance_floor 0.8`, `dedupe_threshold 0.5`, `min_recall 1.0`, five placeholder patterns across two
       families, five queries including one `no_relevant`, one `duplicate_pairs` entry, and the `expected_distances`
       table the contract publishes); texts are placeholder vocabulary only, never attack wording; the 21-word
       vocabulary is collision-free under `crc32 % 256` (verified in research D8) (011/FR-014).
-- [ ] T031 [US5] Unit test `tests/unit/test_retrieval_recall.py` (`FEATURE = "011"`): load the fixture, build a
+- [X] T031 [US5] Unit test `tests/unit/test_retrieval_recall.py` (`FEATURE = "011"`): load the fixture, build a
       duck-typed library (`version "fixture"`, prompts with `id`, `text`, `family`, `owasp_category` from
       `FAMILIES`), seed a temporary store (`StubEmbeddingFunction`), and for each query run `query_patterns` (pool
       `k * 4` clamped) + `select_patterns` with the fixture's settings; assert mean recall@k over queries with a
