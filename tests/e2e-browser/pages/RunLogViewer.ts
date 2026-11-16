@@ -12,7 +12,15 @@ export class RunLogViewer {
   readonly logRawLines: Locator;
 
   constructor(readonly page: Page) {
-    this.logExpander = page.locator('details').filter({ has: page.getByText('Log', { exact: true }) });
+    // A run opened from the Runs tab renders its own "Log" expander, and the attack result above the tabs renders
+    // the same run again, so an unscoped filter matches both. Prefer the Runs tab's viewer, and fall back to the
+    // attack result for a run that was just executed but not opened from the Runs tab; the log is the same run.
+    const runsLog = page
+      .getByRole('tabpanel', { name: 'Runs' })
+      .locator('details')
+      .filter({ has: page.getByText('Log', { exact: true }) });
+    const attackLog = page.locator('details').filter({ has: page.getByText('Log', { exact: true }) });
+    this.logExpander = runsLog.or(attackLog).first();
     this.logTable = this.logExpander.getByTestId('stDataFrame');
     this.logRawLines = this.logExpander.locator('pre code').filter({ hasText: '"event": "run.start"' });
   }
