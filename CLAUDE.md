@@ -139,3 +139,51 @@ same commit. Before opening any implementation PR, review this file and add anyt
   handler kept a later test's records twice. Provenance is now written from the reference the client actually
   sends (a pinned arm's version; a single-turn verdict's judge version), judge provenance only when a judge request
   was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks the OTLP exporter import for a whole test session (SC-007).
+- 2026-11-16 — **Retrieval controls (011).** Settings: `KESTREL_EXPERIENCE_DISTANCE_FLOOR=1.8` and
+  `KESTREL_EXPERIENCE_DEDUPE_THRESHOLD=0.15` (both on by default; `off` disables one; a negative or non-numeric value
+  refuses to start), parsed by `settings.non_negative_float_or_off`, read as `Settings.retrieval` →
+  `RetrievalSettings(k, distance_floor, dedupe_threshold)`, reported on `GET /api/config`. Distances are the
+  collection's own `l2` (squared Euclidean) values. **One retrieval path**: `experience/retrieval.py` —
+  `background_provider(...)` is the per-turn callable both `api/main.py::start_run` and `experiments/engine.py::_run_rep`
+  hand to the graph (`attack/graph.py` still takes a plain callable and never imports the store). The query is
+  `family_label(family)` + the last `QUERY_MESSAGES = 2` messages whose role is exactly `attacker` (the graph's
+  `(role, text)` list; `agent` replies are filtered, and the judge reason/progress, memory summaries and the purpose
+  description are not in that list at all — `tests/integration/test_retrieval_query_isolation.py` proves it with the
+  known markers through a `SpyExperienceStore`). Pool = `min(k × CANDIDATE_MULTIPLIER (4), family count)` from
+  `ExperienceStore.query_patterns` (`Candidate`: id, document, distance, stored embedding); `select_patterns` walks
+  nearest first — a candidate `> floor` ends the walk and every later one counts in `dropped_floor`; one whose squared
+  distance to an already selected hit is `<= threshold` is skipped (`dropped_duplicate`, no slot spent); stop at `k`.
+  The `memory.retrieval` line carries `k`, `distance_floor`, `dedupe_threshold` (`null` when off), `candidate_count`
+  (always `dropped_floor + dropped_duplicate + pattern_count`), `distances` (4 decimals) and `query_messages`; a floor
+  that admits nothing gives `pattern_count` 0 and the run goes on. **Write-back**: `write_pattern(...,
+  dedupe_threshold=)` returns `PatternWrite` — the nearest same-family pattern (library seeds included) within the
+  threshold gets `hit_count + 1` and `last_hit_run_id` (`merged`), else a new `pattern:run:<id>` with `hit_count` 1
+  (`added`); `memory.writeback` carries `pattern_outcome`, `pattern_id`, `hit_count`, `pattern_distance`. ChromaDB
+  metadata semantics that make this work: `upsert`/`update` with a metadata dict **merge keys** (an omitted key is
+  kept — `seed_patterns` upserts existing seed ids without `hit_count`, so counts survive every start-up), while
+  `collection.modify(metadata=...)` **replaces** the whole collection dict (the stamp rewrites all three keys).
+  **Model stamp**: the collection is created with `configuration={"hnsw": {"space": "l2"}}` and metadata
+  `kestrel_embedding_model` + `kestrel_distance_space`; the name comes from `embedding_model_name(ef)` — `None` or
+  ChromaDB's `DefaultEmbeddingFunction` → `all-MiniLM-L6-v2` (`ONNXMiniLM_L6_V2.MODEL_NAME`; the default delegates
+  every call to it), else the function's `MODEL_NAME`, else its `name()`; the stub's is `kestrel-lexical-stub`. The
+  ctor keyword `embedding_model=` is the test seam for "another model" (ChromaDB's own check on the registered
+  function *name* would fire first). `self_check` compares the space, then the name, before the probe:
+  `SpaceMismatch` / `EmbeddingModelMismatch` → one ERROR `experience.unavailable` with `reason_kind`
+  `space_mismatch`/`embedding_model_mismatch`, `stored_*`/`expected_*` fields and a mismatch-specific constant
+  `message` with the remedy (`api/main.py::_unavailable_message`); the store is `None` for the session, runs record
+  `memory_written` false. A feature-004 store (version only) is stamped on first open (one `message` line) — only if
+  its index really is `l2`; a recorded name is never overwritten. Gotcha: `get_or_create_collection` **ignores a
+  conflicting `configuration` on reopen**, so the actual space is read back from
+  `collection.configuration_json["hnsw"]["space"]`, never assumed. **Offline scale**: `tests/support.py::
+  StubEmbeddingFunction` is a hashed bag of words (`zlib.crc32(token) % 256`, L2-normalised): identical texts 0,
+  disjoint 2.0, one token of six changed ≈ 0.333 — every offline floor/threshold test states values on this scale
+  (the shipped 1.8/0.15 still behave against the placeholder seeds). **Recall fixture**:
+  `tests/fixtures/retrieval_recall.json` (contract `specs/011-retrieval-controls/contracts/recall-fixture.md`): k 3,
+  floor 0.8, threshold 0.5, a 21-word collision-free vocabulary; `tests/unit/test_retrieval_recall.py` reproduces the
+  published distances rounded to 4 decimals and asserts a ≥ 0.1 margin from both controls — extend it only with words
+  whose `crc32 % 256` bucket is free, and keep every text placeholder vocabulary. **Measured real-model distances**
+  behind the defaults (research D6): seedless on-theme queries up to 1.74 from the nearest family seed, unrelated
+  text 2.0–2.15; whitespace/spelling/one-word variants 0.004–0.088, a paraphrase 0.253, the nearest two shipped seeds
+  of one family 0.543 — the e2e (`tests/e2e/test_us011_retrieval.py`, API in-process, up to four warm runs until one
+  reaches a seedless turn-4 query) confirms merged at ~0.09 and added at ~0.25. The subprocess-based
+  `assert_no_secret_in_logs` fixture does not apply to an in-process e2e; `json_log` captures the stream there.

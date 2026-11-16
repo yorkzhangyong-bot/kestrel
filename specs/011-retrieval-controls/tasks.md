@@ -448,7 +448,7 @@ for the `no_relevant` query, exactly one hit per duplicate pair, and every publi
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T032 [P] End-to-end test `tests/e2e/test_us011_retrieval.py` (marker `e2e`, `FEATURE = "011"`), modelled on
+- [X] T032 [P] End-to-end test `tests/e2e/test_us011_retrieval.py` (marker `e2e`, `FEATURE = "011"`), modelled on
       `tests/e2e/test_us2_experience.py` (in-process API, real HS-code target via `hs_target`, real judge and
       attacker, the default embedding, `chroma_path` under `tmp_path`, `adaptive_max_turns=4`,
       `adaptive_time_limit_s=120` as `tests/e2e/test_us2_experience.py` sets it so four real turns fit, the shipped
@@ -473,11 +473,11 @@ for the `no_relevant` query, exactly one hit per duplicate pair, and every publi
       == "l2"`; and assert that `DefaultEmbeddingFunction()` and `ONNXMiniLM_L6_V2()` embed one neutral probe
       sentence identically (squared distance 0 within 1e-9), so a silent change of ChromaDB's default model is
       caught here; reuse `assert_no_secret_in_logs` where the fixture applies (011/FR-012, 011/FR-018, 011/SC-010).
-- [ ] T033 [P] Extend `tests/unit/test_optional_extra.py`: the `[project] dependencies` list of `pyproject.toml`
+- [X] T033 [P] Extend `tests/unit/test_optional_extra.py`: the `[project] dependencies` list of `pyproject.toml`
       names exactly the eight packages of the fixed stack (chromadb, cryptography, fastapi, httpx, langgraph,
       markdown-it-py, streamlit, uvicorn — none other) and the `otel` extra is unchanged, so this feature adds no
       dependency (011/FR-016, 011/SC-008).
-- [ ] T034 [P] Documentation: `docs/technical-design.md` (the ChromaDB section: `kestrel_embedding_model`,
+- [X] T034 [P] Documentation: `docs/technical-design.md` (the ChromaDB section: `kestrel_embedding_model`,
       `kestrel_distance_space`, the explicit `l2` space, the `self_check` comparisons and their failure lines,
       `hit_count`/`last_hit_run_id`, the retrieval path — `experience/retrieval.py`, the attacker-only query, floor,
       de-duplication, the candidate pool — and the new `memory.retrieval`/`memory.writeback` fields in the logging
@@ -486,7 +486,7 @@ for the `no_relevant` query, exactly one hit per duplicate pair, and every publi
       test seam, the metadata-merge semantics of ChromaDB upserts that keep `hit_count`, the measured real-model
       distances behind the defaults, ChromaDB ignoring a conflicting space on reopen) (011/FR-009, 011/FR-012,
       011/FR-013).
-- [ ] T035 Write `specs/011-retrieval-controls/traceability.md` (the id → tests table in the feature-010 shape;
+- [X] T035 Write `specs/011-retrieval-controls/traceability.md` (the id → tests table in the feature-010 shape;
       "Untraced ids: none") and run `uv run python scripts/check_traceability.py` until every `011/FR-###` and
       `011/SC-###` is traced (011/SC-008).
 - [ ] T036 Gates and quickstart validation: `uv run pytest tests/unit tests/integration` (coverage ≥ 85 % on
