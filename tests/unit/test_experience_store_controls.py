@@ -55,3 +55,117 @@ def test_memory_records_never_appear_as_candidates(seeded):  # FR-005
                         attacker_model="m")
     found = seeded.query_patterns(family=FAMILY, query_text=SEED_TEXT, n=10)
     assert len(found) == 5 and all(c.id.startswith("pattern:") for c in found)
+
+
+# ---- write_pattern (FR-006, FR-007, FR-008, SC-004) ----
+
+THRESHOLD = 0.3   # the stub's scale: identical texts are at 0, one token of six changed at ~0.333
+DISTINCT = "orchestra rehearsal tuesday evening"   # shares no token (and no hash bucket) with any fixture pattern
+
+
+def write(store, run_id, document, *, family=FAMILY, threshold=THRESHOLD):
+    return store.write_pattern(run_id=run_id, document=document, family=family, owasp_category=OWASP,
+                               dedupe_threshold=threshold)
+
+
+def record(store, pattern_id) -> tuple[str, dict]:
+    got = store._collection.get(ids=[pattern_id], include=["metadatas", "documents"])
+    return got["documents"][0], got["metadatas"][0]
+
+
+def test_a_success_equal_to_a_library_seed_merges_into_it(seeded):  # FR-006, FR-007
+    from kestrel.experience.store import PatternWrite
+
+    before = seeded.count("pattern")
+    result = write(seeded, 101, SEED_TEXT)
+    assert isinstance(result, PatternWrite)
+    assert (result.outcome, result.pattern_id, result.hit_count) == ("merged", "pattern:lib:spl-001", 2)
+    assert result.distance == pytest.approx(0.0, abs=1e-6)
+    assert seeded.count("pattern") == before                       # no new record
+    document, meta = record(seeded, "pattern:lib:spl-001")
+    assert document == SEED_TEXT                                   # the document is untouched
+    assert meta["hit_count"] == 2 and meta["last_hit_run_id"] == 101
+    again = write(seeded, 102, SEED_TEXT)
+    assert (again.outcome, again.hit_count) == ("merged", 3)
+    assert record(seeded, "pattern:lib:spl-001")[1]["last_hit_run_id"] == 102
+
+
+def test_a_distinct_success_is_added_with_a_hit_count_of_one(seeded):  # FR-006, FR-007
+    result = write(seeded, 201, DISTINCT)
+    assert (result.outcome, result.pattern_id, result.hit_count) == ("added", "pattern:run:201", 1)
+    assert result.distance is not None and result.distance > THRESHOLD
+    _, meta = record(seeded, "pattern:run:201")
+    assert meta["hit_count"] == 1 and meta["family"] == FAMILY and meta["origin_run_id"] == 201
+    assert "last_hit_run_id" not in meta
+    assert seeded.count("pattern") == len(fixture_library().prompts) + 1
+
+
+def test_a_success_near_identical_only_to_another_familys_pattern_is_added_in_its_own_family(seeded):  # FR-006
+    other_family_seed = "<placeholder direct_injection prompt 1>"   # the direct_injection seed, verbatim
+    result = write(seeded, 301, other_family_seed, family=FAMILY)
+    assert (result.outcome, result.pattern_id) == ("added", "pattern:run:301")
+    assert record(seeded, "pattern:run:301")[1]["family"] == FAMILY
+    assert record(seeded, "pattern:lib:dir-001")[1]["hit_count"] == 1   # the other family's pattern is untouched
+
+
+def test_two_near_identical_run_successes_add_once_then_merge(seeded):  # FR-006, SC-004
+    first = write(seeded, 401, DISTINCT)
+    second = write(seeded, 402, DISTINCT)
+    third = write(seeded, 403, f"{DISTINCT} again")   # one token added: within the threshold on the stub's scale
+    assert first.outcome == "added"
+    assert (second.outcome, second.pattern_id, second.hit_count) == ("merged", "pattern:run:401", 2)
+    assert (third.outcome, third.pattern_id, third.hit_count) == ("merged", "pattern:run:401", 3)
+    assert 0 < third.distance <= THRESHOLD
+    assert seeded.count("pattern") == len(fixture_library().prompts) + 1
+
+
+def test_de_duplication_off_always_adds(seeded):  # FR-008
+    result = write(seeded, 501, SEED_TEXT, threshold=None)
+    assert (result.outcome, result.pattern_id, result.hit_count) == ("added", "pattern:run:501", 1)
+    assert result.distance is None
+    assert seeded.count("pattern") == len(fixture_library().prompts) + 1
+    assert record(seeded, "pattern:lib:spl-001")[1]["hit_count"] == 1
+
+
+def test_an_empty_family_adds_with_no_distance(tmp_path):  # FR-006
+    store = ExperienceStore(tmp_path / "chroma", embedding_function=StubEmbeddingFunction())
+    result = write(store, 601, SEED_TEXT)
+    assert (result.outcome, result.pattern_id, result.hit_count) == ("added", "pattern:run:601", 1)
+    assert result.distance is None
+
+
+def test_a_pattern_without_a_hit_count_counts_as_one(seeded):  # FR-007
+    seeded._collection.upsert(ids=["pattern:run:7"], documents=[DISTINCT],   # written before this feature
+                              metadatas=[{"type": "pattern", "family": FAMILY, "owasp_category": OWASP,
+                                          "source": "run:7", "origin_run_id": 7}])
+    result = write(seeded, 701, DISTINCT)
+    assert (result.outcome, result.pattern_id, result.hit_count) == ("merged", "pattern:run:7", 2)
+    assert record(seeded, "pattern:run:7")[1]["hit_count"] == 2
+
+
+def test_reseeding_keeps_hit_counts_and_gives_a_new_seed_one(seeded):  # FR-007
+    from kestrel.attacks.library import build_library
+    from tests.support import fixture_library_data
+
+    write(seeded, 801, SEED_TEXT)   # merged into spl-001
+    data = fixture_library_data()
+    data["prompts"].append({**data["prompts"][5], "id": "spl-006", "title": "system_prompt_leak placeholder 6",
+                            "text": "<placeholder system_prompt_leak prompt 6>"})
+    seeded.seed_patterns(build_library(data))
+    _, merged = record(seeded, "pattern:lib:spl-001")
+    assert merged["hit_count"] == 2 and merged["last_hit_run_id"] == 801     # untouched by the re-seed
+    assert record(seeded, "pattern:lib:spl-006")[1]["hit_count"] == 1       # a new seed id starts at one
+    assert record(seeded, "pattern:lib:spl-002")[1]["hit_count"] == 1
+    assert seeded.count("pattern") == len(fixture_library().prompts) + 1
+
+
+def test_n_near_identical_successes_leave_one_pattern_with_hit_count_n_and_distinct_ones_add_n(seeded):  # SC-004
+    seeds = len(fixture_library().prompts)
+    for run_id in (901, 902, 903, 904):
+        write(seeded, run_id, "placeholder orchestra rehearsal")
+    assert seeded.count("pattern") == seeds + 1
+    assert record(seeded, "pattern:run:901")[1]["hit_count"] == 4
+    for run_id, text in ((911, "one two"), (912, "three four"), (913, "step staged")):   # pairwise disjoint
+        result = write(seeded, run_id, text)
+        assert (result.outcome, result.hit_count) == ("added", 1)
+    assert seeded.count("pattern") == seeds + 4

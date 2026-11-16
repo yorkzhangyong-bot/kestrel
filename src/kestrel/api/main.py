@@ -352,7 +352,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             # Write back to the experience store after every run; a failure is loud, never discards the run
             # (FR-006/10).
             turns = store.list_turns(run.id)
-            write_back(request.app.state.experience, store, run, turns)
+            write_back(request.app.state.experience, store, run, turns,
+                       dedupe_threshold=settings.experience_dedupe_threshold)
         return run_detail(store.get_run(run.id), turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])

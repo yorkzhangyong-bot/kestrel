@@ -39,6 +39,18 @@ class Candidate:
     distance: float
     embedding: tuple[float, ...]
 
+
+@dataclass(frozen=True)
+class PatternWrite:
+    """What a success's write-back did (feature 011): `added` a new pattern, or `merged` into the nearest
+    near-identical same-family pattern by raising its hit count; `distance` is to the nearest existing same-family
+    pattern — None when the family had none or de-duplication is off."""
+    outcome: str          # "added" | "merged"
+    pattern_id: str
+    hit_count: int
+    distance: float | None
+
+
 COLLECTION = "kestrel_experience"
 STORE_VERSION = "1"
 VERSION_KEY = "kestrel_store_version"
@@ -123,14 +135,22 @@ class ExperienceStore:
     # ---- seeding and writes (FR-004, FR-006, FR-009) ----
 
     def seed_patterns(self, library) -> int:
-        """Idempotently seed one pattern per library prompt (FR-004, SC-002). Deterministic ids → re-seed is a no-op."""
+        """Idempotently seed one pattern per library prompt (FR-004, SC-002). Deterministic ids → re-seed is a no-op.
+        Feature 011: a new seed starts with `hit_count` 1; an existing seed is upserted *without* the key, which
+        ChromaDB keeps, so the hit count a merged success raised survives every start-up (research D4)."""
         if not library.prompts:
             return 0
-        self._collection.upsert(
-            ids=[f"pattern:lib:{p.id}" for p in library.prompts],
-            documents=[p.text for p in library.prompts],
-            metadatas=[{"type": "pattern", "family": p.family, "owasp_category": p.owasp_category,
-                        "source": f"library:{library.version}", "prompt_id": p.id} for p in library.prompts])
+        ids = [f"pattern:lib:{p.id}" for p in library.prompts]
+        existing = set(self._collection.get(ids=ids, include=[])["ids"])
+        metadatas = []
+        for pattern_id, prompt in zip(ids, library.prompts):
+            metadata: dict[str, Any] = {"type": "pattern", "family": prompt.family,
+                                        "owasp_category": prompt.owasp_category,
+                                        "source": f"library:{library.version}", "prompt_id": prompt.id}
+            if pattern_id not in existing:
+                metadata["hit_count"] = 1
+            metadatas.append(metadata)
+        self._collection.upsert(ids=ids, documents=[p.text for p in library.prompts], metadatas=metadatas)
         return len(library.prompts)
 
     def write_memory(self, *, run_id: int, target_id: int, summary: str, family: str, owasp_category: str,
@@ -146,13 +166,35 @@ class ExperienceStore:
                         "turns_used": int(turns_used or 0), "stopping_condition": stopping_condition or "",
                         "attacker_model": attacker_model or "", "created_at": utc_now()}])
 
-    def write_pattern(self, *, run_id: int, document: str, family: str, owasp_category: str) -> None:
-        """A success becomes a shared pattern; its searchable text is the winning attacker message(s) (FR-009)."""
+    def write_pattern(self, *, run_id: int, document: str, family: str, owasp_category: str,
+                      dedupe_threshold: float | None = None) -> PatternWrite:
+        """A success becomes a shared pattern; its searchable text is the winning attacker message(s) (FR-009).
+        Feature 011 (contracts/experience-store.md): with a threshold, the nearest existing pattern of the *same
+        family* — library-seeded or success-derived — within it receives the hit instead (`hit_count` + 1,
+        `last_hit_run_id`, the document untouched, no new record); otherwise, or with de-duplication off, a new
+        pattern is added with `hit_count` 1. A store failure raises: the caller's write-back fails loudly as a whole."""
+        distance: float | None = None
+        if dedupe_threshold is not None and self.count("pattern", family=family) > 0:
+            nearest = self._collection.query(query_texts=[document], n_results=1,
+                                             where=_and({"type": "pattern"}, {"family": family}),
+                                             include=["metadatas", "distances"])
+            ids = (nearest.get("ids") or [[]])[0]
+            if ids:
+                nearest_id = str(ids[0])
+                distance = float((nearest.get("distances") or [[0.0]])[0][0])
+                metadata = ((nearest.get("metadatas") or [[{}]])[0][0]) or {}
+                if distance <= dedupe_threshold:
+                    hit_count = int(metadata.get("hit_count", 1)) + 1   # a pattern without the key counts as one
+                    self._collection.update(ids=[nearest_id],
+                                            metadatas=[{"hit_count": hit_count, "last_hit_run_id": int(run_id)}])
+                    return PatternWrite("merged", nearest_id, hit_count, distance)
+        pattern_id = f"pattern:run:{run_id}"
         self._collection.upsert(
-            ids=[f"pattern:run:{run_id}"],
+            ids=[pattern_id],
             documents=[document],
             metadatas=[{"type": "pattern", "family": family, "owasp_category": owasp_category,
-                        "source": f"run:{run_id}", "origin_run_id": int(run_id)}])
+                        "source": f"run:{run_id}", "origin_run_id": int(run_id), "hit_count": 1}])
+        return PatternWrite("added", pattern_id, 1, distance)
 
     # ---- retrieval (FR-016, FR-017, FR-018; feature 011 query_patterns) ----
 

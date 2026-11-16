@@ -264,7 +264,7 @@ the pool's count, each `hit_count`, `last_hit_run_id` and each line's outcome.
 
 ### Tests for User Story 3
 
-- [ ] T020 [P] [US3] Extend `tests/unit/test_experience_store_controls.py`, the `write_pattern` part: on a store
+- [X] T020 [P] [US3] Extend `tests/unit/test_experience_store_controls.py`, the `write_pattern` part: on a store
       seeded with `fixture_library()` and the stub's scale (`dedupe_threshold=0.3`): a document equal to a library
       seed's text → `PatternWrite("merged", "pattern:lib:<id>", 2, 0.0)`, no new record, `last_hit_run_id` set, the
       document untouched; a second merge → `hit_count 3`; a document sharing no token with any pattern →
@@ -275,7 +275,7 @@ the pool's count, each `hit_count`, `last_hit_run_id` and each line's outcome.
       `hit_count` (written directly with `collection.upsert`) merges to `2`; `seed_patterns` run again after a merge
       leaves `hit_count` and `last_hit_run_id` untouched and new seed ids get `hit_count 1`; `count("pattern")`
       after N near-identical successes equals the seeded count + 1 (011/FR-006, 011/FR-007, 011/FR-008, 011/SC-004).
-- [ ] T021 [P] [US3] Extend `tests/integration/test_retrieval_lines.py`, the write-back part: a single-turn run
+- [X] T021 [P] [US3] Extend `tests/integration/test_retrieval_lines.py`, the write-back part: a single-turn run
       decided by a canary (the stub target echoes the canary) replays its seed verbatim, so its `memory.writeback`
       line carries `written` true, `pattern_written` true, `pattern_outcome == "merged"`, `pattern_id ==
       "pattern:lib:<seed id>"`, `hit_count == 2` and `pattern_distance == 0.0`; a second identical success →
@@ -289,24 +289,24 @@ the pool's count, each `hit_count`, `last_hit_run_id` and each line's outcome.
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] In `src/kestrel/experience/store.py` add `PatternWrite` (`outcome`, `pattern_id`, `hit_count`,
+- [X] T022 [US3] In `src/kestrel/experience/store.py` add `PatternWrite` (`outcome`, `pattern_id`, `hit_count`,
       `distance`) and change `write_pattern(*, run_id, document, family, owasp_category, dedupe_threshold=None) ->
       PatternWrite` per `contracts/experience-store.md` (nearest same-family pattern via one `query` of one result
       with metadata and distance; `<= threshold` → `update` with `hit_count = previous + 1` (previous = stored value,
       1 when absent) and `last_hit_run_id = run_id`; otherwise upsert `pattern:run:<run_id>` with the feature-004
       metadata plus `hit_count: 1`); make `seed_patterns` read the existing seed ids first and upsert existing ids
       without the `hit_count` key, new ids with `hit_count: 1` (011/FR-006, 011/FR-007, 011/FR-008).
-- [ ] T023 [US3] In `src/kestrel/experience/writeback.py` add the keyword `dedupe_threshold: float | None = None`,
+- [X] T023 [US3] In `src/kestrel/experience/writeback.py` add the keyword `dedupe_threshold: float | None = None`,
       pass it to `write_pattern`, and put the returned outcome on the line (`events.memory_writeback(written=True,
       pattern_written=True, pattern_outcome=…, pattern_id=…, hit_count=…, pattern_distance=…)`; a non-success
       keeps today's call); pass `settings.experience_dedupe_threshold` from `src/kestrel/api/main.py::start_run` and
       `src/kestrel/experiments/engine.py::_run_rep` (011/FR-006, 011/FR-013).
-- [ ] T024 [US3] Update the doubles: `_Experience.write_pattern` in `tests/unit/test_experiment_engine.py` and
+- [X] T024 [US3] Update the doubles: `_Experience.write_pattern` in `tests/unit/test_experiment_engine.py` and
       `tests/unit/test_experiment_warming.py` returns `PatternWrite("added", "pattern:run:0", 1, None)` (counting
       the call as before); `FailingExperience` in `tests/integration/test_writeback.py` and `SpyExperience` in
       `tests/integration/test_report_safety.py` keep working with the new keyword; every assertion in those four
       files stays as it is (011/FR-015, 011/SC-009).
-- [ ] T025 [US3] Update `tests/integration/test_delete_clears_memory.py` on purpose — its single-turn success
+- [X] T025 [US3] Update `tests/integration/test_delete_clears_memory.py` on purpose — its single-turn success
       replays its library seed verbatim, which now merges instead of adding a pattern: replace the assertion
       `patterns_before > len(fixture_library().prompts)` with `patterns_before == len(fixture_library().prompts)`
       plus an assertion that the seed's pattern (`pattern:lib:<seed id>`) carries `hit_count == 2` and

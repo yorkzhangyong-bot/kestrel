@@ -4,7 +4,9 @@ Called once from POST /api/runs after a run finishes. Writes one memory record (
 pattern record; records whether it succeeded on the run. A failure is loud: the attack result is kept, the run is
 flagged memory_written=false, and an error is logged — a run that does not write back is a bug (Principle V).
 Feature 010: the result is one `memory.writeback` line inside the run's scope (before `run.end`); called directly,
-outside any scope, the line still names its run (a run reference: stream only, never kept).
+outside any scope, the line still names its run (a run reference: stream only, never kept). Feature 011: a success
+within `dedupe_threshold` of an existing same-family pattern is merged into it (its hit count raised) instead of
+added, and the line says which — `pattern_written` keeps meaning "the success was recorded as a pattern".
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from kestrel.experience.summary import build_summary
 WRITEBACK_FAILED = "The write-back failed; the attack result is kept but was not recorded to the experience store."
 
 
-def write_back(experience, store, run, turns) -> bool:
+def write_back(experience, store, run, turns, *, dedupe_threshold: float | None = None) -> bool:
     """Record the run in the experience store. Returns True if memory was written, False if write-back failed."""
     with events.bind_run_reference(run):
         try:
@@ -28,11 +30,18 @@ def write_back(experience, store, run, turns) -> bool:
                                     hard_evidence=run.hard_evidence, turns_used=run.turns_used,
                                     stopping_condition=run.stopping_condition, attacker_model=run.attacker_model)
             pattern_written = run.verdict == "succeeded"
+            outcome = None
             if pattern_written:
-                experience.write_pattern(run_id=run.id, document=_winning_messages(run, turns), family=run.family,
-                                         owasp_category=run.owasp_category)
+                outcome = experience.write_pattern(run_id=run.id, document=_winning_messages(run, turns),
+                                                   family=run.family, owasp_category=run.owasp_category,
+                                                   dedupe_threshold=dedupe_threshold)
             store.set_memory_written(run.id, True)
-            events.memory_writeback(written=True, pattern_written=pattern_written)
+            if outcome is None:
+                events.memory_writeback(written=True, pattern_written=pattern_written)
+            else:
+                events.memory_writeback(written=True, pattern_written=True, pattern_outcome=outcome.outcome,
+                                        pattern_id=outcome.pattern_id, hit_count=outcome.hit_count,
+                                        pattern_distance=outcome.distance)
             return True
         except Exception as error:
             events.memory_writeback(written=False, pattern_written=False, error=type(error).__name__,

@@ -28,8 +28,10 @@ class _Experience:
     def write_memory(self, **kw):
         self.writes += 1
 
-    def write_pattern(self, **kw):
+    def write_pattern(self, **kw):   # 011/FR-015, 011/SC-009: counts the call as before, answers like a real store
+        from kestrel.experience.store import PatternWrite
         self.writes += 1
+        return PatternWrite("added", "pattern:run:0", 1, None)
 
     def retrieve_memory(self, **kw):
         return []
