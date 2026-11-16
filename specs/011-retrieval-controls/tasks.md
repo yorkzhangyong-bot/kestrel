@@ -30,7 +30,7 @@ success, which now merges into its library seed (T025, SC-009).
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Document the two settings in `.env.example` beside `KESTREL_EXPERIENCE_PATTERN_K` /
+- [X] T001 [P] Document the two settings in `.env.example` beside `KESTREL_EXPERIENCE_PATTERN_K` /
       `KESTREL_EXPERIENCE_MEMORY_CAP`: `KESTREL_EXPERIENCE_DISTANCE_FLOOR=1.8` ("drop hits farther than this, in the
       collection's l2 distance; `off` disables") and `KESTREL_EXPERIENCE_DEDUPE_THRESHOLD=0.15` ("hits or successes
       at or below this distance are near-identical; `off` disables"), with the note that both are tuned for the
@@ -38,7 +38,7 @@ success, which now merges into its library seed (T025, SC-009).
       and a tuning note: the floor is a measured default, not a guarantee — a query from turn 4 on (no seed in it)
       may occasionally select nothing, visible as `pattern_count` 0 with `dropped_floor` on the `memory.retrieval`
       line; raise or lower the floor from the `distances` and `dropped_floor` those lines log (011/FR-012).
-- [ ] T002 [P] Unit test `tests/unit/test_support_embedding.py` for the lexical test embedding (`FEATURE = "011"`):
+- [X] T002 [P] Unit test `tests/unit/test_support_embedding.py` for the lexical test embedding (`FEATURE = "011"`):
       identical texts embed at squared distance 0; two single-word texts whose hash buckets are first asserted to
       differ (`zlib.crc32(word.encode()) % 256`) embed at 2.0 (within 1e-9); every vector has unit length; the same
       text embeds identically across calls and across a fresh instance (a stable hash, not the per-process
@@ -46,7 +46,7 @@ success, which now merges into its library seed (T025, SC-009).
       tokenisation is lower-case alphanumeric (so `direct_injection` yields two tokens); `dim == 256`;
       `StubEmbeddingFunction.MODEL_NAME == "kestrel-lexical-stub"` and `name()` is still `kestrel_stub`;
       `build_from_config(get_config())` round-trips (011/FR-014, 011/SC-008).
-- [ ] T003 Re-implement `tests/support.py::StubEmbeddingFunction` as a hashed bag of words: tokens =
+- [X] T003 Re-implement `tests/support.py::StubEmbeddingFunction` as a hashed bag of words: tokens =
       lower-case runs of `[a-z0-9]`, each hashed with `zlib.crc32(token.encode()) % dim` (`dim = 256`), counted,
       then L2-normalised (an empty text → the zero vector); keep `name()` (`kestrel_stub`), `get_config()`
       (`{"dim": …}`) and `build_from_config`; add `MODEL_NAME = "kestrel-lexical-stub"`. Add
@@ -489,7 +489,9 @@ for the `no_relevant` query, exactly one hit per duplicate pair, and every publi
       feedback" into "Done" as **011 — Retrieval controls** (one bullet in the Done style: attacker-only query,
       distance floor, de-duplication at retrieval and at write-back with hit counts, the embedding model name and
       distance space stamped and checked, the recall@k fixture, the settings on the `memory.retrieval` line;
-      "Shipped in #<PR>") and renumber the planned items to **012 — Regression replay**, **013 — Behavioural
+      "Shipped in #27/#28" — the spec PR and the implementation PR; #28 is the next number on the repository
+      when this task runs (latest PR #27, no issues), so the coordinator corrects it if the implementation PR
+      gets another number) and renumber the planned items to **012 — Regression replay**, **013 — Behavioural
       evidence expansion**, **014 — Community prompt feed**, changing the community-feed item's "Regression replay
       (011) is unaffected" to "(012)"; this edit belongs to the implementation pull request only (011/FR-019,
       011/SC-011).

@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import json
+import math
+import re
+import zlib
 
 import httpx
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 from kestrel.attacks.library import FAMILIES, build_library
+from kestrel.experience.store import ExperienceStore
 from kestrel.judge.verdict import ParsedVerdict
 
 OWASP = {key: meta["owasp_category"] for key, meta in FAMILIES.items()}
@@ -77,25 +81,41 @@ class StubAttacker:
         return self.calls[-1]["hints"] if self.calls else None
 
 
-class StubEmbeddingFunction(EmbeddingFunction):
-    """A deterministic, offline embedding function for ExperienceStore tests (research R2).
+_TOKEN = re.compile(r"[a-z0-9]+")
 
-    Keeps `uv run pytest` free of model downloads and network. Similarity is crude but stable: it is
-    enough to exercise retrieval filtering and selection, not embedding quality (that is the e2e's job).
-    Inherits the chromadb EmbeddingFunction surface so the collection persists and reopens cleanly.
+
+def lexical_tokens(text: str) -> list[str]:
+    """The stub's tokens: lower-case alphanumeric runs (`direct_injection` is two tokens)."""
+    return _TOKEN.findall(text.lower())
+
+
+class StubEmbeddingFunction(EmbeddingFunction):
+    """A deterministic, offline, *lexical* embedding function for ExperienceStore tests (004 research R2; 011 D8).
+
+    A hashed bag of words: each token is hashed with a stable CRC-32 (never the per-process `hash()`) into one of
+    `dim` buckets, counted, and the vector is L2-normalised. Under the collection's `l2` space identical texts are
+    at squared distance 0, texts sharing no token (and no bucket) at 2, and one token of six changed at 2 − 2·5/6,
+    so "near-identical" and "far" mean something offline and the floor and de-duplication tests state thresholds on
+    this scale. Keeps `uv run pytest` free of model downloads and network; it measures lexical overlap, not
+    embedding quality (that is the e2e's job). Inherits the chromadb EmbeddingFunction surface so the collection
+    persists and reopens cleanly; the registered name is unchanged, the model name is what the store records.
     """
 
-    def __init__(self, dim: int = 32) -> None:
+    MODEL_NAME = "kestrel-lexical-stub"
+    DIM = 256
+
+    def __init__(self, dim: int = DIM) -> None:
         self._dim = dim
 
     def __call__(self, input: Documents) -> Embeddings:  # noqa: A002 - chromadb's parameter name is `input`
-        vectors = []
-        for document in input:
-            vector = [0.0] * self._dim
-            for index, char in enumerate(document):
-                vector[index % self._dim] += (ord(char) % 17) / 17.0
-            vectors.append(vector)
-        return vectors
+        return [self.embed(document) for document in input]
+
+    def embed(self, text: str) -> list[float]:
+        vector = [0.0] * self._dim
+        for token in lexical_tokens(text):
+            vector[zlib.crc32(token.encode("utf-8")) % self._dim] += 1.0
+        norm = math.sqrt(sum(v * v for v in vector))
+        return [v / norm for v in vector] if norm else vector   # an empty text is the zero vector
 
     @staticmethod
     def name() -> str:
@@ -106,7 +126,26 @@ class StubEmbeddingFunction(EmbeddingFunction):
 
     @classmethod
     def build_from_config(cls, config: dict) -> "StubEmbeddingFunction":
-        return cls(dim=config.get("dim", 32))
+        return cls(dim=config.get("dim", cls.DIM))
+
+
+class SpyExperienceStore(ExperienceStore):
+    """A real stub-backed store that records every pattern query and every pattern write (feature 011, D9), so a
+    test can prove what text the store received and what each write-back did. Everything is delegated."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.queries: list[dict] = []
+        self.pattern_writes: list = []
+
+    def query_patterns(self, *, family: str, query_text: str, n: int):
+        self.queries.append({"family": family, "query_text": query_text, "n": n})
+        return super().query_patterns(family=family, query_text=query_text, n=n)
+
+    def write_pattern(self, **kwargs):
+        result = super().write_pattern(**kwargs)
+        self.pattern_writes.append(result)
+        return result
 
 
 # ---- feature 010: known strings, and one offline transport for the target and the real model clients ----
@@ -119,6 +158,7 @@ ATTACK_TEXT = "<attack message placeholder 4471>"       # the message sent to th
 REPLY_TEXT = "<target reply placeholder 8823>"          # the target's reply
 JUDGE_REASON = "The reply quoted <target reply placeholder 8823> back."   # judge free text quoting the reply
 JUDGE_PROGRESS = "progress note placeholder 5531"
+PURPOSE_TEXT = "purpose placeholder 7719"               # the target's purpose description (feature 011)
 MODEL_KEY = "KESTREL-TEST-MODEL-KEY-c0ffee"             # the attacker/judge API key
 MODEL_BASE_URL = "http://models.kestrel.test/v1"        # the model endpoint the real clients call
 
