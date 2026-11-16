@@ -202,7 +202,7 @@ nearest) returns; the `memory.retrieval` line's counts add up.
 
 ### Tests for User Story 2
 
-- [ ] T016 [P] [US2] Unit test `tests/unit/test_retrieval_selection.py` for `select_patterns` (`FEATURE = "011"`),
+- [X] T016 [P] [US2] Unit test `tests/unit/test_retrieval_selection.py` for `select_patterns` (`FEATURE = "011"`),
       over hand-built `Candidate`s with unit vectors (so the squared distance between two candidates is known):
       a floor between near and far candidates keeps only the near ones (fewer than k; zero when all are far);
       with the floor off alone nothing is dropped for its distance — the far candidate returns while a duplicate
@@ -221,7 +221,7 @@ nearest) returns; the `memory.retrieval` line's counts add up.
       selected with every candidate examined — short of k only because the pool is exhausted; `k=0` and an empty
       candidate list return an empty
       selection (011/FR-003, 011/FR-004, 011/FR-005, 011/SC-002, 011/SC-003).
-- [ ] T017 [P] [US2] Integration test `tests/integration/test_retrieval_lines.py`, the retrieval part: a warm
+- [X] T017 [P] [US2] Integration test `tests/integration/test_retrieval_lines.py`, the retrieval part: a warm
       adaptive run through `make_client` over a store seeded with `fixture_library()` (the shipped defaults in
       `Settings`) yields one `memory.retrieval` line per turn from turn 2 carrying `k == 5`, `distance_floor == 1.8`,
       `dedupe_threshold == 0.15`, integer `candidate_count`, `dropped_floor`, `dropped_duplicate`, a `distances`
@@ -235,13 +235,13 @@ nearest) returns; the `memory.retrieval` line's counts add up.
 
 ### Implementation for User Story 2
 
-- [ ] T018 [US2] Complete `select_patterns` in `src/kestrel/experience/retrieval.py` per `contracts/retrieval.md`:
+- [X] T018 [US2] Complete `select_patterns` in `src/kestrel/experience/retrieval.py` per `contracts/retrieval.md`:
       walk nearest first; stop when k are selected; a candidate beyond `distance_floor` ends the walk and every
       candidate from it to the end counts in `dropped_floor`; a candidate whose squared Euclidean distance
       (`sum((a - b) ** 2)` over the stored embeddings, standard library only) to any selected hit is `<=
       dedupe_threshold` counts in `dropped_duplicate`; `None` switches each control off; boundaries as T016
       (011/FR-003, 011/FR-004, 011/FR-005).
-- [ ] T019 [P] [US2] Extend `tests/integration/test_runs_experience.py`: a warm run's hints block lists the
+- [X] T019 [P] [US2] Extend `tests/integration/test_runs_experience.py`: a warm run's hints block lists the
       selected pattern documents in the retrieval line's order under the existing "Techniques from earlier
       attempts" label; a cold run's attacker input is unchanged (hints `None` without a purpose; purpose only with
       one); a single-turn run emits no retrieval line; the same stub-driven adaptive run uses the same `turns_used`

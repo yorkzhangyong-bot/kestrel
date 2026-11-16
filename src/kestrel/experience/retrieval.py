@@ -67,11 +67,32 @@ def squared_distance(a: Sequence[float], b: Sequence[float]) -> float:
 
 def select_patterns(candidates: Sequence[Candidate], *, k: int, distance_floor: float | None,
                     dedupe_threshold: float | None) -> Selection:
-    """Pure. The k nearest candidates, nearest first, with the count identity (the floor and the threshold are
-    applied by the US2 completion of this function)."""
+    """Pure. Walk the candidates nearest first and stop once k are selected. A candidate beyond the floor ends the
+    walk — it and every later one count as dropped, since the list is sorted they are all farther — and a candidate
+    within the threshold of an already selected hit is skipped and never spends a slot; `None` switches a control
+    off. A hit at exactly the floor is kept; two at exactly the threshold are near-identical (FR-003 to FR-005).
+    With both controls off the result is the k nearest (feature 004); the selection is short of k only when every
+    candidate was examined (SC-003)."""
     ordered = sorted(candidates, key=lambda candidate: candidate.distance)
-    selected = tuple(ordered[:max(0, k)])
-    return Selection(selected=selected, candidate_count=len(selected), dropped_floor=0, dropped_duplicate=0)
+    selected: list[Candidate] = []
+    dropped_floor = dropped_duplicate = 0
+    for index, candidate in enumerate(ordered):
+        if len(selected) >= k:
+            break
+        if distance_floor is not None and candidate.distance > distance_floor:
+            dropped_floor += len(ordered) - index
+            break
+        if dedupe_threshold is not None and _near_identical(candidate, selected, dedupe_threshold):
+            dropped_duplicate += 1
+            continue
+        selected.append(candidate)
+    return Selection(selected=tuple(selected), candidate_count=dropped_floor + dropped_duplicate + len(selected),
+                     dropped_floor=dropped_floor, dropped_duplicate=dropped_duplicate)
+
+
+def _near_identical(candidate: Candidate, selected: Sequence[Candidate], threshold: float) -> bool:
+    """Within the threshold of any already selected hit, by the collection's own measure over stored embeddings."""
+    return any(squared_distance(candidate.embedding, hit.embedding) <= threshold for hit in selected)
 
 
 def background_provider(experience: Any, *, target_id: int, purpose: str | None, family: str, settings: Any,

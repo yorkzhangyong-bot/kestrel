@@ -69,3 +69,66 @@ def test_a_cold_run_adds_no_hints(make_client):
     run(api, tid, warm=False)                        # cold: no patterns, no memory (FR-015, SC-005)
     assert attacker.calls, "the attacker still drove the cold run"
     assert all(c["hints"] is None for c in attacker.calls)
+
+
+# ---- feature 011: the selection reaches the hints in order; cold and single-turn runs are unchanged ----
+
+TECHNIQUES = "Techniques from earlier attempts in this family:"
+
+
+def test_a_warm_runs_hints_list_the_selected_patterns_in_the_retrieval_lines_order(make_client, json_log):
+    # 011/FR-005
+    attacker = StubAttacker()
+    api = make_client(transport=REPLY, library=fixture_library(), judge=StubJudge(), attacker=attacker)
+    tid = save_target(api)
+    body = run(api, tid, warm=True)
+    lines = [r for r in json_log() if r.get("run_id") == body["id"] and r["event"] == "memory.retrieval"]
+    assert len(lines) == len(attacker.calls) >= 2   # the background is built before each attacker turn, from turn 2
+    collection = api.app.state.experience._collection
+    for line, call in zip(lines, attacker.calls):
+        got = collection.get(ids=line["pattern_ids"], include=["documents"])
+        documents = dict(zip(got["ids"], got["documents"]))
+        expected = [documents[pattern_id] for pattern_id in line["pattern_ids"]]
+        assert expected, "the warm run selected at least one pattern"
+        section = call["hints"].split(TECHNIQUES)[1]
+        assert [text[2:] for text in section.splitlines() if text.startswith("- ")] == expected
+
+
+def test_a_cold_runs_attacker_input_is_unchanged(make_client):  # 011/FR-015, 011/SC-009
+    from kestrel.experience.hints import LABEL
+    from tests.support import PURPOSE_TEXT, saved_target
+
+    attacker = StubAttacker()
+    api = make_client(transport=REPLY, library=fixture_library(), judge=StubJudge(), attacker=attacker)
+    tid = save_target(api)
+    run(api, tid, warm=True)                                   # warm the store first
+    attacker.calls.clear()
+    run(api, tid, warm=False)
+    assert attacker.calls and all(c["hints"] is None for c in attacker.calls)   # no purpose: no hints at all
+    described = saved_target(api.app.state.store, name="Described", description=PURPOSE_TEXT)
+    attacker.calls.clear()
+    run(api, described.id, warm=False)
+    assert attacker.calls and all(c["hints"] == f"{LABEL}\nTarget purpose: {PURPOSE_TEXT}" for c in attacker.calls)
+
+
+def test_a_single_turn_run_emits_no_retrieval_line(make_client, json_log):  # 011/FR-015
+    api = make_client(transport=REPLY, library=fixture_library(), judge=StubJudge(), attacker=StubAttacker())
+    tid = save_target(api)
+    body = run(api, tid, mode="single_turn", warm=True)
+    assert body["status"] == "finished"
+    assert not [r for r in json_log() if r.get("run_id") == body["id"] and r["event"] == "memory.retrieval"]
+
+
+def test_the_same_stub_driven_run_uses_the_same_turns_and_tokens_as_before_the_feature(make_client, settings,
+                                                                                     model_transport):
+    # 011/SC-009: the values tests/integration/test_log_records_adaptive.py asserts for feature 010
+    import dataclasses
+    from tests.support import real_attacker, real_judge, saved_target
+
+    three_turns = dataclasses.replace(settings, adaptive_max_turns=3)
+    api = make_client(three_turns, transport=model_transport.transport, library=fixture_library(),
+                      judge=real_judge(model_transport), attacker=real_attacker(model_transport))
+    target = saved_target(api.app.state.store)
+    body = api.post("/api/runs", json={"target_id": target.id, "family": "system_prompt_leak",
+                                       "mode": "adaptive"}).json()
+    assert body["turns_used"] == 3 and body["tokens_used"] == 120 + 240 + 240
