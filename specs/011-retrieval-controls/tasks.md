@@ -61,16 +61,16 @@ success, which now merges into its library seed (T025, SC-009).
 
 **⚠️ Blocks every user story**: the settings the controls read and the catalogue fields the lines carry.
 
-- [ ] T004 [P] Extend `tests/unit/test_settings_experience.py` (it already holds five feature-004 tests; every new
+- [X] T004 [P] Extend `tests/unit/test_settings_experience.py` (it already holds five feature-004 tests; every new
       test carries a scoped `011/FR-012` token): with both variables unset, `experience_distance_floor == 1.8` and
       `experience_dedupe_threshold == 0.15`; `off`, `OFF` and `Off` → `None`; `0` → `0.0`; `0.25` → `0.25`; `-1`,
       `abc` and `on` raise `SettingsError` naming the variable; the two are parsed independently (one `off`, the
       other a number); `settings.retrieval` is a `RetrievalSettings(k=5, distance_floor=1.8, dedupe_threshold=0.15)`
       by default and reflects `off` as `None` (011/FR-012).
-- [ ] T005 [P] Extend `tests/integration/test_api_base.py` (the `GET /api/config` assertions): the `experience`
+- [X] T005 [P] Extend `tests/integration/test_api_base.py` (the `GET /api/config` assertions): the `experience`
       object carries `distance_floor == 1.8` and `dedupe_threshold == 0.15` by default, and `null` for each when the
       corresponding setting is `off` (build the app with a `Settings` whose field is `None`) (011/FR-012).
-- [ ] T006 [P] Extend `tests/unit/test_events.py`: `events.memory_retrieval(pattern_ids=[...], memory_count=1, k=5,
+- [X] T006 [P] Extend `tests/unit/test_events.py`: `events.memory_retrieval(pattern_ids=[...], memory_count=1, k=5,
       distance_floor=1.8, dedupe_threshold=0.15, candidate_count=4, dropped_floor=1, dropped_duplicate=1,
       distances=[0.2741, 0.9876], query_messages=2)` renders a `memory.retrieval` record carrying exactly those
       fields plus `warm`/`pattern_count`, with no `log.unknown_field` warning; `distance_floor=None` renders as
@@ -80,7 +80,7 @@ success, which now merges into its library seed (T025, SC-009).
       expected_model="b", message=<the mismatch constant>)` keeps both names and the constant message, and
       `emit("experience.unavailable", reason_kind="space_mismatch", stored_space="cosine", expected_space="l2",
       message=<the space constant>)` keeps both spaces (011/FR-013).
-- [ ] T007 Implement the settings and the catalogue: in `src/kestrel/settings.py` add
+- [X] T007 Implement the settings and the catalogue: in `src/kestrel/settings.py` add
       `DEFAULT_EXPERIENCE_DISTANCE_FLOOR = 1.8`, `DEFAULT_EXPERIENCE_DEDUPE_THRESHOLD = 0.15`, the fields
       `experience_distance_floor: float | None` and `experience_dedupe_threshold: float | None` on `Settings`, a
       `non_negative_float_or_off(name, default)` parser (unset/blank → default; `off` case-insensitive → `None`;
@@ -98,7 +98,7 @@ success, which now merges into its library seed (T025, SC-009).
       4 decimals; the four write-back outcome fields are omitted when `pattern_outcome` is `None` (a non-success)
       and otherwise all present, `pattern_distance` as `null` when the family had no pattern or de-duplication is
       off (011/FR-012, 011/FR-013).
-- [ ] T008 Extend `specs/010-structured-logging/contracts/log-records.md` with the rows of
+- [X] T008 Extend `specs/010-structured-logging/contracts/log-records.md` with the rows of
       `specs/011-retrieval-controls/contracts/log-records-delta.md`: the `memory.retrieval` and `memory.writeback`
       fields; on `experience.unavailable` the reason kinds `embedding_model_mismatch` and `space_mismatch`, the
       fields `stored_model`/`expected_model`/`stored_space`/`expected_space`, and the two mismatch-specific

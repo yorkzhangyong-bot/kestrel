@@ -173,6 +173,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                                   time_limit_s=settings.adaptive_time_limit_s),
                          experience=ExperienceOut(pattern_k=settings.experience_pattern_k,
                                                   memory_cap=settings.experience_memory_cap,
+                                                  distance_floor=settings.experience_distance_floor,
+                                                  dedupe_threshold=settings.experience_dedupe_threshold,
                                                   use_prior_experience_default=True),
                          prompts=[PromptVersionOut(id=e.id, version=e.version)
                                   for e in prompt_registry.registry()])

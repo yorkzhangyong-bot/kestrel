@@ -26,6 +26,12 @@ DEFAULT_ADAPTIVE_TIME_LIMIT_S = 300
 DEFAULT_CHROMA_PATH = Path("data") / "chroma"
 DEFAULT_EXPERIENCE_PATTERN_K = 5
 DEFAULT_EXPERIENCE_MEMORY_CAP = 10
+# Retrieval controls (feature 011, research D6): a candidate farther than the floor from the query is dropped, and
+# hits or successes within the threshold of each other are near-identical. Both are collection `l2` distances
+# (squared Euclidean between normalised vectors, 0–4) measured on the shipped model `all-MiniLM-L6-v2`; a different
+# embedding model needs retuned values. `None` switches a control off (the literal `off` in the environment).
+DEFAULT_EXPERIENCE_DISTANCE_FLOOR = 1.8
+DEFAULT_EXPERIENCE_DEDUPE_THRESHOLD = 0.15
 # Experiment hard-cap defaults (feature 007, Principle VIII; research R9). Finite and overridable per experiment.
 DEFAULT_EXPERIMENT_MAX_RUNS = 50
 DEFAULT_EXPERIMENT_TOKEN_BUDGET = 500_000
@@ -37,6 +43,15 @@ LogFormat = Literal["json", "text"]
 
 class SettingsError(Exception):
     """A setting is invalid, so Kestrel refuses to start."""
+
+
+@dataclass(frozen=True)
+class RetrievalSettings:
+    """What one pattern retrieval reads (feature 011): the bound k, the distance floor and the near-identical
+    threshold — each of the last two `None` when switched off."""
+    k: int
+    distance_floor: float | None
+    dedupe_threshold: float | None
 
 
 @dataclass(frozen=True)
@@ -58,6 +73,9 @@ class Settings:
     chroma_path: Path = REPO_ROOT / DEFAULT_CHROMA_PATH
     experience_pattern_k: int = DEFAULT_EXPERIENCE_PATTERN_K
     experience_memory_cap: int = DEFAULT_EXPERIENCE_MEMORY_CAP
+    # Feature 011: the retrieval controls; None = off.
+    experience_distance_floor: float | None = DEFAULT_EXPERIENCE_DISTANCE_FLOOR
+    experience_dedupe_threshold: float | None = DEFAULT_EXPERIENCE_DEDUPE_THRESHOLD
     # Feature 007 (A/B harness).
     model_prices: Mapping[str, float] = field(default_factory=dict)  # USD per 1,000 tokens (FR-006)
     experiment_max_runs: int = DEFAULT_EXPERIMENT_MAX_RUNS
@@ -76,6 +94,12 @@ class Settings:
     def attacker_configured(self) -> bool:
         """Without a key there is no attacker, so an adaptive run cannot start (FR-016)."""
         return self.attacker_api_key is not None
+
+    @property
+    def retrieval(self) -> RetrievalSettings:
+        """The one value the retrieval path reads (feature 011, contracts/retrieval.md)."""
+        return RetrievalSettings(k=self.experience_pattern_k, distance_floor=self.experience_distance_floor,
+                                 dedupe_threshold=self.experience_dedupe_threshold)
 
 
 def _parse_prices(raw: str) -> dict[str, float]:
@@ -141,6 +165,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             raise SettingsError(f"{name} must be greater than 0, not {value}.")
         return value
 
+    def non_negative_float_or_off(name: str, default: float) -> float | None:
+        """A retrieval control (feature 011): unset → the default; `off` → None; else a number >= 0."""
+        raw = setting(name)
+        if not raw:
+            return default
+        if raw.lower() == "off":
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            raise SettingsError(f"{name} must be a non-negative number or 'off', not {raw!r}.") from None
+        if not value >= 0:   # also refuses NaN, which no comparison accepts
+            raise SettingsError(f"{name} must be a non-negative number or 'off', not {raw!r}.")
+        return value
+
     raw_format = setting("KESTREL_LOG_FORMAT", "json")
     if raw_format not in ("json", "text"):
         raise SettingsError(f"KESTREL_LOG_FORMAT must be 'json' or 'text', not {raw_format!r}.")
@@ -165,6 +204,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     chroma_path=chroma_path,
                     experience_pattern_k=positive_int("KESTREL_EXPERIENCE_PATTERN_K", DEFAULT_EXPERIENCE_PATTERN_K),
                     experience_memory_cap=positive_int("KESTREL_EXPERIENCE_MEMORY_CAP", DEFAULT_EXPERIENCE_MEMORY_CAP),
+                    experience_distance_floor=non_negative_float_or_off("KESTREL_EXPERIENCE_DISTANCE_FLOOR",
+                                                                        DEFAULT_EXPERIENCE_DISTANCE_FLOOR),
+                    experience_dedupe_threshold=non_negative_float_or_off("KESTREL_EXPERIENCE_DEDUPE_THRESHOLD",
+                                                                          DEFAULT_EXPERIENCE_DEDUPE_THRESHOLD),
                     model_prices=_parse_prices(setting("KESTREL_MODEL_PRICES")),
                     experiment_max_runs=positive_int("KESTREL_EXPERIMENT_MAX_RUNS", DEFAULT_EXPERIMENT_MAX_RUNS),
                     experiment_token_budget=positive_int("KESTREL_EXPERIMENT_TOKEN_BUDGET",

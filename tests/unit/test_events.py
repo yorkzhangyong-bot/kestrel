@@ -271,3 +271,62 @@ def test_no_log_call_in_kestrel_interpolates_a_value():  # FR-006
             if allowed is not None and len(node.args) > allowed:
                 offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == []
+
+
+# ---- feature 011: the retrieval controls' fields on the three existing events (011/FR-013) ----
+
+MODEL_MISMATCH_MESSAGE = ("The experience store was built by a different embedding model, so it is disabled for "
+                          "this session and runs will record loudly as not written back (Principle V). Rebuild the "
+                          "store directory, or run Kestrel with the model that built it.")
+SPACE_MISMATCH_MESSAGE = ("The experience store's index uses a different distance space than Kestrel expects, so "
+                          "it is disabled for this session and runs will record loudly as not written back "
+                          "(Principle V). Rebuild the store directory.")
+
+
+def test_memory_retrieval_carries_the_settings_and_the_outcome_counts(records):  # 011/FR-013
+    events.memory_retrieval(pattern_ids=["pattern:lib:spl-002", "pattern:run:41"], memory_count=1, k=5,
+                            distance_floor=1.8, dedupe_threshold=0.15, candidate_count=4, dropped_floor=1,
+                            dropped_duplicate=1, distances=[0.27412, 0.98764], query_messages=2)
+    assert names(records) == ["memory.retrieval"]   # no log.unknown_field warning: every field is catalogued
+    assert fields(records[0]) == {"warm": True, "pattern_count": 2, "memory_count": 1,
+                                  "pattern_ids": ["pattern:lib:spl-002", "pattern:run:41"], "k": 5,
+                                  "distance_floor": 1.8, "dedupe_threshold": 0.15, "candidate_count": 4,
+                                  "dropped_floor": 1, "dropped_duplicate": 1, "distances": [0.2741, 0.9876],
+                                  "query_messages": 2}
+
+
+def test_memory_retrieval_renders_a_control_switched_off_as_null(records):  # 011/FR-013
+    events.memory_retrieval(pattern_ids=[], memory_count=0, k=5, distance_floor=None, dedupe_threshold=None,
+                            candidate_count=0, dropped_floor=0, dropped_duplicate=0, distances=[], query_messages=1)
+    line = fields(records[0])
+    assert line["warm"] is False and line["pattern_count"] == 0 and line["distances"] == []
+    assert "distance_floor" in line and line["distance_floor"] is None
+    assert "dedupe_threshold" in line and line["dedupe_threshold"] is None
+
+
+def test_memory_writeback_carries_the_outcome_on_a_success_and_omits_it_otherwise(records):  # 011/FR-013
+    events.memory_writeback(written=True, pattern_written=True, pattern_outcome="merged",
+                            pattern_id="pattern:lib:x", hit_count=3, pattern_distance=0.0412)
+    events.memory_writeback(written=True, pattern_written=True, pattern_outcome="added",
+                            pattern_id="pattern:run:9", hit_count=1, pattern_distance=None)
+    events.memory_writeback(written=True, pattern_written=False)
+    assert names(records) == ["memory.writeback"] * 3
+    merged, added, plain = (fields(r) for r in records)
+    assert merged == {"written": True, "pattern_written": True, "pattern_outcome": "merged",
+                      "pattern_id": "pattern:lib:x", "hit_count": 3, "pattern_distance": 0.0412}
+    assert added["pattern_outcome"] == "added" and added["hit_count"] == 1
+    assert "pattern_distance" in added and added["pattern_distance"] is None   # null: no pattern to measure against
+    assert plain == {"written": True, "pattern_written": False}
+
+
+def test_experience_unavailable_keeps_both_model_names_and_the_mismatch_message(records):  # 011/FR-013
+    events.emit("experience.unavailable", logging.ERROR, reason_kind="embedding_model_mismatch", stored_model="a",
+                expected_model="b", message=MODEL_MISMATCH_MESSAGE)
+    events.emit("experience.unavailable", logging.ERROR, reason_kind="space_mismatch", stored_space="cosine",
+                expected_space="l2", message=SPACE_MISMATCH_MESSAGE)
+    assert names(records) == ["experience.unavailable"] * 2   # no log.unknown_field warning
+    model, space = fields(records[0]), fields(records[1])
+    assert model == {"message": MODEL_MISMATCH_MESSAGE, "reason_kind": "embedding_model_mismatch",
+                     "stored_model": "a", "expected_model": "b"}
+    assert space == {"message": SPACE_MISMATCH_MESSAGE, "reason_kind": "space_mismatch", "stored_space": "cosine",
+                     "expected_space": "l2"}

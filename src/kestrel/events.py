@@ -48,9 +48,12 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
                             "reasoning_chars"),
     "target.request": ("latency_ms", "ok", "status", "step", "reply_chars", "reply_truncated"),
     "connection.test": ("latency_ms", "ok", "status", "step"),
-    "memory.retrieval": ("warm", "pattern_count", "memory_count", "pattern_ids"),
+    "memory.retrieval": ("warm", "pattern_count", "memory_count", "pattern_ids", "k", "distance_floor",
+                         "dedupe_threshold", "candidate_count", "dropped_floor", "dropped_duplicate", "distances",
+                         "query_messages"),
     "memory.retrieval_failed": (),
-    "memory.writeback": ("written", "pattern_written", "error"),
+    "memory.writeback": ("written", "pattern_written", "error", "pattern_outcome", "pattern_id", "hit_count",
+                         "pattern_distance"),
     "memory.flag_failed": (),
     "run.end": ("verdict", "hard_evidence", "stopping_condition", "failure_step", "judge_used", "turns_used",
                 "tokens_used", "succeeded_turn", "memory_written", "duration_ms", "cost_usd", "cost_note", "error"),
@@ -58,7 +61,7 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "experiment.cap": ("cap", "completed_runs", "tokens_used", "elapsed_s"),
     "experiment.end": ("status", "stopped_reason", "completed_runs", "tokens_used", "duration_ms", "error"),
     "library.unavailable": (),
-    "experience.unavailable": ("reason_kind",),
+    "experience.unavailable": ("reason_kind", "stored_model", "expected_model", "stored_space", "expected_space"),
     "experience.seed_failed": ("reason_kind",),
     "key.mismatch": (),
     "experience.delete_failed": (),
@@ -539,20 +542,35 @@ def connection_test(*, target_id: int | None, latency_ms: int, ok: bool, status:
          **_present({"target_id": target_id}), latency_ms=latency_ms, ok=ok, status=status, step=step)
 
 
-def memory_retrieval(*, pattern_ids: list[str], memory_count: int) -> None:
-    """The attacker's background was asked for (FR-016): counts, the pattern ids, and `warm` = a pattern came back."""
+def memory_retrieval(*, pattern_ids: list[str], memory_count: int, k: int, distance_floor: float | None,
+                     dedupe_threshold: float | None, candidate_count: int, dropped_floor: int,
+                     dropped_duplicate: int, distances: list[float], query_messages: int) -> None:
+    """The attacker's background was asked for (FR-016): counts, the pattern ids, and `warm` = a pattern came back.
+    Feature 011 adds the settings in effect (a control switched off is `null`) and the selection's outcome — the
+    candidates examined, dropped by the floor, skipped as near-identical, the selected hits' distances (4 decimals,
+    nearest first) and the attacker messages in the query. Numbers and identifiers only: never the query text."""
     emit("memory.retrieval", warm=len(pattern_ids) > 0, pattern_count=len(pattern_ids), memory_count=memory_count,
-         pattern_ids=list(pattern_ids))
+         pattern_ids=list(pattern_ids), k=k, distance_floor=distance_floor, dedupe_threshold=dedupe_threshold,
+         candidate_count=candidate_count, dropped_floor=dropped_floor, dropped_duplicate=dropped_duplicate,
+         distances=[round(float(distance), 4) for distance in distances], query_messages=query_messages)
 
 
 def memory_writeback(*, written: bool, pattern_written: bool, error: str | None = None, exc_info: Any = None,
-                     message: str | None = None) -> None:
-    """The run's write-back result (FR-016), inside its scope; `run.end` reports it as `memory_written`."""
+                     message: str | None = None, pattern_outcome: str | None = None, pattern_id: str | None = None,
+                     hit_count: int | None = None, pattern_distance: float | None = None) -> None:
+    """The run's write-back result (FR-016), inside its scope; `run.end` reports it as `memory_written`. Feature
+    011: on a success the outcome — `added` or `merged`, the pattern added or merged into, its hit count and its
+    distance to the nearest existing same-family pattern (`null` when the family had none or de-duplication is
+    off); all four absent otherwise."""
     ctx = _live()
     if ctx is not None:
         ctx.memory_written = written
+    outcome: dict[str, Any] = {}
+    if pattern_outcome is not None:
+        outcome = {"pattern_outcome": pattern_outcome, "pattern_id": pattern_id, "hit_count": hit_count,
+                   "pattern_distance": None if pattern_distance is None else round(float(pattern_distance), 4)}
     emit("memory.writeback", logging.INFO if written else logging.ERROR, exc_info=exc_info, message=message,
-         written=written, pattern_written=pattern_written, **_present({"error": error}))
+         written=written, pattern_written=pattern_written, **_present({"error": error}), **outcome)
 
 
 def experiment_started(*, experiment_id: int, target_id: int, mode: str, families: list[str], reps: int,
