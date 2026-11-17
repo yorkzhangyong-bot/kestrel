@@ -71,14 +71,22 @@ prompts, as before.
 
 ## `write_pattern(*, run_id, document, family, owasp_category, dedupe_threshold: float | None = None) -> PatternWrite`
 
-- `dedupe_threshold is None` or the family has no pattern → upsert `pattern:run:<run_id>` with the feature-004
-  metadata plus `hit_count: 1`; return `PatternWrite("added", "pattern:run:<run_id>", 1, distance)` where `distance`
-  is the nearest existing same-family pattern's distance when one was looked up, else `None`.
+Post-review fix: an added pattern's id is a fresh `pattern:run:<uuid4 hex>`, never `pattern:run:<run_id>` —
+`run_id` is not guaranteed unique (a deleted target's run ids could be reissued on a pre-schema-v9 database), and
+an add must never collide with, and silently overwrite, an unrelated surviving pattern. `run_id` is recorded only
+as metadata (`source`, `origin_run_id`); the add itself uses `collection.add` (never `upsert`), so even the
+astronomically unlikely case of a genuine id collision keeps the existing record rather than overwriting it.
+
+- `dedupe_threshold is None` or the family has no pattern → add under a fresh `pattern:run:<uuid>` id with the
+  feature-004 metadata plus `hit_count: 1`; return `PatternWrite("added", "pattern:run:<uuid>", 1, distance)` where
+  `distance` is the nearest existing same-family pattern's distance when one was looked up, else `None`.
 - Otherwise look up the nearest same-family pattern (`query(query_texts=[document], n_results=1, where=…,
   include=["metadatas", "distances"])`):
   - `distance <= dedupe_threshold` → `update(ids=[nearest_id], metadatas=[{"hit_count": previous + 1,
     "last_hit_run_id": run_id}])` (previous = the stored `hit_count`, 1 when absent) and return
     `PatternWrite("merged", nearest_id, previous + 1, distance)`; no new record, the document is untouched.
+    `nearest_id` may be a legacy `pattern:run:<run_id>` id written before this fix, a `pattern:run:<uuid>` one, or
+    `pattern:lib:*` — all three are valid merge targets.
   - else → add as above with `distance` filled in.
 - Library-seeded (`pattern:lib:*`) and success-derived (`pattern:run:*`) patterns are both eligible merge targets;
   only the run's own family is searched (FR-006).
@@ -94,6 +102,8 @@ tests do). Their docstrings say so.
 
 - Every pattern added by this version carries `hit_count`; a merge only ever raises it by one and sets
   `last_hit_run_id`.
+- An added pattern's id is always a fresh, unique value; `run_id` is never part of it, only of its metadata
+  (post-review fix — see `write_pattern` above).
 - The collection metadata always carries `kestrel_embedding_model` and `kestrel_distance_space` after one
   successful open by this version, and every collection this version creates has an `l2` index.
 - `query_patterns` and `write_pattern` are the only readers of distances; both use the collection's own values.

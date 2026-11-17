@@ -315,13 +315,20 @@ nothing and that each near-duplicate pair yields one hit.
 ## Requirements *(mandatory)*
 
 Feature 011 refines feature 004's pattern retrieval and success write-back, and extends feature 010's retrieval and
-write-back log lines. It amends four feature-004 statements, on purpose: the search text of `004/FR-016` ("the
+write-back log lines. It amends five feature-004 statements, on purpose: the search text of `004/FR-016` ("the
 family's goal combined with the conversation so far") becomes the family's goal combined with the attacker's own
 recent messages (FR-001); the closing clause of `004/FR-009` ("every success is written; no de-duplication") and
 `004/SC-003` ("every successful run produces exactly one new pattern record") become "every success is recorded,
-as exactly one new pattern or one merge into a near-identical same-family pattern" (FR-006, FR-008, SC-004); and
-the feature-004 edge case "many near-identical successes — patterns may repeat" no longer holds, because they
-merge. Where behaviour is unchanged — memory retrieval by exact target id and its recency cap, the warm/cold switch,
+as exactly one new pattern or one merge into a near-identical same-family pattern" (FR-006, FR-008, SC-004); the
+feature-004 edge case "many near-identical successes — patterns may repeat" no longer holds, because they merge;
+and — owner-approved after an independent review found that a reused numeric run id could silently overwrite a
+surviving pattern, because `runs.id` was not `AUTOINCREMENT` — the `pattern:run:<run_id>` id and the "deterministic
+ids make seeding and write-back idempotent via upsert" claim (`004/FR-009`'s id clause,
+`004/contracts/experience-store.md:21,31`, `004/data-model.md:52`, `004/quickstart.md:32`) become: an added pattern
+gets a unique `pattern:run:<uuid>` id (the run id kept only as `origin_run_id` metadata, FR-006); seeding stays
+idempotent through its own deterministic `pattern:lib:<prompt_id>` ids, and write-back's safety against repeats now
+comes from running exactly once per run plus de-duplication's merge, never from an upsert on a derived id. Where
+behaviour is unchanged — memory retrieval by exact target id and its recency cap, the warm/cold switch,
 the hints block, the memory record written after every run, loud write-back failure, the profile, deletion, the
 permission and terms gates and the three hard caps — this spec says so rather than restating it.
 

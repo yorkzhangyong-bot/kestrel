@@ -143,13 +143,14 @@ def test_an_adaptive_success_on_turn_two_is_added_and_its_repeat_merges_into_it(
     first = start(api, target.id)
     assert first["verdict"] == "succeeded" and first["succeeded_turn"] == 2
     line = writeback_line(json_log, first["id"])
-    assert line["pattern_outcome"] == "added" and line["pattern_id"] == f"pattern:run:{first['id']}"
+    assert line["pattern_outcome"] == "added"
+    assert line["pattern_id"].startswith("pattern:run:")   # a fresh uuid, never pattern:run:<run_id> (011 review)
     assert line["hit_count"] == 1
     assert isinstance(line["pattern_distance"], float) and line["pattern_distance"] > 0.15
     second = start(api, target.id)
     assert second["succeeded_turn"] == 2
     again = writeback_line(json_log, second["id"])
-    assert again["pattern_outcome"] == "merged" and again["pattern_id"] == f"pattern:run:{first['id']}"
+    assert again["pattern_outcome"] == "merged" and again["pattern_id"] == line["pattern_id"]
     assert again["hit_count"] == 2 and again["pattern_distance"] == 0.0
 
 
@@ -167,7 +168,8 @@ def test_with_de_duplication_off_a_success_is_added_with_a_null_distance(make_cl
     api, target = canary_app(make_client, settings, experience_dedupe_threshold=None)
     run = start(api, target.id, mode="single_turn")
     line = writeback_line(json_log, run["id"])
-    assert line["pattern_outcome"] == "added" and line["pattern_id"] == f"pattern:run:{run['id']}"
+    assert line["pattern_outcome"] == "added"
+    assert line["pattern_id"].startswith("pattern:run:")
     assert line["hit_count"] == 1 and "pattern_distance" in line and line["pattern_distance"] is None
     assert api.app.state.experience.count("pattern") == len(fixture_library().prompts) + 1
 

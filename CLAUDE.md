@@ -194,3 +194,29 @@ same commit. Before opening any implementation PR, review this file and add anyt
   of one family 0.543 — the e2e (`tests/e2e/test_us011_retrieval.py`, API in-process, up to four warm runs until one
   reaches a seedless turn-4 query) confirms merged at ~0.09 and added at ~0.25. The subprocess-based
   `assert_no_secret_in_logs` fixture does not apply to an in-process e2e; `json_log` captures the stream there.
+- 2026-11-17 — **Retrieval controls (011), independent-review fix.** `ExperienceStore.write_pattern`'s add path
+  gives every added pattern a unique `pattern:run:<uuid4().hex>` id via `collection.add` (never `upsert`): the old
+  `pattern:run:<run_id>` id assumed `run_id` was unique, but `runs.id` was `INTEGER PRIMARY KEY` without
+  `AUTOINCREMENT`, so deleting a target (cascading its runs) freed its numeric ids for SQLite to reissue, and a
+  later run that reused one silently overwrote an unrelated, still-shared pattern (same id, new document, `hit_count`
+  reset to 1, stale `last_hit_run_id`) — reproduced in a temp directory by the reviewer. `run_id` now lives only in
+  metadata (`origin_run_id`, `source`); a legacy `pattern:run:<run_id>` id from before this fix stays a valid merge
+  target. Schema **v9**: `runs.id INTEGER PRIMARY KEY AUTOINCREMENT`, so a run id is never reissued once its row is
+  gone. SQLite can't `ALTER` AUTOINCREMENT into a column, so an existing database's `runs` is rebuilt following
+  SQLite's documented procedure (lang_altertable.html, "Making Other Kinds Of Table Schema Changes"): a `runs_new`
+  built from the same column list (now with AUTOINCREMENT), `INSERT ... SELECT` by explicit column name (read live
+  from `PRAGMA table_info(runs)`, so it can't drift from whatever columns the additive migrations just added),
+  `DROP TABLE runs`, rename back, reindex, `PRAGMA foreign_key_check` required empty before commit. Gotcha:
+  `PRAGMA foreign_keys` is a no-op inside an open transaction — Python's sqlite3 (legacy mode) only auto-opens one
+  before INSERT/UPDATE/DELETE, never before CREATE/DROP/ALTER, so `PRAGMA foreign_keys = OFF` still takes effect
+  right before the rebuild's own first `INSERT ... SELECT` opens one; four tables reference `runs` (`run_turns`,
+  `report_recommendations`, `run_log` all `ON DELETE CASCADE`, `experiment_runs` `ON DELETE SET NULL`), and with
+  foreign keys on, `DROP TABLE runs` performs an implicit DELETE that fires those actions and wipes or nulls every
+  child row. A second gotcha: `db.executescript(...)` commits any open transaction before running, so the rebuild's
+  two index-recreation statements are issued as separate `db.execute()` calls, not one script, or the commit would
+  land before `foreign_key_check` gets to refuse it. Both gotchas were verified empirically (a standalone sqlite3
+  script) before being committed, not just reasoned about. `sqlite_sequence` carries over the highest copied id, so
+  an id freed by a deletion *before* this migration can be reissued once — harmless now that pattern ids are never
+  derived from it. Migration tests that pin "the current schema version" as a literal string needed only the digit
+  bumped (`8` → `9`) wherever one already existed; the new `tests/unit/test_store_migration_v9.py` follows the
+  `test_store_migration_v<N>.py` convention each version bump has used since v3.

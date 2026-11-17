@@ -7,6 +7,7 @@ module holds no attack text — patterns/memory are data the store holds at run 
 from __future__ import annotations
 
 import logging
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -297,7 +298,12 @@ class ExperienceStore:
         Feature 011 (contracts/experience-store.md): with a threshold, the nearest existing pattern of the *same
         family* — library-seeded or success-derived — within it receives the hit instead (`hit_count` + 1,
         `last_hit_run_id`, the document untouched, no new record); otherwise, or with de-duplication off, a new
-        pattern is added with `hit_count` 1. A store failure raises: the caller's write-back fails loudly as a whole."""
+        pattern is added under a fresh `pattern:run:<uuid>` id with `hit_count` 1 — never `pattern:run:<run_id>`,
+        because `run_id` is not guaranteed unique (a deleted target's run ids can be reissued on a pre-schema-v9
+        database) and an added pattern must never collide with, and silently overwrite, an unrelated surviving
+        one; `run_id` is recorded only as metadata (`origin_run_id`, `source`). The add uses `add`, never
+        `upsert`, so even the astronomically unlikely case of a genuine id collision keeps the existing record
+        rather than overwriting it. A store failure raises: the caller's write-back fails loudly as a whole."""
         distance: float | None = None
         if dedupe_threshold is not None and self.count("pattern", family=family) > 0:
             nearest = self._collection.query(query_texts=[document], n_results=1,
@@ -313,8 +319,8 @@ class ExperienceStore:
                     self._collection.update(ids=[nearest_id],
                                             metadatas=[{"hit_count": hit_count, "last_hit_run_id": int(run_id)}])
                     return PatternWrite("merged", nearest_id, hit_count, distance)
-        pattern_id = f"pattern:run:{run_id}"
-        self._collection.upsert(
+        pattern_id = f"pattern:run:{uuid.uuid4().hex}"
+        self._collection.add(
             ids=[pattern_id],
             documents=[document],
             metadatas=[{"type": "pattern", "family": family, "owasp_category": owasp_category,
@@ -352,7 +358,7 @@ class ExperienceStore:
 
     def retrieve_patterns_with_ids(self, *, family: str, query_text: str, k: int) -> list[tuple[str, str]]:
         """Legacy (feature 004): the same k nearest patterns as `(id, document)` pairs, no floor, no
-        de-duplication; the ids (`pattern:lib:<prompt_id>`, `pattern:run:<run_id>`) are what a retrieval line
+        de-duplication; the ids (`pattern:lib:<prompt_id>`, `pattern:run:<uuid>`) are what a retrieval line
         names (feature 010, FR-016) — identifiers, never the text. Not called by production code since 011."""
         if k <= 0:
             return []

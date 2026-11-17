@@ -92,9 +92,10 @@ def test_a_success_equal_to_a_library_seed_merges_into_it(seeded):  # FR-006, FR
 
 def test_a_distinct_success_is_added_with_a_hit_count_of_one(seeded):  # FR-006, FR-007
     result = write(seeded, 201, DISTINCT)
-    assert (result.outcome, result.pattern_id, result.hit_count) == ("added", "pattern:run:201", 1)
+    assert result.outcome == "added" and result.hit_count == 1
+    assert result.pattern_id.startswith("pattern:run:")   # a fresh uuid, never pattern:run:<run_id> (011 review)
     assert result.distance is not None and result.distance > THRESHOLD
-    _, meta = record(seeded, "pattern:run:201")
+    _, meta = record(seeded, result.pattern_id)
     assert meta["hit_count"] == 1 and meta["family"] == FAMILY and meta["origin_run_id"] == 201
     assert "last_hit_run_id" not in meta
     assert seeded.count("pattern") == len(fixture_library().prompts) + 1
@@ -103,8 +104,10 @@ def test_a_distinct_success_is_added_with_a_hit_count_of_one(seeded):  # FR-006,
 def test_a_success_near_identical_only_to_another_familys_pattern_is_added_in_its_own_family(seeded):  # FR-006
     other_family_seed = "<placeholder direct_injection prompt 1>"   # the direct_injection seed, verbatim
     result = write(seeded, 301, other_family_seed, family=FAMILY)
-    assert (result.outcome, result.pattern_id) == ("added", "pattern:run:301")
-    assert record(seeded, "pattern:run:301")[1]["family"] == FAMILY
+    assert result.outcome == "added"
+    assert result.pattern_id.startswith("pattern:run:")
+    _, meta = record(seeded, result.pattern_id)
+    assert meta["family"] == FAMILY and meta["origin_run_id"] == 301
     assert record(seeded, "pattern:lib:dir-001")[1]["hit_count"] == 1   # the other family's pattern is untouched
 
 
@@ -112,25 +115,28 @@ def test_two_near_identical_run_successes_add_once_then_merge(seeded):  # FR-006
     first = write(seeded, 401, DISTINCT)
     second = write(seeded, 402, DISTINCT)
     third = write(seeded, 403, f"{DISTINCT} again")   # one token added: within the threshold on the stub's scale
-    assert first.outcome == "added"
-    assert (second.outcome, second.pattern_id, second.hit_count) == ("merged", "pattern:run:401", 2)
-    assert (third.outcome, third.pattern_id, third.hit_count) == ("merged", "pattern:run:401", 3)
+    assert first.outcome == "added" and first.pattern_id.startswith("pattern:run:")
+    assert (second.outcome, second.pattern_id, second.hit_count) == ("merged", first.pattern_id, 2)
+    assert (third.outcome, third.pattern_id, third.hit_count) == ("merged", first.pattern_id, 3)
     assert 0 < third.distance <= THRESHOLD
     assert seeded.count("pattern") == len(fixture_library().prompts) + 1
 
 
 def test_de_duplication_off_always_adds(seeded):  # FR-008
     result = write(seeded, 501, SEED_TEXT, threshold=None)
-    assert (result.outcome, result.pattern_id, result.hit_count) == ("added", "pattern:run:501", 1)
+    assert result.outcome == "added" and result.hit_count == 1
+    assert result.pattern_id.startswith("pattern:run:")
     assert result.distance is None
     assert seeded.count("pattern") == len(fixture_library().prompts) + 1
     assert record(seeded, "pattern:lib:spl-001")[1]["hit_count"] == 1
+    assert record(seeded, result.pattern_id)[1]["origin_run_id"] == 501
 
 
 def test_an_empty_family_adds_with_no_distance(tmp_path):  # FR-006
     store = ExperienceStore(tmp_path / "chroma", embedding_function=StubEmbeddingFunction())
     result = write(store, 601, SEED_TEXT)
-    assert (result.outcome, result.pattern_id, result.hit_count) == ("added", "pattern:run:601", 1)
+    assert result.outcome == "added" and result.hit_count == 1
+    assert result.pattern_id.startswith("pattern:run:")
     assert result.distance is None
 
 
@@ -161,11 +167,37 @@ def test_reseeding_keeps_hit_counts_and_gives_a_new_seed_one(seeded):  # FR-007
 
 def test_n_near_identical_successes_leave_one_pattern_with_hit_count_n_and_distinct_ones_add_n(seeded):  # SC-004
     seeds = len(fixture_library().prompts)
-    for run_id in (901, 902, 903, 904):
-        write(seeded, run_id, "placeholder orchestra rehearsal")
+    results = [write(seeded, run_id, "placeholder orchestra rehearsal") for run_id in (901, 902, 903, 904)]
     assert seeded.count("pattern") == seeds + 1
-    assert record(seeded, "pattern:run:901")[1]["hit_count"] == 4
+    assert results[0].outcome == "added" and results[0].pattern_id.startswith("pattern:run:")
+    assert all((r.outcome, r.pattern_id) == ("merged", results[0].pattern_id) for r in results[1:])
+    assert record(seeded, results[0].pattern_id)[1]["hit_count"] == 4
     for run_id, text in ((911, "one two"), (912, "three four"), (913, "step staged")):   # pairwise disjoint
         result = write(seeded, run_id, text)
-        assert (result.outcome, result.hit_count) == ("added", 1)
+        assert result.outcome == "added" and result.hit_count == 1
+        assert result.pattern_id.startswith("pattern:run:")
     assert seeded.count("pattern") == seeds + 4
+
+
+def test_a_reused_run_id_does_not_corrupt_an_earlier_patterns_record(seeded):  # FR-006, FR-007
+    """The independent review's regression. Before this fix, `write_pattern`'s add path upserted the id
+    `pattern:run:<run_id>`, so once the target that owned a run was deleted (patterns carry no target identity,
+    so that step alone never touches the store) and, on a pre-schema-v9 database, SQLite reissued that run's
+    numeric id to a later run, a success for the new run silently overwrote the surviving, still-shared pattern:
+    its document and hit count clobbered, its `last_hit_run_id` stale. Schema v9 stops SQLite from reissuing a
+    run's id (tests/unit/test_store_migration_v9.py), but the store itself must not depend on that — this forces
+    the same numeric run_id onto a second, unrelated success directly, as if it had been reissued anyway."""
+    first = write(seeded, 2001, DISTINCT)
+    assert first.outcome == "added" and first.hit_count == 1
+    second = write(seeded, 2002, DISTINCT)   # a near-identical success merges into the first pattern
+    assert (second.outcome, second.pattern_id, second.hit_count) == ("merged", first.pattern_id, 2)
+
+    # Run 2001's target is deleted here in the real system; its id is later reused by an unrelated success.
+    third = write(seeded, 2001, "canyon bicycle lighthouse marble")
+    assert third.outcome == "added" and third.hit_count == 1
+    assert third.pattern_id != first.pattern_id and third.pattern_id.startswith("pattern:run:")
+
+    document, meta = record(seeded, first.pattern_id)
+    assert document == DISTINCT                                     # not overwritten by the id-2001 reuse
+    assert meta["hit_count"] == 2 and meta["last_hit_run_id"] == 2002
+    assert record(seeded, third.pattern_id)[1]["origin_run_id"] == 2001
