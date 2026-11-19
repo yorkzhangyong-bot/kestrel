@@ -553,7 +553,7 @@ assert both are unchanged.
 
 ### Tests for User Story 2
 
-- [ ] T024 [P] [US2] Integration test `tests/integration/test_replay_memory_isolation.py` (`FEATURE = "012"`): over
+- [X] T024 [P] [US2] Integration test `tests/integration/test_replay_memory_isolation.py` (`FEATURE = "012"`): over
       `SpyExperienceStore`, replay a single-turn source and an adaptive source under each of the three outcomes
       (six replays total) **and a batch replay of several such sources** and assert `spy.queries == []` and
       `spy.pattern_writes == []` after every one, and that `write_memory` is never called either (extend
@@ -562,7 +562,7 @@ assert both are unchanged.
       structural guard (defence in depth, research "Experience isolation" code-fact), assert neither
       `kestrel.replay` nor the new `run_replay_adaptive` function imports anything from `kestrel.experience`
       (012/FR-025, FR-026, 012/SC-003).
-- [ ] T025 [P] [US2] Integration test `tests/integration/test_replay_report_exclusion.py` (`FEATURE = "012"`):
+- [X] T025 [P] [US2] Integration test `tests/integration/test_replay_report_exclusion.py` (`FEATURE = "012"`):
       generate a target's report (`GET /api/targets/{id}/report`) before and after replaying one of its existing,
       already-reported findings, and assert the finding count, the coverage rows, and the number of recommender
       judge calls are byte-for-byte identical; a target whose *only* succeeded run is itself a replay (seed it
@@ -581,11 +581,11 @@ assert both are unchanged.
 
 ### Implementation for User Story 2
 
-- [ ] T026 [US2] Implement the filter in `src/kestrel/api/main.py::target_report`: pass
+- [X] T026 [US2] Implement the filter in `src/kestrel/api/main.py::target_report`: pass
       `[r for r in store.list_runs(target_id) if r.mode != "replay"]` into `build_report` and
       `recommendations_for`, instead of the unfiltered list — `report/model.py` and `report/recommend.py` stay
       untouched (research D9) (012/FR-027).
-- [ ] T027 [US2] **`is_finding` itself is implemented in the foundational T008** (T022
+- [X] T027 [US2] **`is_finding` itself is implemented in the foundational T008** (T022
       already depends on it existing); this task only wires the UI to it. Fill `RunSummary.finding` with
       `is_finding(run)` wherever a summary is built (api/main.py). **One boolean cannot produce two cards**: in
       `ui/app.py::render_metrics` (`app.py:909-911`), drive the Confirmed card from `r.get("finding") and

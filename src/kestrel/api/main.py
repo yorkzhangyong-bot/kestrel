@@ -401,7 +401,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             target = store.get_target(target_id)
         except TargetNotFound:
             return not_found(target_id)
-        runs = store.list_runs(target_id)
+        # A replay is a re-check, never a finding of its own (feature 012, FR-027): excluded here, before
+        # build_report/recommendations_for ever see it, so neither needs its own replay-awareness.
+        runs = [r for r in store.list_runs(target_id) if r.mode != "replay"]
         turns_by_run = {run.id: store.list_turns(run.id) for run in runs if run.mode == "adaptive"}
         # One judge call per uncached success (FR-012); cached thereafter. No target send, no experience write.
         recommendations = await recommendations_for(store, app.state.judge, runs, turns_by_run)

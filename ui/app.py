@@ -1001,8 +1001,10 @@ def render_metrics(target_id: int | None) -> None:
             col.metric(label, "—")
         return
     runs = load_runs(target_id)
-    confirmed = sum(1 for r in runs if r.get("verdict") == "succeeded" and r.get("hard_evidence"))
-    suspected = sum(1 for r in runs if r.get("verdict") == "succeeded" and not r.get("hard_evidence"))
+    # feature 012: `finding` (server-computed: succeeded and not a replay) together with hard_evidence, never a
+    # mode check of the UI's own - one boolean alone cannot drive two cards (FR-027, FR-042).
+    confirmed = sum(1 for r in runs if r.get("finding") and r.get("hard_evidence"))
+    suspected = sum(1 for r in runs if r.get("finding") and not r.get("hard_evidence"))
     last = runs[0]["started_at"][:16].replace("T", " ") if runs else "—"
     for col, label, value in zip(cols, labels, [len(runs), confirmed, suspected, last]):
         col.metric(label, value)
