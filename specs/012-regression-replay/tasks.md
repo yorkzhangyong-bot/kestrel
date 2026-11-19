@@ -51,7 +51,7 @@ FR-048 already is.
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Document the new setting in `.env.example` beside the other `KESTREL_EXPERIENCE_*`/`KESTREL_EXPERIMENT_*`
+- [X] T001 [P] Document the new setting in `.env.example` beside the other `KESTREL_EXPERIENCE_*`/`KESTREL_EXPERIMENT_*`
       variables: `KESTREL_REPLAY_BATCH_MAX_RUNS=20` ("the most replayable runs a single batch replay will process
       for one target; a target with more than this many refuses the whole batch before sending anything"), noting
       it is reported on `GET /api/config` (012/FR-031).
