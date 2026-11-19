@@ -83,7 +83,8 @@ store." — emitted once when a feature-004 store is stamped (FR-011).
 
 ## Deny-list check
 
-New fields carry numbers, identifiers (`pattern:lib:<prompt_id>`, `pattern:run:<run_id>`), enum values, model
+New fields carry numbers, identifiers (`pattern:lib:<prompt_id>`, `pattern:run:<uuid>`,
+or a legacy `pattern:run:<run_id>` written before the independent review's fix), enum values, model
 names and distance-space names, plus constant message text. Model and space names are not secrets. The redaction
 runs of feature 010 (`tests/integration/test_log_redaction.py`)
 keep passing unchanged; the 011 line tests additionally assert that the attacker's message text, the reply text and

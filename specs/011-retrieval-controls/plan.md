@@ -42,8 +42,10 @@ standard library (`math`, `zlib.crc32` in the test stub); **no new dependency, r
 
 **Storage**: ChromaDB collection `kestrel_experience` (created with an explicit `l2` space; metadata gains
 `kestrel_embedding_model` and `kestrel_distance_space`; pattern metadata gains `hit_count` and `last_hit_run_id`)
-— no re-embedding, no migration beyond the first-open stamp (feature-004 stores are `l2` already). SQLite schema
-stays at **v8**.
+— no re-embedding, no migration beyond the first-open stamp (feature-004 stores are `l2` already). SQLite schema:
+planned to stay at v8; the owner-approved fix after the independent review moved it to **v9**, rebuilding `runs`
+with `AUTOINCREMENT` so a run id is never reissued, and gave each added pattern a unique `pattern:run:<uuid>` id
+(data-model.md).
 
 **Testing**: pytest; unit + integration offline with the lexical stub embedding and temporary stores (never
 `data/chroma`); one `e2e` against the HS-code target with the real model. Tests first (Principle VII); every test

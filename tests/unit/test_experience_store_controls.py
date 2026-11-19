@@ -12,6 +12,8 @@ FEATURE = "011"
 
 FAMILY = "system_prompt_leak"
 OWASP = "LLM07: System Prompt Leakage"
+OTHER_FAMILY = "direct_injection"
+OTHER_OWASP = "LLM01: Prompt Injection"
 SEED_TEXT = "<placeholder system_prompt_leak prompt 1>"   # the fixture library's text for spl-001
 
 
@@ -63,8 +65,8 @@ THRESHOLD = 0.3   # the stub's scale: identical texts are at 0, one token of six
 DISTINCT = "orchestra rehearsal tuesday evening"   # shares no token (and no hash bucket) with any fixture pattern
 
 
-def write(store, run_id, document, *, family=FAMILY, threshold=THRESHOLD):
-    return store.write_pattern(run_id=run_id, document=document, family=family, owasp_category=OWASP,
+def write(store, run_id, document, *, family=FAMILY, owasp=OWASP, threshold=THRESHOLD):
+    return store.write_pattern(run_id=run_id, document=document, family=family, owasp_category=owasp,
                                dedupe_threshold=threshold)
 
 
@@ -186,18 +188,21 @@ def test_a_reused_run_id_does_not_corrupt_an_earlier_patterns_record(seeded):  #
     numeric id to a later run, a success for the new run silently overwrote the surviving, still-shared pattern:
     its document and hit count clobbered, its `last_hit_run_id` stale. Schema v9 stops SQLite from reissuing a
     run's id (tests/unit/test_store_migration_v9.py), but the store itself must not depend on that — this forces
-    the same numeric run_id onto a second, unrelated success directly, as if it had been reissued anyway."""
+    the same numeric run_id onto a second, unrelated success in another family directly, as if it had been reissued anyway."""
     first = write(seeded, 2001, DISTINCT)
     assert first.outcome == "added" and first.hit_count == 1
     second = write(seeded, 2002, DISTINCT)   # a near-identical success merges into the first pattern
     assert (second.outcome, second.pattern_id, second.hit_count) == ("merged", first.pattern_id, 2)
 
-    # Run 2001's target is deleted here in the real system; its id is later reused by an unrelated success.
-    third = write(seeded, 2001, "canyon bicycle lighthouse marble")
+    # Run 2001's target is deleted here in the real system; its id is later reused by an unrelated success in
+    # another family, the case the review reproduced (the overwritten record took the new family too).
+    third = write(seeded, 2001, "canyon bicycle lighthouse marble", family=OTHER_FAMILY, owasp=OTHER_OWASP)
     assert third.outcome == "added" and third.hit_count == 1
     assert third.pattern_id != first.pattern_id and third.pattern_id.startswith("pattern:run:")
 
     document, meta = record(seeded, first.pattern_id)
     assert document == DISTINCT                                     # not overwritten by the id-2001 reuse
+    assert (meta["family"], meta["owasp_category"]) == (FAMILY, OWASP)   # not moved to the reusing family
     assert meta["hit_count"] == 2 and meta["last_hit_run_id"] == 2002
-    assert record(seeded, third.pattern_id)[1]["origin_run_id"] == 2001
+    _, reused = record(seeded, third.pattern_id)
+    assert (reused["family"], reused["origin_run_id"], reused["hit_count"]) == (OTHER_FAMILY, 2001, 1)

@@ -1,8 +1,12 @@
 import { type Locator, type Page } from '@playwright/test';
 import type { LogLine } from '../fixtures/kestrel';
 
-/** The option Streamlit's "Open a run" selectbox shows before any run is picked there (ui/app.py:660). */
-const NO_RUN_OPEN = 'Choose a run to see its prompt and reply';
+/**
+ * What the "Open a run" selectbox (key `open_run` in ui/app.py) shows while no run is open in the Runs tab: the
+ * label its None option renders with, or an empty value if that selection is ever reset through session state.
+ * Playwright reads the Prompt selectbox as '' after ui/app.py resets it to None (prompt-choice.spec.ts).
+ */
+const NO_RUN_OPEN: ReadonlySet<string> = new Set(['Choose a run to see its prompt and reply', '']);
 
 /**
  * The run page's "Log" viewer (feature 010, FR-012): a collapsed expander with the st.dataframe table and the raw
@@ -18,11 +22,13 @@ export class RunLogViewer {
   private readonly attackLog: Locator;
 
   constructor(readonly page: Page) {
-    // A run opened from the Runs tab and the attack result above the tabs can both render the same run's own
-    // "Log" expander (ui/app.py's shared `_render_log`), so an unscoped filter can match either, or both at
-    // once, with identical content. Which one is current is decided by the "Open a run" selectbox (ui/app.py:659),
-    // never by where either lands on the page: `expand()` reads that selectbox and targets the matching expander
-    // directly, so it waits for the Runs-tab one to render instead of clicking whichever already exists.
+    // A run opened from the Runs tab and the attack result above the tabs can both render a "Log" expander
+    // (ui/app.py's shared `_render_log`), so an unscoped filter can match either, or both at once. `expand()`
+    // decides which one to open from the "Open a run" selectbox, not from which expander exists at that instant,
+    // so after a run is picked there it waits for the Runs-tab expander to render. The read locators below do not
+    // use that decision: they take the last "Log" expander on the page. That is the one `expand()` opened only
+    // because the Runs tab renders below the attack result and no other "Log" expander exists; if the layout
+    // changes, derive them from the same selectbox decision instead.
     this.openRunSelect = page.getByRole('combobox', { name: 'Open a run', exact: true });
     this.runsLog = page
       .getByRole('tabpanel', { name: 'Runs' })
@@ -40,7 +46,7 @@ export class RunLogViewer {
    * itself rather than from which expander happens to exist at this instant.
    */
   async expand(): Promise<void> {
-    const runOpenInTab = (await this.openRunSelect.inputValue()) !== NO_RUN_OPEN;
+    const runOpenInTab = !NO_RUN_OPEN.has(await this.openRunSelect.inputValue());
     const target = runOpenInTab ? this.runsLog : this.attackLog;
     await target.locator('summary').click();
   }

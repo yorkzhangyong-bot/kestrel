@@ -175,8 +175,9 @@ Code facts this builds on (verified in the worktree, ChromaDB 1.5.9):
   -> PatternWrite`. With a threshold and a non-empty family it first runs a family-scoped `query` for the single
   nearest pattern (`include=["metadatas", "distances"]`); when `distance <= dedupe_threshold` it calls
   `update(ids=[id], metadatas=[{"hit_count": previous + 1, "last_hit_run_id": run_id}])` (merge semantics keep
-  the other keys) and returns `PatternWrite("merged", id, previous + 1, distance)`; otherwise it upserts
-  `pattern:run:<run_id>` with the feature-004 metadata plus `hit_count: 1` and returns
+  the other keys) and returns `PatternWrite("merged", id, previous + 1, distance)`; otherwise it adds a
+  new pattern under a unique `pattern:run:<uuid>` id (the independent review's fix; this design first upserted
+  `pattern:run:<run_id>`, which a reissued run id could overwrite) with the feature-004 metadata plus `hit_count: 1` and returns
   `PatternWrite("added", id, 1, distance_or_None)`. A missing `hit_count` on the nearest pattern reads as 1
   (FR-007). `write_back(experience, store, run, turns, *, dedupe_threshold=None)` passes the setting through from
   both callers and puts the outcome on the `memory.writeback` line; `pattern_written` keeps its meaning ("the
@@ -356,8 +357,8 @@ Code facts this builds on (verified in the worktree, ChromaDB 1.5.9):
   query, so while no run has reached turn 4 after the second the test starts up to two more warm runs (four at
   most) and fails if no run produced a seedless turn-4 line — the seedless assertion is never skipped (review
   finding 3, round-2 item D). Then, on the same store with the real model, it calls `write_pattern` with
-  `dedupe_threshold=0.15` and three distinct `run_id`s that no run used (`pattern:run:<run_id>` is upserted, so a
-  reused id would overwrite a run's own pattern) for a neutral document, its one-word variant (expected `merged`,
+  `dedupe_threshold=0.15` and three distinct `run_id`s that no run used (chosen while `pattern:run:<run_id>` was upserted; since the
+  independent review's fix an added pattern gets a unique `pattern:run:<uuid>` id, so they are metadata only) for a neutral document, its one-word variant (expected `merged`,
   `hit_count == 2`; measured 0.088) and its paraphrase (expected `added`; measured 0.253) — the three sentences of
   the round-1 probe — so the shipped threshold's two outcomes are
   confirmed on the real model; asserts a fresh `ExperienceStore(chroma_path)` reports `stored_embedding_model ==
@@ -383,9 +384,11 @@ Code facts this builds on (verified in the worktree, ChromaDB 1.5.9):
 
 - The hints block (`experience/hints.py`), memory retrieval and its recency cap, the warm/cold switch and its
   recording, single-turn runs (no retrieval), the judge, the caps, the permission and terms gates, the profile,
-  deletion, the SQLite schema (v8 — no migration), the run scope and the order of lines inside it, tracing, and
+  deletion, the run scope and the order of lines inside it, tracing, and
   the legacy store methods `retrieve_patterns` / `retrieve_patterns_with_ids` (k nearest, no controls; kept for
   the existing feature-004 tests and marked legacy).
+- **Changed after the independent review** (owner-approved): the SQLite schema, planned to stay at v8 with no
+  migration, moved to v9, rebuilding `runs` with `AUTOINCREMENT` so a run id is never reissued (data-model.md).
 
 ## D13 — The distance space is pinned to `l2` at creation, recorded, and verified at open
 
