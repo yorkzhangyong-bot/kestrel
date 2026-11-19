@@ -967,6 +967,15 @@ class TargetStore:
                 " replay_outcome = CASE WHEN mode = 'replay' THEN 'inconclusive' ELSE replay_outcome END,"
                 " finished_at = ? WHERE status = 'in_progress'", (utc_now(),)).rowcount
 
+    def other_run_in_progress(self, target_id: int, *, excluding_run_id: int) -> bool:
+        """Whether a run other than `excluding_run_id` is currently in progress on this target (feature 012,
+        research D10) - the same state `claim_run`'s own `uq_runs_active` constraint already enforces, read
+        directly for display (FR-006, FR-040, FR-042), never folded into `list_replayable_runs`."""
+        with self.connect() as db:
+            row = db.execute("SELECT 1 FROM runs WHERE target_id = ? AND status = 'in_progress' AND id != ?",
+                             (target_id, excluding_run_id)).fetchone()
+        return row is not None
+
     def list_replayable_runs(self, target_id: int) -> list[Run]:
         """The finished, succeeded, non-replay runs of one target that a batch replay (feature 012) would process,
         oldest first (FR-028, FR-029). Unaffected by whether a different run is currently in progress on the

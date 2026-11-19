@@ -16,9 +16,9 @@ from fastapi.responses import JSONResponse
 
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
                                  ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
-                                 JudgeOut, ProfileOut, RunDetail, RunRequest, RunSummary, SaveTargetRequest,
-                                 TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut,
-                                 ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
+                                 JudgeOut, ProfileOut, ReplayComparisonOut, RunDetail, RunRequest, RunSummary,
+                                 SaveTargetRequest, TargetDetail, TargetSummary, TermsOut, TurnComparisonOut, TurnOut,
+                                 AdaptiveCapsOut, ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
                                  ExperimentSummaryOut, PromptVersionOut, RateOut, ReplayOut, RunLogOut,
                                  experiment_diff, validate_canaries,
@@ -43,6 +43,8 @@ from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
 from kestrel.logging_setup import configure_logging
+from kestrel.replay import (REPLAY_BLOCKED_REASONS, NotReplayable, ReplayOfReplay, build_comparison,
+                           check_replayable, compute_replay_status, execute_replay, is_finding)
 from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
@@ -360,14 +362,24 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             turns = store.list_turns(run.id)
             write_back(request.app.state.experience, store, run, turns,
                        dedupe_threshold=settings.experience_dedupe_threshold)
-        return run_detail(store.get_run(run.id), turns)
+        finished = store.get_run(run.id)
+        in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
+        return run_detail(store, finished, target=target, terms_version=terms.version,
+                          adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
+                          turns=turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
     def list_runs(target_id: int) -> Any:
         try:
-            return [run_summary(run) for run in store.list_runs(target_id)]
+            target = store.get_target(target_id)
+            runs = store.list_runs(target_id)
         except TargetNotFound:
             return not_found(target_id)
+        in_progress_id = next((r.id for r in runs if r.status == "in_progress"), None)
+        return [run_summary(run, target=target, terms_version=terms.version,
+                            adaptive_max_turns=settings.adaptive_max_turns,
+                            other_run_in_progress=in_progress_id is not None and in_progress_id != run.id)
+                for run in runs]
 
     @app.get("/api/targets/{target_id}/profile", response_model=ProfileOut)
     def target_profile(target_id: int) -> Any:
@@ -404,9 +416,58 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     @app.get("/api/runs/{run_id}", response_model=RunDetail)
     def get_run(run_id: int) -> Any:
         try:
-            return run_detail(store.get_run(run_id), store.list_turns(run_id))
+            run = store.get_run(run_id)
         except LookupError:
             return api_error(404, "not_found", f"No run with id {run_id}.")
+        target = store.get_target(run.target_id)
+        in_progress = store.other_run_in_progress(target.id, excluding_run_id=run.id)
+        return run_detail(store, run, target=target, terms_version=terms.version,
+                          adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
+                          turns=store.list_turns(run_id))
+
+    @app.post("/api/runs/{run_id}/replay", status_code=201, response_model=RunDetail)
+    async def replay_run(run_id: int, request: Request) -> Any:
+        """Replay one run (feature 012, FR-038): re-send its source's recorded message(s) verbatim, with no
+        attacker-model call, and report the outcome. Synchronous, like POST /api/runs today - the request
+        completes only once every message has been sent and scored (or the action refused)."""
+        try:
+            source = store.get_run(run_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+        target = store.get_target(source.target_id)
+        try:
+            check_replayable(source)
+        except ReplayOfReplay as error:
+            return api_error(409, "replay_of_replay",
+                             f"This run is itself a replay of run #{error.source_run_id}.")
+        except NotReplayable as error:
+            return api_error(409, "not_replayable", REPLAY_BLOCKED_REASONS[error.reason])
+        if not target.permission_confirmed_at:
+            return api_error(409, "permission_missing", REPLAY_BLOCKED_REASONS["permission_missing"])
+        if target.terms_version != terms.version:
+            return api_error(409, "terms_outdated", REPLAY_BLOCKED_REASONS["terms_outdated"])
+        if store.other_run_in_progress(target.id, excluding_run_id=source.id):
+            return api_error(409, "run_in_progress", REPLAY_BLOCKED_REASONS["run_in_progress"])
+
+        resolved = ResolvedSettings(
+            url=target.url, method=target.method,
+            headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
+                          for h in target.headers),
+            body_template=target.body_template, response_path=target.response_path)
+        source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
+        # No write_back call: a replay never touches the experience store (FR-025, FR-026).
+        with events.run_scope():
+            run = await execute_replay(
+                store, source=source, source_turns=source_turns, resolved=resolved, mode=settings.mode,
+                judge=request.app.state.judge, transport=request.app.state.transport,
+                resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
+                adaptive_token_budget=settings.adaptive_token_budget,
+                adaptive_time_limit_s=settings.adaptive_time_limit_s)
+        replay_turns = store.list_turns(run.id) if run.mode == "adaptive" else []
+        in_progress = store.other_run_in_progress(target.id, excluding_run_id=run.id)
+        return run_detail(store, run, target=target, terms_version=terms.version,
+                          adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
+                          turns=replay_turns)
 
     @app.get("/api/runs/{run_id}/log", response_model=RunLogOut)
     def get_run_log(run_id: int) -> Any:
@@ -612,17 +673,49 @@ def _experience_counts(experience: Any, target_id: int) -> dict | None:
         return None
 
 
-def run_summary(run: Run) -> RunSummary:
+def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
+                other_run_in_progress: bool) -> RunSummary:
+    """`target`/`terms_version`/`adaptive_max_turns`/`other_run_in_progress` feed `compute_replay_status`
+    (feature 012, research D10): `replayable`/`replay_blocked_reason`/`replay_advisory` depend on the run's
+    target, never the run's own fields alone."""
+    status = compute_replay_status(run, target, terms_version, adaptive_max_turns, other_run_in_progress)
     return RunSummary(id=run.id, target_id=run.target_id, mode=run.mode, prompt_id=run.prompt_id,
                       prompt_title=run.prompt_title, family=run.family, owasp_category=run.owasp_category,
                       verdict=run.verdict, hard_evidence=run.hard_evidence, judge_used=run.judge_used,
                       judge_model=run.judge_model, failure_step=run.failure_step, started_at=run.started_at,
                       finished_at=run.finished_at, memory_written=run.memory_written,
-                      use_prior_experience=run.use_prior_experience)
+                      use_prior_experience=run.use_prior_experience, source_run_id=run.source_run_id,
+                      replay_outcome=run.replay_outcome, finding=is_finding(run), replayable=status.replayable,
+                      replay_blocked_reason=status.blocked_reason, replay_advisory=status.advisory)
 
 
-def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
-    return RunDetail(**run_summary(run).model_dump(), status=run.status, prompt_text=run.prompt_text,
+def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> ReplayComparisonOut | None:
+    """The side-by-side comparison (feature 012, research D8): computed fresh, never stored, only when `run` is
+    itself a replay."""
+    if run.mode != "replay" or run.source_run_id is None:
+        return None
+    source = store.get_run(run.source_run_id)
+    source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
+    replay_turns = turns if turns is not None else (store.list_turns(run.id) if run.mode == "adaptive" else [])
+    comparison = build_comparison(source, source_turns, run, replay_turns)
+    return ReplayComparisonOut(
+        source_run_id=comparison.source_run_id, replay_run_id=comparison.replay_run_id,
+        outcome=comparison.outcome, source_verdict=comparison.source_verdict,
+        source_hard_evidence=comparison.source_hard_evidence, source_judge_model=comparison.source_judge_model,
+        source_judge_prompt=comparison.source_judge_prompt, replay_verdict=comparison.replay_verdict,
+        replay_hard_evidence=comparison.replay_hard_evidence, replay_judge_model=comparison.replay_judge_model,
+        replay_judge_prompt=comparison.replay_judge_prompt,
+        turns=[TurnComparisonOut(position=t.position, sent=t.sent, source_verdict=t.source_verdict,
+                                 replay_verdict=t.replay_verdict) for t in comparison.turns],
+        multi_turn_caption=comparison.multi_turn_caption)
+
+
+def run_detail(store: TargetStore, run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
+               other_run_in_progress: bool, turns: list[Turn] | None = None) -> RunDetail:
+    return RunDetail(**run_summary(run, target=target, terms_version=terms_version,
+                                   adaptive_max_turns=adaptive_max_turns,
+                                   other_run_in_progress=other_run_in_progress).model_dump(),
+                     status=run.status, prompt_text=run.prompt_text,
                      reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
                      failure_message=STEP_MESSAGES.get(run.failure_step) if run.failure_step else None,
                      attacker_source=run.attacker_source, attacker_model=run.attacker_model,
@@ -632,7 +725,8 @@ def run_detail(run: Run, turns: list[Turn] | None = None) -> RunDetail:
                      turns=[TurnOut(position=t.position, attacker_message=t.attacker_message, reply_text=t.reply_text,
                                     reply_truncated=t.reply_truncated, judge_verdict=t.judge_verdict,
                                     judge_reason=t.judge_reason, judge_progress=t.judge_progress)
-                            for t in (turns or [])])
+                            for t in (turns or [])],
+                     comparison=_comparison_out(store, run, turns))
 
 
 def run_log(run_id: int, kept_lines: list) -> RunLogOut:

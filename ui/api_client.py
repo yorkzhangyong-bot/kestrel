@@ -94,6 +94,13 @@ def get_run(run_id: int) -> dict[str, Any]:
     return _request("GET", f"/api/runs/{run_id}")
 
 
+def replay_run(run_id: int) -> dict[str, Any]:
+    """Replay one run (feature 012). Above the API's own adaptive wall-clock (up to 300s), with a margin, the
+    same shape run_attack's own timeout already uses - never the batch endpoint's much larger bound (the UI has
+    no batch action)."""
+    return _request("POST", f"/api/runs/{run_id}/replay", timeout=360.0)
+
+
 def get_run_log(run_id: int) -> dict[str, Any]:
     """A run's kept log lines, in order (feature 010): {run_id, lines, kept, dropped, truncated}."""
     return _request("GET", f"/api/runs/{run_id}/log")

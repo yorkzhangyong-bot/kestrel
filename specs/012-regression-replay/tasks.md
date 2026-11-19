@@ -256,7 +256,7 @@ and the comparison is readable afterward.
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Unit test `tests/unit/test_replay_comparison.py` (`FEATURE = "012"`): `build_comparison` for
+- [X] T012 [P] [US1] Unit test `tests/unit/test_replay_comparison.py` (`FEATURE = "012"`): `build_comparison` for
       a single-turn pair (exactly one synthetic `TurnComparison` per run, built from the runs' own top-level
       fields, no `run_turns` involved); for an adaptive pair where the source recorded more turns than the replay
       sent, the unsent positions are `sent=False, replay_verdict=None`; for a pair whose **last** sent turn ended
@@ -268,7 +268,7 @@ and the comparison is readable afterward.
       `judge_verdict`; `multi_turn_caption` is exactly the pinned FR-041 string
       (**"A multi-turn replay re-tests the recorded messages, not an adaptive attack."**) for a pair built from
       more than one recorded message, and `None` for a single-turn pair (012/FR-017, FR-018, FR-019, FR-041).
-- [ ] T013 [P] [US1] Integration test `tests/integration/test_replay_run.py`, the single-turn part: over
+- [X] T013 [P] [US1] Integration test `tests/integration/test_replay_run.py`, the single-turn part: over
       `make_client` with a `ModelTransport` and a stub target, run one single-turn attack to a succeeded verdict,
       then replay it under four target behaviours (now failing the attack, now still falling for it, now failing
       to answer, and the sender raising an unexpected exception mid-send)
@@ -290,7 +290,7 @@ and the comparison is readable afterward.
       `reply_text` has it masked, not the raw value — a lift that silently dropped `_send_turn`'s own masking
       would fail only this assertion, never one that goes through `run_test` (012/FR-001, FR-002, FR-003,
       FR-007, FR-008, FR-009, FR-012, FR-015, FR-020, FR-021, FR-022, FR-024, 012/SC-001, SC-002).
-- [ ] T014 [US1] Integration test `tests/integration/test_replay_run.py`, the adaptive part: run one adaptive
+- [X] T014 [US1] Integration test `tests/integration/test_replay_run.py`, the adaptive part: run one adaptive
       attack to a succeeded verdict with at least 3 recorded turns, then replay it and assert: each resent message
       equals the source's `run_turns[i].attacker_message` verbatim, in order; zero attacker-model calls across
       every turn; each turn's judge call carries the **replay's own** conversation so far — change the stub
@@ -337,7 +337,7 @@ and the comparison is readable afterward.
       `None`) and carries no caption (012/FR-001, FR-002, FR-003, FR-007, FR-008,
       FR-009, FR-010, FR-011, FR-012, FR-014, FR-015, FR-020, FR-021, FR-022, FR-023, FR-024, FR-041, 012/SC-001,
       SC-002).
-- [ ] T015 [P] [US1] Integration test `tests/integration/test_replay_api.py`: `POST /api/runs/{id}/replay` on an
+- [X] T015 [P] [US1] Integration test `tests/integration/test_replay_api.py`: `POST /api/runs/{id}/replay` on an
       eligible run → **201** `RunDetail` with `comparison` present; on an `in_progress` run → **409**
       `not_replayable` with message `"A run still in progress can't be replayed."`; on a `failed`/`unclear` run,
       and separately on one whose send failed (`failure_step` set, `verdict` `None`) → **409** `not_replayable`
@@ -364,7 +364,7 @@ and the comparison is readable afterward.
       multi-message source carries `comparison.multi_turn_caption` equal to the pinned FR-041 string, and `null`
       for a replay of a single-message source (012/FR-004, FR-005, FR-006, FR-017, FR-027, FR-038, FR-039,
       FR-040, FR-041, FR-042, 012/SC-005).
-- [ ] T016 [P] [US1] Integration test `tests/integration/test_events_replay.py` (`FEATURE = "012"`), the
+- [X] T016 [P] [US1] Integration test `tests/integration/test_events_replay.py` (`FEATURE = "012"`), the
       single-replay part: through the `json_log` fixture, replay a run and assert: `run.start` carries
       `source_run_id` and `mode: "replay"`; every `turn` line omits `attacker_model`/`attacker_prompt` (no
       `attacker_generated` turn at all, including turn 1 — different from a normal adaptive run); zero
@@ -382,7 +382,7 @@ and the comparison is readable afterward.
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] **Restructure `attack/graph.py`'s per-turn nodes so a second graph can share them
+- [X] T017 [US1] **Restructure `attack/graph.py`'s per-turn nodes so a second graph can share them
       (`judge_node`/`send_node`/`evidence_node`/`decide_node` are closures defined inside
       `run_adaptive` today, not separately callable by a sibling function without either duplicating the body or
       lifting it out).** Lift all four to module-level
@@ -400,7 +400,7 @@ and the comparison is readable afterward.
       **full offline suite** (`uv run pytest tests/unit tests/integration`) before the lift (baseline) and after
       it, and confirm the two runs report the same pass/fail set — the regression gate for this extraction
       (012/FR-049; research D14).
-- [ ] T018 [US1] Implement `run_replay_adaptive(...)` in `src/kestrel/attack/graph.py`, wired to T017's shared
+- [X] T018 [US1] Implement `run_replay_adaptive(...)` in `src/kestrel/attack/graph.py`, wired to T017's shared
       functions, with its **own** `attacker_node`/`record_node` (not shared — a model call vs. a list lookup;
       run-wide-constant provenance vs. per-turn copied provenance): both compute `turn = state["turns_used"] + 1`
       exactly as the live `attacker_node` already does, and index `source_turns[turn - 1]` **consistently** for
@@ -429,7 +429,7 @@ and the comparison is readable afterward.
       otherwise create — research D14) passed to `store.finish_run(..., replay_outcome=replay_outcome,
       judge_prompt_id=..., judge_prompt_version=...)` (012/FR-001, FR-002, FR-007, FR-008, FR-009, FR-010, FR-011,
       FR-012, FR-014, FR-015, FR-020, FR-022, FR-023).
-- [ ] T019 [US1] Implement `execute_replay(store, *, source, source_turns, resolved, mode, judge, ...)` in
+- [X] T019 [US1] Implement `execute_replay(store, *, source, source_turns, resolved, mode, judge, ...)` in
       `src/kestrel/replay.py`: for `source.mode == "single_turn"`, a body shaped like `runs.py::execute_run` (one
       send of `source.prompt_text`, `match_canary`, then `judge.judge(attack=.., reply=..)` with **no**
       `conversation` argument, only when no canary matched and a judge is configured, FR-008), building its own
@@ -457,17 +457,17 @@ and the comparison is readable afterward.
       attacker_model=None, use_prior_experience=False, ...)` and emits `events.run_started(..., mode="replay",
       source_run_id=source.id, ...)` (012/FR-001, FR-002, FR-003, FR-007, FR-008, FR-009, FR-012, FR-015, FR-020,
       FR-021, FR-022, FR-023, FR-024).
-- [ ] T020 [US1] Implement `build_comparison(source, source_turns, replay, replay_turns) -> Comparison` in
+- [X] T020 [US1] Implement `build_comparison(source, source_turns, replay, replay_turns) -> Comparison` in
       `src/kestrel/replay.py` per `data-model.md`'s per-turn walk and the terminal-turn derivation of research D7;
       the single-turn synthetic-`TurnComparison` case; `multi_turn_caption` set to the pinned FR-041 string
       (**"A multi-turn replay re-tests the recorded messages, not an adaptive attack."**) when
       `len(source_turns) > 1`, else `None` (012/FR-017, FR-018, FR-019, FR-041).
-- [ ] T021 [US1] Wire `events.run_started`/`run_finished` (or `_run_end`) in `src/kestrel/events.py` to accept and
+- [X] T021 [US1] Wire `events.run_started`/`run_finished` (or `_run_end`) in `src/kestrel/events.py` to accept and
       pass through `source_run_id` (on start, via the existing `_present(...)` filter) and `replay_outcome` (on
       finish, read off `_run_end`'s local `outcome = ctx.outcome or {}` and included only when present — T011;
       never `ctx.outcome.get(...)` directly, since `ctx.outcome` is `None` when a
       run raises before finishing) per `contracts/log-records-delta.md` (012/FR-043).
-- [ ] T022 [US1] Implement the API in `src/kestrel/api/main.py`: `POST /api/runs/{run_id}/replay` (**201** on
+- [X] T022 [US1] Implement the API in `src/kestrel/api/main.py`: `POST /api/runs/{run_id}/replay` (**201** on
       success; load the run, `replay.check_replayable`, the existing permission/terms/`run_in_progress`
       precondition checks against the run's target, `events.run_scope()`, `execute_replay` — **no** `write_back`
       call; its own refusal reuses the exact `compute_replay_status`/`REPLAY_BLOCKED_REASONS` strings, T008, so
@@ -486,7 +486,7 @@ and the comparison is readable afterward.
       experiment-significance shape used at `api/schemas.py:348` and `api/main.py:716` — reusing it would
       collide; the `not_replayable`/`replay_of_replay` **409** responses per `contracts/api.md` (012/FR-004,
       FR-005, FR-006, FR-017, FR-027, FR-038, FR-039, FR-040, FR-041, FR-042).
-- [ ] T023 [P] [US1] Implement the UI: `ui/api_client.py::replay_run(run_id)` (`POST /api/runs/{id}/replay`, a
+- [X] T023 [P] [US1] Implement the UI: `ui/api_client.py::replay_run(run_id)` (`POST /api/runs/{id}/replay`, a
       timeout covering one replay — the adaptive time limit plus a margin, the same shape `run_attack`'s own
       timeout already uses; **no** `batch_replay` client — the UI has no batch action, since the spec asks only
       for a single-run button). `ui/app.py`:
