@@ -63,7 +63,7 @@ FR-048 already is.
 **⚠️ Blocks every user story**: schema v10, the settings/catalogue fields every later line and endpoint needs, and
 the two pure functions (`check_replayable`, `compute_outcome`) every story's eligibility and outcome logic shares.
 
-- [ ] T002 [P] Unit test `tests/unit/test_store_migration_v10.py` (`FEATURE = "012"`), following the
+- [X] T002 [P] Unit test `tests/unit/test_store_migration_v10.py` (`FEATURE = "012"`), following the
       `test_store_migration_v9.py` convention: build a hand-written schema-9-shaped database (as that file already
       does for schema 8→9), run `TargetStore.__init__`/`_migrate` against it, and assert: the `meta.schema_version`
       row reads `"10"`; `PRAGMA foreign_key_check` returns empty immediately after; a pre-existing run row has
@@ -84,7 +84,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       `store.close_interrupted_runs()`, and assert the finished row has `replay_outcome == 'inconclusive'`
       (never `NULL`); a same-shaped `in_progress` **non-replay** row's `replay_outcome` stays `NULL` after the
       same sweep (012/FR-012, FR-015, FR-020).
-- [ ] T003 [P] Unit test `tests/unit/test_replay_eligibility.py` (`FEATURE = "012"`): `check_replayable` over
+- [X] T003 [P] Unit test `tests/unit/test_replay_eligibility.py` (`FEATURE = "012"`): `check_replayable` over
       hand-built `Run` objects — a `mode="replay"` run raises `ReplayOfReplay` carrying its own `source_run_id`; an
       `in_progress` run raises `NotReplayable("in_progress")`; a finished run with `verdict` `"failed"`,
       `"unclear"` or `None` (including one with `failure_step` set — the send-failed shape) raises
@@ -113,7 +113,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       "This source recorded more turns than the current adaptive limit; the replay can end at best still
       vulnerable or inconclusive.")` — the exact advisory, independent of `blocked_reason` (012/FR-004, FR-005,
       FR-006, FR-040, FR-042).
-- [ ] T004 [P] Unit test `tests/unit/test_replay_outcome.py` (`FEATURE = "012"`):
+- [X] T004 [P] Unit test `tests/unit/test_replay_outcome.py` (`FEATURE = "012"`):
       `compute_outcome(turn_results: list[str | None], recorded_total: int, winning_turn: int | None)` —
       `turn_results` containing a `"succeeded"` anywhere is always `"still_vulnerable"`, even with
       `len(turn_results) < recorded_total` (proving "stop at first success" is not misread as "cut short");
@@ -146,7 +146,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       `"failed"` → `"fixed"`, exercising `compute_outcome`'s position-indexing logic on an input a real source
       cannot actually have (012/FR-012, FR-013, FR-014, FR-015, FR-016,
       012/SC-002).
-- [ ] T005 [P] Extend `tests/unit/test_settings_*.py` (or a new `tests/unit/test_settings_replay.py`,
+- [X] T005 [P] Extend `tests/unit/test_settings_*.py` (or a new `tests/unit/test_settings_replay.py`,
       `FEATURE = "012"`): with `KESTREL_REPLAY_BATCH_MAX_RUNS` unset, `Settings.replay_batch_max_runs == 20`; `0`,
       `-1` and `abc` each raise `SettingsError` naming the variable; `5` parses to `5`. Extend
       `tests/integration/test_api_base.py`: `GET /api/config` reports `replay.max_batch_runs == 20` by default and
@@ -157,7 +157,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       adaptive limit alone**: a further case with `KESTREL_ADAPTIVE_TIME_LIMIT_S` set *below* 90 (the single-turn
       deadline) asserts `replay.per_replay_time_limit_s` stays `90`, never dropping to the lowered adaptive value
       (012/FR-031).
-- [ ] T006 [P] Extend `tests/unit/test_events.py` (`FEATURE = "012"` on the new cases, or scoped tokens): emitting
+- [X] T006 [P] Extend `tests/unit/test_events.py` (`FEATURE = "012"` on the new cases, or scoped tokens): emitting
       `"run.start"` with `source_run_id=12` renders that field with no `log.unknown_field` warning, and **omits
       the key entirely** when not given (never `"source_run_id": null`); emitting `"run.end"` with
       `replay_outcome="fixed"` renders it, and **omits the key entirely** when not given — **not
@@ -170,7 +170,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       `stop_reason`/`error` fields; `complete=False, stop_reason="run_in_progress"` adds `stop_reason` and keeps
       `complete` false; `error="RunInProgress"` adds it and raises the record to ERROR level (012/FR-043, FR-044,
       FR-045).
-- [ ] T007 Implement schema v10 in `src/kestrel/store.py` per `data-model.md`: `SCHEMA_VERSION = "10"`;
+- [X] T007 Implement schema v10 in `src/kestrel/store.py` per `data-model.md`: `SCHEMA_VERSION = "10"`;
       `RUNS_COLUMNS_SQL`'s `mode` CHECK widens to `('single_turn', 'adaptive', 'replay')`, plus
       `source_run_id INTEGER REFERENCES runs(id) ON DELETE CASCADE` and
       `replay_outcome TEXT CHECK (replay_outcome IS NULL OR replay_outcome IN ('fixed', 'still_vulnerable',
@@ -192,7 +192,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       with an outcome**: its `UPDATE` gains `replay_outcome = CASE WHEN mode = 'replay' THEN 'inconclusive' ELSE
       replay_outcome END` (a no-op for a non-replay row, whose `replay_outcome` is already `NULL`) (012/FR-020,
       FR-012, FR-015).
-- [ ] T008 Implement `src/kestrel/replay.py` (new module): `NotReplayable(reason: str)`,
+- [X] T008 Implement `src/kestrel/replay.py` (new module): `NotReplayable(reason: str)`,
       `ReplayOfReplay(source_run_id: int)`, `check_replayable(run: Run) -> None` per the truth table in
       `data-model.md`; `TargetStore.list_replayable_runs(target_id: int) -> list[Run]` in `store.py` per the SQL in
       `data-model.md`. `REPLAY_BLOCKED_REASONS`, `REPLAY_ADVISORY_OVER_TURN_LIMIT`,
@@ -205,18 +205,18 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       "replay"`, per `data-model.md`) here, in the foundational phase, since T022 (US1, API schemas) already
       depends on it existing before T027 (US2) is reached; T027 only wires the UI to it (012/FR-004, FR-005,
       FR-006, FR-027, FR-040, FR-042).
-- [ ] T009 Implement `compute_outcome(turn_results: list[str | None], recorded_total: int,
+- [X] T009 Implement `compute_outcome(turn_results: list[str | None], recorded_total: int,
       winning_turn: int | None) -> str` in `src/kestrel/replay.py` per `data-model.md`'s truth table: per-turn
       results, never a run's aggregate `verdict`, and — for `recorded_total > 1` — the source's own winning turn
       (`winning_turn`, 1-based, `source.succeeded_turn`) must itself have been sent and judged `"failed"` for the
       outcome to be `"fixed"` (012/FR-012, FR-013, FR-014, FR-015, FR-016).
-- [ ] T010 [P] Implement the setting and its surface: `DEFAULT_REPLAY_BATCH_MAX_RUNS = 20` and
+- [X] T010 [P] Implement the setting and its surface: `DEFAULT_REPLAY_BATCH_MAX_RUNS = 20` and
       `Settings.replay_batch_max_runs: int` (parsed by the existing `positive_int` helper) in `src/kestrel/settings.py`;
       `ReplayOut(max_batch_runs: int, per_replay_time_limit_s: int)` and `ConfigOut.replay: ReplayOut` in
       `src/kestrel/api/schemas.py`; filled in `get_config` in `src/kestrel/api/main.py`, with
       `per_replay_time_limit_s = max(settings.adaptive_time_limit_s, TOTAL_DEADLINE_S)` (imported from
       `kestrel.runs`) (012/FR-031).
-- [ ] T011 Implement the catalogue and helpers in `src/kestrel/events.py` per `contracts/log-records-delta.md`:
+- [X] T011 Implement the catalogue and helpers in `src/kestrel/events.py` per `contracts/log-records-delta.md`:
       `CATALOGUE["run.start"]` gains `source_run_id` (wired through the existing `_present(...)` filtering
       `run_started` already uses for every other optional field, so it is omitted, never `null`, when absent);
       `CATALOGUE["run.end"]` gains `replay_outcome`, included in `_run_end`'s `fields` dict **only when present**

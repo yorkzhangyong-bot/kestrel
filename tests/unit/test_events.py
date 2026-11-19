@@ -28,6 +28,7 @@ class FakeRun:
     turns_used: int | None = 2
     tokens_used: int | None = 240
     succeeded_turn: int | None = None
+    replay_outcome: str | None = None   # feature 012: "fixed" | "still_vulnerable" | "inconclusive", or None
 
 
 @pytest.fixture
@@ -330,3 +331,66 @@ def test_experience_unavailable_keeps_both_model_names_and_the_mismatch_message(
                      "stored_model": "a", "expected_model": "b"}
     assert space == {"message": SPACE_MISMATCH_MESSAGE, "reason_kind": "space_mismatch", "stored_space": "cosine",
                      "expected_space": "l2"}
+
+
+# ---- feature 012: regression replay's own fields and events (012/FR-043, FR-044, FR-045) ----
+
+
+def test_run_start_carries_source_run_id_only_when_given(records):  # 012/FR-043
+    with events.run_scope():
+        start(source_run_id=12)
+    assert fields(records[0])["source_run_id"] == 12
+
+    records.clear()
+    with events.run_scope():
+        start()
+    assert "source_run_id" not in fields(records[0])
+
+
+def test_run_end_carries_replay_outcome_only_when_present_never_as_null(records):  # 012/FR-043
+    with events.run_scope():
+        start()
+        events.run_finished(FakeRun(replay_outcome="fixed"))
+    end = fields(records[-1])
+    assert end["replay_outcome"] == "fixed"
+
+    records.clear()
+    with events.run_scope():
+        start()
+        events.run_finished(FakeRun())   # a normal run: replay_outcome is None
+    end = fields(records[-1])
+    assert "replay_outcome" not in end   # omitted entirely, never "replay_outcome": null
+
+
+def test_replay_batch_started_renders_target_id_replayable_count_and_cap(records):  # 012/FR-043, FR-044
+    events.replay_batch_started(target_id=3, replayable_count=5, cap=20)
+    assert names(records) == ["replay.batch.start"]
+    assert fields(records[0]) == {"target_id": 3, "replayable_count": 5, "cap": 20}
+    assert records[0].levelno == logging.INFO
+
+
+def test_replay_batch_ended_renders_the_counts_and_duration_on_a_complete_batch(records):  # 012/FR-044
+    events.replay_batch_ended(target_id=3, fixed=2, still_vulnerable=1, inconclusive=0, duration_ms=450,
+                              complete=True)
+    assert names(records) == ["replay.batch.end"]
+    line = fields(records[0])
+    assert line == {"target_id": 3, "fixed_count": 2, "still_vulnerable_count": 1, "inconclusive_count": 0,
+                    "duration_ms": 450, "complete": True}
+    assert "stop_reason" not in line and "error" not in line
+    assert records[0].levelno == logging.INFO
+
+
+def test_replay_batch_ended_carries_stop_reason_when_incomplete(records):  # 012/FR-044
+    events.replay_batch_ended(target_id=3, fixed=1, still_vulnerable=0, inconclusive=0, duration_ms=100,
+                              complete=False, stop_reason="run_in_progress")
+    line = fields(records[0])
+    assert line["complete"] is False and line["stop_reason"] == "run_in_progress"
+    assert "error" not in line and records[0].levelno == logging.INFO
+
+
+def test_replay_batch_ended_with_an_error_adds_it_and_is_logged_at_error_level(records):  # 012/FR-044, FR-045
+    events.replay_batch_ended(target_id=3, fixed=0, still_vulnerable=0, inconclusive=1, duration_ms=50,
+                              complete=False, stop_reason="replay_failed", error="ReplayFailed")
+    line = fields(records[0])
+    assert line["stop_reason"] == "replay_failed" and line["error"] == "ReplayFailed"
+    assert records[0].levelno == logging.ERROR

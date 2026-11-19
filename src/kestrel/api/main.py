@@ -20,8 +20,8 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  TargetDetail, TargetSummary, TermsOut, TurnOut, AdaptiveCapsOut,
                                  ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
-                                 ExperimentSummaryOut, PromptVersionOut, RateOut, RunLogOut, experiment_diff,
-                                 validate_canaries,
+                                 ExperimentSummaryOut, PromptVersionOut, RateOut, ReplayOut, RunLogOut,
+                                 experiment_diff, validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
 from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
@@ -43,7 +43,7 @@ from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
 from kestrel.logging_setup import configure_logging
-from kestrel.runs import execute_run, execute_adaptive_run
+from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
@@ -179,6 +179,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                                   distance_floor=settings.experience_distance_floor,
                                                   dedupe_threshold=settings.experience_dedupe_threshold,
                                                   use_prior_experience_default=True),
+                         replay=ReplayOut(max_batch_runs=settings.replay_batch_max_runs,
+                                         per_replay_time_limit_s=int(max(settings.adaptive_time_limit_s,
+                                                                        TOTAL_DEADLINE_S))),
                          prompts=[PromptVersionOut(id=e.id, version=e.version)
                                   for e in prompt_registry.registry()])
 

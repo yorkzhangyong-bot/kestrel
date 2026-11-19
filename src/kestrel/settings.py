@@ -37,6 +37,9 @@ DEFAULT_EXPERIENCE_DEDUPE_THRESHOLD = 0.15
 DEFAULT_EXPERIMENT_MAX_RUNS = 50
 DEFAULT_EXPERIMENT_TOKEN_BUDGET = 500_000
 DEFAULT_EXPERIMENT_WALL_CLOCK_S = 3600
+# Regression replay (feature 012): the most replayable runs one batch replay processes for a target (FR-031),
+# confirmed with the product owner (spec.md Clarifications, 2026-11-19).
+DEFAULT_REPLAY_BATCH_MAX_RUNS = 20
 
 Mode = Literal["local", "hosted"]
 LogFormat = Literal["json", "text"]
@@ -82,6 +85,8 @@ class Settings:
     experiment_max_runs: int = DEFAULT_EXPERIMENT_MAX_RUNS
     experiment_token_budget: int = DEFAULT_EXPERIMENT_TOKEN_BUDGET
     experiment_wall_clock_s: int = DEFAULT_EXPERIMENT_WALL_CLOCK_S
+    # Feature 012 (regression replay).
+    replay_batch_max_runs: int = DEFAULT_REPLAY_BATCH_MAX_RUNS
     # Feature 010: the stream's format (JSON Lines by default) and the optional OpenTelemetry tracing flag.
     log_format: LogFormat = "json"
     tracing: bool = False
@@ -214,4 +219,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     experiment_token_budget=positive_int("KESTREL_EXPERIMENT_TOKEN_BUDGET",
                                                          DEFAULT_EXPERIMENT_TOKEN_BUDGET),
                     experiment_wall_clock_s=positive_int("KESTREL_EXPERIMENT_WALL_CLOCK_S",
-                                                         DEFAULT_EXPERIMENT_WALL_CLOCK_S))
+                                                         DEFAULT_EXPERIMENT_WALL_CLOCK_S),
+                    replay_batch_max_runs=positive_int("KESTREL_REPLAY_BATCH_MAX_RUNS",
+                                                       DEFAULT_REPLAY_BATCH_MAX_RUNS))

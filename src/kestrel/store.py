@@ -14,7 +14,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -48,7 +48,7 @@ RUNS_COLUMNS_SQL = """
     started_at TEXT NOT NULL,
     finished_at TEXT,
     -- Added in schema version 3 (feature 003): single-turn runs leave these at their defaults/null.
-    mode TEXT NOT NULL DEFAULT 'single_turn' CHECK (mode IN ('single_turn', 'adaptive')),
+    mode TEXT NOT NULL DEFAULT 'single_turn' CHECK (mode IN ('single_turn', 'adaptive', 'replay')),
     attacker_model TEXT,                                         -- the model driving an adaptive run (FR-015)
     turn_budget INTEGER, turns_used INTEGER,
     token_budget INTEGER, tokens_used INTEGER,
@@ -59,7 +59,11 @@ RUNS_COLUMNS_SQL = """
     use_prior_experience INTEGER NOT NULL DEFAULT 1,            -- warm (1, default) or cold (0), per run (FR-014)
     memory_written INTEGER,                                      -- null not attempted, 1 written, 0 failed (FR-010)
     -- Added in schema version 7 (feature 009): the judge prompt behind this run's verdict (null = not recorded).
-    judge_prompt_id TEXT, judge_prompt_version TEXT
+    judge_prompt_id TEXT, judge_prompt_version TEXT,
+    -- Added in schema version 10 (feature 012): a replay links to the run it re-tests and records one outcome.
+    source_run_id INTEGER REFERENCES runs(id) ON DELETE CASCADE,  -- null unless mode = 'replay'
+    replay_outcome TEXT CHECK (replay_outcome IS NULL OR
+        replay_outcome IN ('fixed', 'still_vulnerable', 'inconclusive'))  -- null unless mode = 'replay'
 """
 # The indexes on `runs`: also shared, textually, with `_rebuild_runs_with_autoincrement` (which must issue these
 # as separate `execute()` calls rather than this joined form - see that method's docstring).
@@ -293,6 +297,9 @@ class Run:
     # Version 7 (feature 009): the judge prompt behind this run's verdict; None = not recorded (or no judge).
     judge_prompt_id: str | None = None
     judge_prompt_version: str | None = None
+    # Version 10 (feature 012): a replay links to the run it re-tests and records one outcome against it.
+    source_run_id: int | None = None       # the run this one replays; null unless mode == "replay"
+    replay_outcome: str | None = None      # "fixed" | "still_vulnerable" | "inconclusive"; null unless a replay
 
 
 @dataclass(frozen=True)
@@ -417,12 +424,14 @@ class TargetStore:
         (adaptive) and version-4 columns (experience) on the existing tables are ALTER-added for an older database
         (R9). Versions 5 and 8 (feature 010's run_log) add only a new table. Version 9 cannot be additive: SQLite
         has no ALTER that adds AUTOINCREMENT to an existing column, so `_rebuild_runs_with_autoincrement` rebuilds
-        `runs` once every additive column it needs has been added above."""
+        `runs` once every additive column it needs has been added above. Version 10 (feature 012) cannot be
+        additive either: SQLite cannot ALTER a CHECK constraint, so `_rebuild_runs_for_replay` rebuilds `runs` a
+        second time to widen the `mode` CHECK and add `source_run_id`/`replay_outcome`."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
         # An older database may lack the adaptive (v3), experience (v4) and prompt-version (v7) columns on `runs`.
@@ -446,6 +455,11 @@ class TargetStore:
         # Now that `runs` carries every current column, rebuild it under AUTOINCREMENT if it does not already
         # (a no-op for a database already migrated to v9, and for a fresh one: its `runs` came from SCHEMA above).
         TargetStore._rebuild_runs_with_autoincrement(db)
+        # Then widen `mode`'s CHECK and add source_run_id/replay_outcome if that has not happened yet (a no-op for
+        # a database already at v10, and for a fresh one, or one rebuilt above straight from pre-v9: either way
+        # RUNS_COLUMNS_SQL already gave `runs` these columns, since both rebuilds and the fresh CREATE TABLE share
+        # one definition).
+        TargetStore._rebuild_runs_for_replay(db)
         if current is None:
             db.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
         else:
@@ -492,6 +506,48 @@ class TargetStore:
         if violations:
             raise RuntimeError(
                 f"schema v9 migration would leave dangling foreign keys: {[tuple(v) for v in violations]}")
+        db.commit()
+        db.execute("PRAGMA foreign_keys = ON")
+
+    @staticmethod
+    def _rebuild_runs_for_replay(db: sqlite3.Connection) -> None:
+        """Schema v10 (feature 012): widen `mode`'s CHECK to accept 'replay' and add a self-referencing
+        `source_run_id` plus `replay_outcome`. SQLite cannot ALTER a CHECK constraint, so this is a second rebuild
+        of `runs`, following v9's own documented procedure and the same reasoning (foreign keys off before any
+        DML; the index statements as separate `execute()` calls, never `executescript`, so the rebuild can still be
+        refused before it commits; `PRAGMA foreign_key_check` empty before `commit()`).
+
+        A plain rename loses `runs`' `sqlite_sequence` row: `DROP TABLE runs` deletes it outright, and the copy
+        into `runs_new` only ever inserts the *surviving* rows, so `runs_new`'s own freshly-started sequence sits
+        at the highest surviving id, not the highest id this table ever issued — a numeric id freed by a deletion
+        *before* this rebuild (but after the v9 migration already made it unreissuable) would become reissuable
+        again the moment the rename takes its place, undoing v9's own guarantee exactly when a later run might
+        rely on it (a reissued id could collide with a surviving `memory:run:<id>` record,
+        `experience/store.py::write_memory`). The fix: read the old table's own watermark before dropping it, and
+        after the rename, restore the higher of that watermark and the highest id actually copied — in the same
+        transaction as the rename, never a separate commit in between.
+        """
+        columns = {r["name"] for r in db.execute("PRAGMA table_info(runs)")}
+        if "source_run_id" in columns:
+            return   # already rebuilt (or a fresh database, or one rebuilt above straight from pre-v9)
+        existing = ", ".join(r["name"] for r in db.execute("PRAGMA table_info(runs)"))
+        old_seq_row = db.execute("SELECT seq FROM sqlite_sequence WHERE name = 'runs'").fetchone()
+        old_seq = old_seq_row["seq"] if old_seq_row is not None else 0
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("DROP TABLE IF EXISTS runs_new")   # left over from a previous, interrupted migration attempt
+        db.execute(f"CREATE TABLE runs_new ({RUNS_COLUMNS_SQL})")
+        db.execute(f"INSERT INTO runs_new ({existing}) SELECT {existing} FROM runs")
+        db.execute("DROP TABLE runs")
+        db.execute("ALTER TABLE runs_new RENAME TO runs")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_runs_target ON runs (target_id, started_at DESC)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_active ON runs (target_id) WHERE status ="
+                   " 'in_progress'")
+        max_copied = db.execute("SELECT COALESCE(MAX(id), 0) AS m FROM runs").fetchone()["m"]
+        db.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'runs'", (max(old_seq, max_copied),))
+        violations = db.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"schema v10 migration would leave dangling foreign keys: {[tuple(v) for v in violations]}")
         db.commit()
         db.execute("PRAGMA foreign_keys = ON")
 
@@ -635,10 +691,11 @@ class TargetStore:
                   owasp_category: str, attacker_source: str, mode: str = "single_turn",
                   attacker_model: str | None = None, turn_budget: int | None = None,
                   token_budget: int | None = None, time_limit_s: int | None = None,
-                  use_prior_experience: bool = True) -> int:
+                  use_prior_experience: bool = True, source_run_id: int | None = None) -> int:
         """Write the row before anything is sent, so a crash still leaves evidence an attack went out (R10).
 
-        Adaptive runs pass mode='adaptive' with the attacker model and the budgets they were allowed (FR-015)."""
+        Adaptive runs pass mode='adaptive' with the attacker model and the budgets they were allowed (FR-015). A
+        replay (feature 012) passes mode='replay' and source_run_id naming the run it re-tests."""
         with self.connect() as db:
             if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
                 raise TargetNotFound(target_id)
@@ -646,11 +703,11 @@ class TargetStore:
                 cursor = db.execute(
                     "INSERT INTO runs (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category,"
                     " attacker_source, status, started_at, mode, attacker_model, turn_budget, token_budget,"
-                    " time_limit_s, use_prior_experience) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?,"
-                    " ?, ?)",
+                    " time_limit_s, use_prior_experience, source_run_id) VALUES (?, ?, ?, ?, ?, ?, ?,"
+                    " 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?)",
                     (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category, attacker_source,
                      utc_now(), mode, attacker_model, turn_budget, token_budget, time_limit_s,
-                     int(use_prior_experience)))
+                     int(use_prior_experience), source_run_id))
             except sqlite3.IntegrityError:
                 # SQLite names the column, not the index, so ask the data rather than parse the message.
                 open_run = db.execute("SELECT id FROM runs WHERE target_id = ? AND status = 'in_progress'",
@@ -666,19 +723,20 @@ class TargetStore:
                    failure_step: str | None = None, stopping_condition: str | None = None,
                    succeeded_turn: int | None = None, turns_used: int | None = None,
                    tokens_used: int | None = None, judge_prompt_id: str | None = None,
-                   judge_prompt_version: str | None = None) -> Run:
+                   judge_prompt_version: str | None = None, replay_outcome: str | None = None) -> Run:
         """Finish a run. Adaptive runs also pass how they ended and their usage (FR-012, FR-015, FR-019). The judge
-        prompt provenance (feature 009, FR-003) is null when the judge was not used."""
+        prompt provenance (feature 009, FR-003) is null when the judge was not used. A replay (feature 012) passes
+        replay_outcome, its one computed result against its source; every other caller leaves it null."""
         with self.connect() as db:
             updated = db.execute(
                 "UPDATE runs SET status = 'finished', verdict = ?, hard_evidence = ?, reason = ?, judge_used = ?,"
                 " judge_model = ?, reply_text = ?, reply_truncated = ?, failure_step = ?,"
                 " stopping_condition = ?, succeeded_turn = ?, turns_used = ?, tokens_used = ?,"
-                " judge_prompt_id = ?, judge_prompt_version = ?, finished_at = ?"
+                " judge_prompt_id = ?, judge_prompt_version = ?, replay_outcome = ?, finished_at = ?"
                 " WHERE id = ? AND status = 'in_progress'",
                 (verdict, int(hard_evidence), reason, int(judge_used), judge_model, reply_text,
                  int(reply_truncated), failure_step, stopping_condition, succeeded_turn, turns_used,
-                 tokens_used, judge_prompt_id, judge_prompt_version, utc_now(), run_id)).rowcount
+                 tokens_used, judge_prompt_id, judge_prompt_version, replay_outcome, utc_now(), run_id)).rowcount
             if updated == 0:
                 raise LookupError(f"No run in progress with id {run_id}.")
         return self.get_run(run_id)
@@ -899,12 +957,30 @@ class TargetStore:
                           started_at=row["started_at"], finished_at=row["finished_at"], arms=tuple(arms))
 
     def close_interrupted_runs(self) -> int:
-        """Close anything a stopped process left open, so the target isn't locked by FR-010 forever (FR-031)."""
+        """Close anything a stopped process left open, so the target isn't locked by FR-010 forever (FR-031). An
+        interrupted replay (feature 012) is closed inconclusive, never left with a null outcome (012/FR-012,
+        FR-015); the CASE is a no-op for a non-replay row, whose replay_outcome is already null."""
         with self.connect() as db:
             return db.execute(
                 "UPDATE runs SET status = 'finished', verdict = 'unclear', stopping_condition = 'interrupted',"
                 " reason = 'Kestrel stopped while this run was in progress, so it was interrupted.',"
+                " replay_outcome = CASE WHEN mode = 'replay' THEN 'inconclusive' ELSE replay_outcome END,"
                 " finished_at = ? WHERE status = 'in_progress'", (utc_now(),)).rowcount
+
+    def list_replayable_runs(self, target_id: int) -> list[Run]:
+        """The finished, succeeded, non-replay runs of one target that a batch replay (feature 012) would process,
+        oldest first (FR-028, FR-029). Unaffected by whether a different run is currently in progress on the
+        target - that is `replay.compute_replay_status`'s own, display-time concern (research D10), never folded
+        into this query, so the batch's own in-flight replays can never make the rest of its planned list look
+        ineligible to itself."""
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
+                raise TargetNotFound(target_id)
+            rows = db.execute(
+                "SELECT * FROM runs WHERE target_id = ? AND status = 'finished' AND verdict = 'succeeded'"
+                " AND mode != 'replay' AND (mode = 'single_turn' OR turns_used >= 1)"
+                " ORDER BY started_at ASC, id ASC", (target_id,)).fetchall()
+        return [self._run(row) for row in rows]
 
     @staticmethod
     def _run(row: sqlite3.Row) -> Run:
@@ -922,7 +998,8 @@ class TargetStore:
                    succeeded_turn=row["succeeded_turn"],
                    use_prior_experience=bool(row["use_prior_experience"]),
                    memory_written=None if row["memory_written"] is None else bool(row["memory_written"]),
-                   judge_prompt_id=row["judge_prompt_id"], judge_prompt_version=row["judge_prompt_version"])
+                   judge_prompt_id=row["judge_prompt_id"], judge_prompt_version=row["judge_prompt_version"],
+                   source_run_id=row["source_run_id"], replay_outcome=row["replay_outcome"])
 
     @staticmethod
     def _header_rows(db: sqlite3.Connection, target_id: int) -> list[sqlite3.Row]:

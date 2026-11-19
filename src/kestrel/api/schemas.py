@@ -59,6 +59,13 @@ class PromptVersionOut(BaseModel):
     version: str  # the active version ("1", "2", …); never the prompt text (FR-007, FR-012)
 
 
+class ReplayOut(BaseModel):
+    """Regression replay (feature 012): the batch cap in effect, and the longer of the two per-run deadlines the
+    server actually enforces - what scripts/check_replay.py sizes its own batch timeout from (FR-031)."""
+    max_batch_runs: int
+    per_replay_time_limit_s: int
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -67,6 +74,7 @@ class ConfigOut(BaseModel):
     attacker: AttackerOut
     adaptive: AdaptiveCapsOut
     experience: ExperienceOut
+    replay: ReplayOut
     prompts: list[PromptVersionOut] = []   # active prompt versions, id + version only (feature 009, FR-007)
 
 
