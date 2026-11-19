@@ -805,7 +805,7 @@ printed.
       shared-node extraction (research D14) and the lazy import it needed; and that Principle V's "a run that
       does not write back is a bug" does not apply to a replay, by design, recorded in Complexity Tracking
       (012/FR-020, FR-049; research D1, D2, D5, D7, D14, D15).
-- [ ] T036 [P] **Bump the five tests that pin the current schema version as a
+- [X] T036 [P] **Bump the five tests that pin the current schema version as a
       literal `"9"`** to `"10"`, following the convention every prior version bump has used (CLAUDE.md "Learned
       notes"): `tests/unit/test_store_migration_v5.py` (lines 103, 110, 129), `tests/unit/test_store_migration_v6.py`
       (lines 82, 89, 97), `tests/unit/test_store_migration_v8.py` (lines 58, 65, 95),
