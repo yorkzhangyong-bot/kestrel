@@ -120,7 +120,7 @@ calls are identical.
 2. **Given** a target with at least one succeeded, non-replay run that is already a report finding, **When** that
    run is replayed and the target's OWASP report is generated again, **Then** the report's finding count, coverage
    rows and recommendation calls are unchanged — the replay appears nowhere in it.
-3. **Given** a replay, **When** its run is stored, **Then** its "was memory written" status is recorded as "never
+3. **Given** a replay, **When** its run is stored, **Then** its "was memory written" status is recorded as "not
    attempted", never as "written" or "failed".
 
 ---
@@ -220,6 +220,16 @@ text, the target's URL, or any header value, in any case.
 - **An adaptive source has more recorded messages than the current adaptive turn limit allows**: the replay sends
   up to that current limit and no further; because not every recorded message was sent and judged, the outcome is
   **inconclusive**, never guessed as fixed.
+- **A multi-turn source's replayed early turns draw different replies than the original run did**: the later
+  recorded messages were written to continue a conversation the *original* target produced, so they may no longer
+  fit what today's target actually says; a clean "failed" verdict on every sent turn does not by itself prove the
+  attack is fixed unless the source's own winning turn — the one its original run actually succeeded at — was
+  itself sent and judged failed (FR-014). A **multi-message** source with no recorded winning turn (defensive;
+  not reachable through normal operation) can never be scored fixed; it is always **inconclusive**. A
+  single-message source has no such check at all, regardless of mode: a single-turn run never records a winning
+  turn at all, while an adaptive run that succeeded on its very first turn does record one — either way, with
+  only one message recorded, the check is skipped and that one message alone decides the outcome, exactly as
+  before this rule existed.
 - **No judge is configured when the replay runs** (it may have been configured when the source ran): the canary
   check still applies to every resent message; without a judge and without a canary match, the outcome is
   **inconclusive** (there is no way to call it fixed with certainty).
@@ -278,8 +288,9 @@ text, the target's URL, or any header value, in any case.
 - **FR-006**: Before claiming a replay's run row, Kestrel MUST check the same preconditions a normal run checks on
   the same target, refusing with the exact same wording a normal run already uses: the permission box is
   confirmed (**"Tick the permission box and save the target before attacking it."**), the current terms of
-  service are accepted (**"The terms of service have changed; read them and tick the box again."**), and no
-  other run (of any mode) is already in progress on that target.
+  service are accepted (**"The terms of service have changed; read them and tick the box again."**), and no other
+  run (of any mode) is already in progress on that target (**"A run against this target is already in
+  progress."**).
 
 **Scoring a replay**
 
@@ -308,7 +319,18 @@ text, the target's URL, or any header value, in any case.
   judge returned a success verdict, on any turn the replay sent).
 - **FR-014**: The outcome MUST be **fixed** only when every one of the source's recorded messages was sent and
   scored, none succeeded, and the judge returned a failure verdict on every turn it judged (no canary match and no
-  judge error, no "unclear" verdict, and no message left unsent).
+  judge error, no "unclear" verdict, and no message left unsent). For a source with **more than one** recorded
+  message, "fixed" additionally requires that the source's own **winning turn** — the turn its own run succeeded
+  at (`runs.succeeded_turn`) — was itself sent and judged **failed** by the judge, never inferred from a canary
+  miss alone: the source's later recorded messages were written for replies the *original* target gave, so a
+  replay's earlier turns can draw different replies from today's target and leave the later ones no longer
+  fitting the conversation that produced them, and an all-"failed" judge run proves nothing about the actual
+  attack if the one turn that mattered was never genuinely re-tested. A multi-message source with no recorded
+  winning turn MUST be **inconclusive**, never fixed (fail closed; FR-015). A single-message source is unaffected
+  by this addition, since its one message is always its own winning turn. A multi-turn replay re-tests the
+  source's recorded messages, not a fresh adaptive attack: "fixed" for such a source means that recorded sequence,
+  including its own winning message, no longer succeeds today — not that the target would resist a new adaptive
+  attack built from scratch.
 - **FR-015**: The outcome MUST be **inconclusive** in every other case — including, but not limited to: a message
   that failed to send; no judge configured and no canary match; a judge error or an "unclear" judge verdict on any
   turn; the run's time limit reached, or the current adaptive turn or token limit reached, before every recorded
@@ -399,10 +421,10 @@ text, the target's URL, or any header value, in any case.
   way the UI does (the same API address and access-token settings) to batch-replay one named target and report the
   result.
 - **FR-035**: The script MUST print one line per replay entry — naming the source and replay run ids, the attack
-  family, the outcome, and (POLISH finding, round 3 review) each run's own evidence kind, source and replay named
-  separately (canary or judge; or, for the one entry whose own replay crashed, that it has none) — and one summary
-  line naming the outcome counts and (POLISH finding, round 3 review) the batch's completeness, and MUST NOT print
-  attack text, reply text, the target's URL, or any header value under any circumstance.
+  family, the outcome, and each run's own evidence kind, source and replay named separately (canary or judge; or,
+  for the one entry whose own replay crashed, that it has none) — and one summary line naming the outcome counts
+  and the batch's completeness, and MUST NOT print attack text, reply text, the target's URL, or any header value
+  under any circumstance.
 - **FR-036**: The script MUST exit with status `1`, reserved for "at least one entry is still vulnerable",
   whenever that is true — whether or not the batch completed (FR-029/FR-030) — taking priority over everything
   else. Short of that, the script MUST exit with status `0` only when the batch **completed** and every entry is
@@ -427,14 +449,14 @@ text, the target's URL, or any header value, in any case.
   folded into a generic "single-turn"/"adaptive" label), in a listing that carries a **"Source"** column naming
   the source run for a replay row and left blank for every other row.
 - **FR-040**: The UI's run page MUST offer a button labelled exactly **"Replay"**, rendered for **every** run
-  shown on the run page (POLISH finding, round 3 review: not just every *finished* run, which would wrongly
-  exclude one still in progress) — a run still in progress shows the button disabled with the "in progress"
-  reason as its caption (FR-004), and one that ended at a failure step shows it too, alongside the page's own
-  error display for that step — never omitted because a run's result, or lack of one yet, renders through a
-  different path. A run that is not currently eligible
-  for replay MUST make that visibly clear — the button shown **disabled, with the reason as its visible
-  caption** — rather than silently doing nothing when clicked, using exactly one of the six reason strings FR-004
-  to FR-006 define (the "not succeeded" reason covering a failed, an unclear, or a failed-to-send verdict alike).
+  shown on the run page, not just every *finished* one — a run still in progress shows the button disabled with
+  the "in progress" reason as its caption (FR-004), and one that ended at a failure step shows it too, alongside
+  the page's own error display for that step — never omitted because a run's result, or lack of one yet, renders
+  through a different path. A run that is not currently eligible for replay MUST make that visibly clear — the
+  button shown **disabled, with the reason as its visible caption** — rather than silently doing nothing when
+  clicked, using exactly one of the seven reason strings FR-004 to FR-006 define (the "not succeeded" reason
+  covering a failed, an unclear, or a failed-to-send verdict alike; the "another run in progress" reason covering
+  a different, concurrent run on the same target, distinct from this run's own "in progress" case).
   A source whose recorded turns exceed the currently configured adaptive turn limit MUST still show an
   **enabled** button (it is still eligible; FR-004) alongside this exact advisory caption: **"This source
   recorded more turns than the current adaptive limit; the replay can end at best still vulnerable or
@@ -443,7 +465,12 @@ text, the target's URL, or any header value, in any case.
 - **FR-041**: After a replay finishes, the run page MUST show a line reading exactly **"Outcome: "** followed by
   the outcome's label (FR-016) — for example "Outcome: fixed" — and the side-by-side comparison required by
   FR-017; opening a replay run from the target's run list MUST show the same outcome line and comparison, with a
-  link back to the source run labelled exactly **"Replay of run #N"** (N = the source run's id).
+  link back to the source run labelled exactly **"Replay of run #N"** (N = the source run's id). For a replay
+  whose source has **more than one** recorded message, the page MUST also show, directly under the outcome line
+  (both right after the replay runs and whenever the replay run is later opened), exactly this caption: **"A
+  multi-turn replay re-tests the recorded messages, not an adaptive attack."** — never shown for a replay of a
+  single-message source. The API decides whether the caption applies and the comparison carries the caption text
+  (or null); the UI only displays what it is given (FR-042).
 - **FR-042**: The UI MUST reach every replay capability only through the API — no replay-specific logic MUST live
   in the screen itself. In particular, whether a run is currently replayable, its blocked reason when it is not
   (FR-004 to FR-006), and its advisory when it is replayable but may end inconclusively (FR-040) MUST all be
@@ -506,10 +533,12 @@ text, the target's URL, or any header value, in any case.
   calls are made.
 - **SC-002**: Across a test matrix covering a target that now fails every resent message, one that still falls for
   at least one, one that fails to answer, one with no judge configured, one that hits the current turn limit
-  before finishing, and one whose **first** resent message comes back an unclear verdict or a judge error while
-  every later one is cleanly judged failed, every replay is assigned exactly one of fixed / still vulnerable /
-  inconclusive, and each matches the rule in FR-013 to FR-015 100% of the time — the last case scoring
-  **inconclusive**, never fixed, because one unresolved early turn is never hidden behind later clean failures.
+  before finishing, one whose **first** resent message comes back an unclear verdict or a judge error while every
+  later one is cleanly judged failed, and a multi-message source whose own winning turn is either never reached or
+  reached but not judged failed, every replay is assigned exactly one of fixed / still vulnerable / inconclusive,
+  and each matches the rule in FR-013 to FR-015 100% of the time — the unresolved-early-turn case and the
+  winning-turn case both scoring **inconclusive**, never fixed: neither an unresolved early turn nor an unproven
+  winning turn is ever hidden behind other turns' clean failures.
 - **SC-003**: Across every replay and batch replay the offline test suite drives, the experience store records 0
   calls of any kind (query or write), under every outcome.
 - **SC-004**: Generating a target's OWASP report before and after replaying one of its existing findings yields an
@@ -521,8 +550,8 @@ text, the target's URL, or any header value, in any case.
   entries, oldest source first, with outcome counts that sum to N, and reports itself complete; a target whose
   replayable-run count exceeds the configured cap has its whole batch refused before any message is sent, 100%
   of the time; a batch that stops early — because a later entry's claim collides with a concurrent run, or
-  because one entry's own replay fails unexpectedly (`replay_failed`, POLISH finding round 3 review) — reports
-  itself incomplete, naming every source run it never reached, and is never scored as if it had finished.
+  because one entry's own replay fails unexpectedly (`replay_failed`) — reports itself incomplete, naming every
+  source run it never reached, and is never scored as if it had finished.
 - **SC-007**: The CI script exits `0` only on a **completed** all-fixed or nothing-to-replay result, a code
   reserved for "still vulnerable" whenever at least one entry is (completed or not), a distinct code reserved for
   "could not conclude the target is fixed" both when no entry is still vulnerable but at least one is
@@ -568,6 +597,9 @@ text, the target's URL, or any header value, in any case.
   means to unmask it, matching Principle IV (secrets never leave the vault).
 - Nothing about how a *normal* run is scored, stored, logged, or written back changes; this feature only adds a
   new kind of run and the actions that create one.
+- A multi-turn replay re-tests its source's recorded messages, not a fresh adaptive attack: "fixed" for a
+  multi-turn source means that recorded sequence, including its own winning turn, no longer succeeds against
+  today's target — it does not mean the target would resist a new adaptive attack built from scratch (FR-014).
 
 ## Out of Scope
 

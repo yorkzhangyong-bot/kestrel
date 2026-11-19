@@ -18,8 +18,9 @@ currently configured adaptive turn cap)` — which makes "ran out of recorded me
 same `decide_node` path the graph already has, so no new stopping condition is needed. The outcome against the
 source — **fixed** / **still vulnerable** / **inconclusive** — is computed from the **sequence of each turn's own
 result**, captured live as the replay runs (never from the run's one final `verdict` field, which a later turn
-can silently overwrite ahead of an earlier, unresolved one — research D5, fixed after a severe review finding);
-a small pure function maps that sequence to the outcome. A replay never calls `background_provider` or
+can silently overwrite ahead of an earlier, unresolved one — research D5), additionally requiring, for a
+multi-message source, that the source's own winning turn was itself sent and judged failed; a small pure function
+maps that to the outcome. A replay never calls `background_provider` or
 `write_back` (no retrieval, no write-back), so the
 shared pattern pool, per-target memory and the OWASP report are untouched by it. Storage needs one more rebuild of
 `runs` (**schema v10**, following v9's documented procedure) to widen the `mode` CHECK and add a self-referencing
@@ -67,7 +68,7 @@ CLI script under `scripts/`.
 **Performance Goals**: a replay costs at most as much as the live run it re-tests (same send/judge calls, same
 caps, zero attacker calls — strictly fewer model calls than the source made); a batch of up to the configured cap
 (20) runs those one at a time, so its worst case is bounded by `cap × (a single replay's own time limit)`. The UI
-has no batch action (the spec asks only for a single-run **Replay** button, MAJOR finding round 1 review); its one
+has no batch action (the spec asks only for a single-run **Replay** button); its one
 HTTP call (`replay_run`) needs a timeout that covers one replay — the adaptive time limit plus a margin, the same
 shape `run_attack`'s existing timeout already uses, never the batch's own, much larger bound. The CI script is the
 one caller of the batch endpoint and sizes its own timeout for the batch's worst case (research D13).
@@ -88,8 +89,7 @@ cap)` messages.
 ## Constitution Check
 
 *GATE: must pass before Phase 0 and after Phase 1. Result: **PASS** — one principle (V) carries a justified,
-recorded deviation; see Complexity Tracking below. No other violations (MINOR finding, round 2 review: this line
-previously said "no violations" outright, contradicting the Complexity Tracking table two sections down).*
+recorded deviation; see Complexity Tracking below. No other violations.*
 
 | Principle | Assessment |
 |-----------|------------|
@@ -140,14 +140,12 @@ src/kestrel/
 │                                  #   separately reusable); run_replay_adaptive defines its own
 │                                  #   attacker_node/record_node beside run_adaptive's (a model call vs. a list
 │                                  #   lookup; attacker_generated is always False for a replay, the turn's
-│                                  #   attacker-prompt provenance only copied from source_turns[turn - 1] — MINOR
-│                                  #   finding round 2 review: the judge-prompt provenance is never copied, it is
+│                                  #   attacker-prompt provenance only copied from source_turns[turn - 1] — the
+│                                  #   judge-prompt provenance is never copied, it is
 │                                  #   the replay's own current judge call (FR-022); a NEW
 │                                  #   try/except around its own ainvoke() sets replay_outcome="inconclusive" on
 │                                  #   a crash (research D15) — run_adaptive itself is untouched in behaviour
-├── runs.py                       # UNCHANGED (MINOR finding round 2 review: a stray earlier bullet here
-│                                  #   contradicted the rest of this plan, which puts execute_replay in
-│                                  #   replay.py throughout — removed); replay.py imports match_canary/judge_ref
+├── runs.py                       # UNCHANGED; replay.py imports match_canary/judge_ref
 │                                  #   from here, as run_adaptive already does
 ├── store.py                      # SCHEMA_VERSION "10"; RUNS_COLUMNS_SQL (mode CHECK + source_run_id +
 │                                  #   replay_outcome); _rebuild_runs_for_replay (new, beside
@@ -158,42 +156,44 @@ src/kestrel/
 │                                  #   replay.batch.start / replay.batch.end; replay_batch_started/_ended helpers
 ├── settings.py                    # KESTREL_REPLAY_BATCH_MAX_RUNS (positive_int, default 20) ->
 │                                  #   Settings.replay_batch_max_runs
-├── api/schemas.py                 # RunSummary/RunDetail: source_run_id, replay_outcome, finding (MINOR finding
-│                                  #   round 2 review: true for a succeeded, non-replay run — ui/app.py's
-│                                  #   headline cards read this, never the mode), replayable, replay_blocked_reason
-│                                  #   (MAJOR finding round 2 review: renamed from not_replayable_reason; computed
-│                                  #   server-side from the run AND its target's current permission/terms state,
-│                                  #   never from the run's own fields alone), replay_advisory (new, separate from
+├── api/schemas.py                 # RunSummary/RunDetail: source_run_id, replay_outcome, finding (true for a
+│                                  #   succeeded, non-replay run — ui/app.py's headline cards read this together
+│                                  #   with hard_evidence for Confirmed/Suspected, never the mode), replayable,
+│                                  #   replay_blocked_reason (computed
+│                                  #   server-side from the run AND its target's current permission/terms/
+│                                  #   other-run-in-progress state, never from the run's own fields alone — seven
+│                                  #   exact reason strings in total), replay_advisory (new, separate from
 │                                  #   replay_blocked_reason — a replayable run can still carry one); RunDetail:
 │                                  #   comparison (ReplayComparisonOut | None — NOT ComparisonOut, which already
-│                                  #   names the 007 experiment significance shape, api/schemas.py:314);
+│                                  #   names the 007 experiment significance shape, api/schemas.py:314 — including
+│                                  #   multi_turn_caption, the pinned FR-041 string for a multi-message source);
 │                                  #   BatchReplayResultOut (entries, counts, complete, stop_reason — including
-│                                  #   "replay_failed", POSSIBLE finding round 1, accepted — not_replayed_source_ids),
+│                                  #   "replay_failed" — not_replayed_source_ids),
 │                                  #   BatchReplayEntryOut (incl. both *_hard_evidence fields); ConfigOut.replay
 │                                  #   (batch cap, and per_replay_time_limit_s = max(adaptive time limit,
-│                                  #   single-turn deadline) for the CI script's own timeout, POSSIBLE finding
-│                                  #   round 2 review, accepted)
+│                                  #   single-turn deadline) for the CI script's own timeout)
 ├── api/main.py                    # POST /api/runs/{run_id}/replay (**201**, a run is created, like POST
 │                                  #   /api/runs today); POST /api/targets/{target_id}/replays (**200** for
-│                                  #   every batch result — complete, incomplete, or zero entries alike, MINOR
-│                                  #   finding round 2 review: not 201, since a batch creates N runs, not one
+│                                  #   every batch result — complete, incomplete, or zero entries alike,
+│                                  #   not 201, since a batch creates N runs, not one
 │                                  #   resource; a precondition refused before the batch starts keeps its own 4xx);
 │                                  #   target_report filters out mode == "replay" before build_report/
 │                                  #   recommendations_for
 └── report/model.py                # untouched — the filter lives at the api/main.py call site (research D9)
 ui/
 ├── api_client.py                  # replay_run(run_id) only — no batch_replay client; the UI has no batch
-│                                  #   action (MAJOR finding round 1 review: the spec asks only for a single-run
+│                                  #   action (the spec asks only for a single-run
 │                                  #   Replay button)
-└── app.py                         # Replay button rendered before `_render_finding`'s failure-step early return
-│                                  #   (MAJOR finding round 2 review: app.py:520-525 returns early for a run
-│                                  #   whose send failed, so the button must render ahead of that branch to
-│                                  #   appear — disabled — for those runs too), keyed by render context (the
-│                                  #   result card vs. an opened run — MAJOR finding round 1 review: a fixed key
+└── app.py                         # Replay button, outcome line, multi-turn caption and comparison all render
+│                                  #   before `_render_finding`'s failure-step early return
+│                                  #   (app.py:520-525 returns early for a run
+│                                  #   whose send failed, so all of these must render ahead of that branch to
+│                                  #   appear — the button disabled — for those runs too), keyed by render context
+│                                  #   (the result card vs. an opened run — a fixed key
 │                                  #   would collide when both render in one pass); run-list Mode/Source columns;
-│                                  #   the side-by-side table; render_metrics (app.py:909-911) counts Confirmed/
-│                                  #   Suspected over `run["finding"]` only (MINOR finding round 2 review: a
-│                                  #   server-computed boolean, no mode check of any kind in the UI)
+│                                  #   the side-by-side table; render_metrics (app.py:909-911) drives Confirmed/
+│                                  #   Suspected from `run["finding"]` and `run["hard_evidence"]` together (two
+│                                  #   server-computed values, no mode check of any kind in the UI)
 scripts/
 └── check_replay.py                # NEW — CI gate: --target-id, KESTREL_API_URL/KESTREL_API_TOKEN, exit 0/1/2/3
 tests/
@@ -242,17 +242,14 @@ script calls the batch endpoint).
 - Phase 1 (design): done — `data-model.md`, `contracts/`, `quickstart.md`; Constitution Check re-evaluated after
   design: PASS (no new dependency, the Principle-V deviation is justified and recorded in Complexity Tracking and
   is visible on every affected run as `memory_written = "not attempted"`, no new report section, caps unchanged
-  apart from the one new, configurable batch cap).
-- **Round 1 fixes (2026-11-19)**: a read-only Opus review returned FAIL (1 severe, 5 major, 9 minor, 1 possible);
-  every item applied here and in `research.md`/`data-model.md`/`contracts/`/`spec.md`/`tasks.md`/`quickstart.md`/
-  `checklists/requirements.md` — most substantially, the outcome rule (research D5) now reads every replay turn's
-  own result instead of the run's one aggregate `verdict`, which could silently hide an early unresolved turn
-  behind a later clean failure.
-- **Round 2 fixes (2026-11-19)**: a second review returned FAIL (1 major, 5 minor, 1 possible); every item applied
-  here and in `research.md`/`data-model.md`/`contracts/`/`spec.md`/`tasks.md`/`quickstart.md` — most substantially:
-  `replayable`/the blocked reason/the advisory are now computed from the run **and its target's current
-  permission/terms state**, not the run alone, with every reason string pinned word for word (FR-004 to FR-006,
-  FR-040); the batch endpoint always answers `200` (never `201`); a `finding` flag (server-computed) replaces any
-  mode check the UI's headline cards might otherwise need; a single replay's own unexpected failure inside a
-  batch now has a defined, non-500 shape (`stop_reason: "replay_failed"`).
+  apart from the one new, configurable batch cap). The outcome rule (research D5) reads every replay turn's own
+  result, never the run's one aggregate `verdict` (which could otherwise silently hide an early unresolved turn
+  behind a later clean failure), and additionally requires a multi-message source's own winning turn to have
+  itself failed under the judge; `replayable`/the blocked reason/the advisory are computed from the run **and
+  its target's current permission/terms/in-progress state**, not the run alone, with every one of the seven
+  reason strings pinned word for word (FR-004 to FR-006, FR-040); the batch endpoint always answers `200` (never
+  `201`); a `finding` flag, together with `hard_evidence`, drives the UI's Confirmed/Suspected headline cards
+  with no mode check; a single replay's own unexpected failure inside a batch closes that entry's row and raises
+  a named `ReplayFailed`, giving the batch loop a defined, non-500 shape to catch (`stop_reason:
+  "replay_failed"`), with each batch entry running inside its own `events.run_scope()`.
 - Phase 2 (tasks): `/speckit-tasks` → `tasks.md`.

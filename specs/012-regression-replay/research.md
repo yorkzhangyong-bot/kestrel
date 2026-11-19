@@ -105,14 +105,15 @@ toward it; the CI script's usage/API-error exit status is `3`).
   here (`replayable` / `replay_blocked_reason` / `replay_advisory` as API-computed booleans/strings the screen
   only reads). Unlike that button, though, the Run-attack path never pre-checks permission/terms either (it just
   tries and surfaces the 409 if any) — `replayable` deliberately does more: it is false whenever permission is
-  missing or terms are outdated too, a MAJOR finding (round 2) the first draft missed by computing `replayable`
+  missing or terms are outdated too, computed from `check_replayable(run)` plus the target's own state, never
   from `check_replayable(run)` alone, which only ever looks at the run's own fields and knows nothing about its
   target.
 - **`_render_finding` returns early for a failed-to-send run** (`ui/app.py:520-525`, `if run.get("failure_step"):
-  ... return`), before reaching any code that would come after it in the function body — a MAJOR finding (round 2)
-  the first draft's placement of the Replay button inside this function would have hit: a button written after
-  that `return` simply never renders for a run that failed to send, even though such a run is a legitimate
-  "not succeeded" case the button must still show, disabled.
+  ... return`), before reaching any code that would come after it in the function body: the Replay button, and
+  (per FR-041) the outcome line, comparison and source link for a replay whose own send failed, must all render
+  **before** that branch, not after it — placed after, they would simply never render for a run that failed to
+  send, even though such a run is a legitimate "not succeeded" case the page must still show, disabled or
+  otherwise.
 
 ## Decisions
 
@@ -155,37 +156,61 @@ toward it; the CI script's usage/API-error exit status is `3`).
   removes **both** the source and the replay row in one statement with no orphan and no FK violation, and (d) the
   `mode` CHECK now accepts `'replay'` and still rejects a bogus value. This is the task's own explicit instruction,
   not an optional nicety.
-- **D5 — The outcome rule reads every turn's own result, never the run's one aggregate `verdict` (revised after a
-  SEVERE finding, round 1 review).** The first draft of this decision computed `compute_outcome(verdict:
-  str | None, turns_sent: int, recorded_total: int)` from the *finished run's* single `verdict` field. That field
-  is wrong for this purpose: `attack/graph.py::decide_node`'s cap-stop line (`"verdict": state["last_verdict"] or
-  "unclear"`) takes whichever turn's `judge_node` call *most recently* set `last_verdict`, and `judge_node` leaves
-  `last_judged_turn`/`outcome` untouched on a `JudgeError` or a "no judge configured" turn — so the run keeps
-  going, and a *later* turn's `"failed"` silently overwrites an *earlier* turn's unresolved `"unclear"`. A replay
-  whose turn 1 errors and whose turns 2+ are cleanly judged `"failed"` would read, by final `verdict` alone, as
-  `"failed"` with every message sent — **fixed** — when the honest answer, because turn 1 was never resolved, is
-  **inconclusive**. The reviewer's reproduction is exactly this: turn 1 unclear (a judge error), turns 2+ failed.
-  The fix: `compute_outcome(turn_results: list[str | None], recorded_total: int)` takes the **sequence of
-  per-turn results** (one entry per turn actually attempted; `None` for an unclear verdict, a judge error, no
-  judge configured and no canary, or a send failure):
+- **D5 — The outcome rule reads every turn's own result, never the run's one aggregate `verdict`, and a
+  multi-message source's "fixed" also requires its own winning turn to have failed under the judge.** A run's
+  final `verdict` field is the wrong input for this: `attack/graph.py::decide_node`'s cap-stop line
+  (`"verdict": state["last_verdict"] or "unclear"`) takes whichever turn's `judge_node` call *most recently* set
+  `last_verdict`, and `judge_node` leaves `last_judged_turn`/`outcome` untouched on a `JudgeError` or a "no judge
+  configured" turn — so the run keeps going, and a *later* turn's `"failed"` silently overwrites an *earlier*
+  turn's unresolved `"unclear"`. A replay whose turn 1 errors and whose turns 2+ are cleanly judged `"failed"`
+  would read, by final `verdict` alone, as `"failed"` with every message sent — **fixed** — when the honest
+  answer, because turn 1 was never resolved, is **inconclusive**.
+  The fix: `compute_outcome(turn_results: list[str | None], recorded_total: int, winning_turn: int | None) ->
+  str` takes the **sequence of per-turn results** (one entry per turn actually attempted; `None` for an unclear
+  verdict, a judge error, no judge configured and no canary, or a send failure), the number of messages the
+  source recorded, and the source's own **winning turn** — the turn its original run succeeded at
+  (`runs.succeeded_turn`, 1-based). This column is `NULL` in two different situations the function must tell
+  apart: **always**, for a single-turn source (`store.py`'s schema comment: "single-turn runs leave these at
+  their defaults/null"; `runs.py::execute_run` never sets it — not a gap, just how a single-turn run is recorded,
+  and left exactly as is, FR-049), and, **defensively**, for a multi-turn source whose winning turn was somehow
+  never recorded (not reachable through normal operation). The function tells them apart by gating on
+  `recorded_total`, never on `winning_turn is None` alone:
   - any entry `"succeeded"` → `"still_vulnerable"` (FR-013) — checked first, regardless of how many turns were
     sent, mirroring "stop at the first success" (FR-010).
-  - `len(turn_results) == recorded_total` and every entry `"failed"` → `"fixed"` (FR-014) — every recorded message
-    was sent **and every one of them, individually**, failed; one `None` anywhere in the list (not just the last
-    entry) now correctly forces the next branch.
-  - anything else → `"inconclusive"` (FR-015): a `None` entry anywhere, or `len(turn_results) < recorded_total`
-    (a send failure, or the current turn/token/time limit cutting the replay short before the transcript ended).
+  - `len(turn_results) == recorded_total` and every entry `"failed"`, **and** — only when `recorded_total > 1` —
+    the entry at `winning_turn` itself `"failed"` → `"fixed"` (FR-014): every recorded message was sent and every
+    one of them, individually, failed; one `None` anywhere in the list (not just the last entry) forces the next
+    branch instead. For `recorded_total == 1` the winning-turn half of this condition is **skipped outright** —
+    `winning_turn` is never inspected — so a single-message source's outcome is exactly the pre-existing
+    "every message sent, none succeeded, the one judged failure" rule: gating on `recorded_total > 1`, never on
+    `winning_turn is None` alone, matters because a single-turn source's own `succeeded_turn` is always `NULL`
+    (`store.py`'s schema: "single-turn runs leave these at their defaults/null") — gating on `winning_turn is
+    None` instead would score *every* single-turn source `inconclusive` forever.
+  - anything else → `"inconclusive"` (FR-015): a `None` entry anywhere, `len(turn_results) < recorded_total` (a
+    send failure, or the current turn/token/time limit cutting the replay short before the transcript ended), or
+    — for `recorded_total > 1` only — the winning turn itself not sent, not judged failed, or `winning_turn is
+    None` (the defensive no-recorded-winning-turn case, fail closed).
   `turn_results` is captured **live**, turn by turn, inside the replay's own `record_node` (data-model.md,
   "Capturing `turn_results` live") — not reconstructed afterward from stored `run_turns` rows, which would
   reintroduce a milder version of the same staleness problem D7 already documents for `build_comparison`'s
-  *display* concern (a different, lower-stakes use of the same stored data). For a single-turn source,
-  `recorded_total = 1` and `turn_results` has zero entries if the send failed, one entry otherwise — the same
-  function, no special-casing. *Alternatives considered*: reconstructing `turn_results` after the fact from
-  `store.list_turns(run_id)` plus D7's terminal-turn correction (rejected: works, by the same induction D7 relies
-  on, but adds a database round-trip and a second place that has to get the terminal-turn special case right,
-  for a value — the actual outcome a user acts on — that matters more than the display-only comparison D7 serves;
-  capturing it live needs only one list and one `.append()` already sitting next to code that computes the exact
-  same signal for the existing `turn` log line).
+  *display* concern (a different, lower-stakes use of the same stored data). For a single-message source,
+  `recorded_total = 1` and the winning-turn check never runs at all (see above); `turn_results` has zero entries
+  if the send failed, one entry otherwise, the same function, no special-casing.
+
+  **This is a fail-closed guard, not the actual protection against later messages no longer fitting.** A source
+  run always stops at its first success, so its winning turn is always its own *last* recorded turn — "every
+  recorded message sent and every one individually judged failed" already entails the winning turn was sent and
+  judged failed, for any transcript a real run can produce. The real protection against a multi-turn replay's
+  later messages drifting out of fit with today's target is the *meaning* FR-014 gives "fixed" (every recorded
+  message, including the last/winning one, genuinely re-sent and re-judged, none succeeded) plus the FR-041
+  caption that names the limitation on the comparison itself; the explicit `winning_turn` check only changes the
+  outcome versus "all of them failed" in the one case a real run cannot produce — a multi-message source with no
+  recorded winning turn at all — where it fails closed rather than guessing. *Alternatives considered*: reconstructing
+  `turn_results` after the fact from `store.list_turns(run_id)` plus D7's terminal-turn correction (rejected:
+  works, by the same induction D7 relies on, but adds a database round-trip and a second place that has to get
+  the terminal-turn special case right, for a value — the actual outcome a user acts on — that matters more than
+  the display-only comparison D7 serves; capturing it live needs only one list and one `.append()` already
+  sitting next to code that computes the exact same signal for the existing `turn` log line).
 - **D6 — Eligibility is one predicate, reused by both the single endpoint and the batch query.**
   `replay.py::check_replayable(run: Run) -> None` raises `ReplayOfReplay(run.source_run_id)` when `run.mode ==
   "replay"`, or `NotReplayable(reason)` when `run.status != "finished"`, `run.verdict != "succeeded"`, or (adaptive
@@ -213,32 +238,41 @@ toward it; the CI script's usage/API-error exit status is `3`).
   `report/model.py` and `report/recommend.py` are untouched (FR-027), keeping `build_report`'s "pure function over
   already-fetched data" contract exactly as `contracts/report-module.md` (005) describes it today.
 - **D10 — The UI carries no eligibility logic at all; the API computes `replayable`, the blocked reason and the
-  advisory from the run, its target, and the current turn limit together (revised, MAJOR finding round 2
-  review).** `check_replayable(run)` (D6) alone is not enough: it only ever sees the run's own fields, so it
-  cannot know whether the run's *target* currently lacks permission or carries outdated terms — both of which
-  must also block a replay (FR-006), and both of which the first draft of this decision left for the UI to
-  discover only at click time, the same way the "Run attack" button already works (which is fine there, but not
-  what FR-042 asks for here). `RunSummary`/`RunDetail` instead gain three server-computed fields: `replayable:
-  bool`, `replay_blocked_reason: str | None` (one of the six exact strings FR-004 to FR-006 define, present only
-  when `replayable` is false), and `replay_advisory: str | None` (the over-turn-limit caption FR-040 defines,
-  independent of `replay_blocked_reason` — a replayable run can still carry one). All three come from one
-  function taking the run, its target (for `permission_confirmed_at` and `terms_version`) and the currently
-  configured adaptive turn limit — never the run alone — so a target whose permission or terms lapsed after a
-  run succeeded is reflected immediately, without waiting for a click. The replay endpoint's own refusal reuses
+  advisory from the run, its target, and the current turn limit together.** `check_replayable(run)` (D6) alone is
+  not enough: it only ever sees the run's own fields, so it cannot know whether the run's *target* currently
+  lacks permission or carries outdated terms, or whether a different, concurrent run is in progress on that same
+  target — all three of which must also block a replay (FR-006). Discovering them only at click time, the way
+  the "Run attack" button already does, is fine there but not what FR-042 asks for here. `RunSummary`/`RunDetail`
+  instead gain three server-computed fields: `replayable: bool`, `replay_blocked_reason: str | None` (one of the
+  seven exact strings FR-004 to FR-006 define, present only when `replayable` is false), and `replay_advisory:
+  str | None` (the over-turn-limit caption FR-040 defines, independent of `replay_blocked_reason` — a replayable
+  run can still carry one). All three come from one function taking the run, its target (for
+  `permission_confirmed_at` and `terms_version`), whether a *different* run is currently in progress on that
+  target, and the currently configured adaptive turn limit — never the run alone — so a target whose permission
+  or terms lapsed, or that has picked up a concurrent run, after this run succeeded is reflected immediately,
+  without waiting for a click. The checks run in a fixed order: replay-of-a-replay (FR-005) first, then FR-004's
+  three (in progress, not succeeded, no recorded message), then permission, then terms, then another run in
+  progress on the target (FR-006's third reason, **"A run against this target is already in progress."** — the
+  normal run's own refusal wording, `api/main.py:354`) last — the same order the single-replay endpoint's own 409
+  table already checks them in, so the two can never disagree. This seventh reason is transient (another run can
+  finish a moment later) and target-wide, not run-specific, so it is deliberately **not** folded into
+  `store.list_replayable_runs`/the batch's own eligibility query: the batch already has its own single
+  run-in-progress precondition, checked once before its first entry (FR-029), and must not let its *own* replays
+  make the remaining planned sources look ineligible while it is running. The replay endpoint's own refusal reuses
   the identical reason string `replay_blocked_reason` would have shown, so the two can never read differently for
   the same run. The Replay button's `disabled=not run["replayable"]` and its caption come straight from these
   fields, the same pattern the existing "Run attack" button uses for `attacker.get("configured")` — except this
   button must render **before** `_render_finding`'s failure-step early return (see the code fact above), not
   after it, so it still appears, disabled, for a run that never got a reply at all.
-- **D11 — Both new endpoints stay synchronous; the UI never calls the batch one (revised, MAJOR finding round 1
-  review).** Per the owner's text ("runs stay synchronous, as `POST /api/runs` is today") and FR-038: no
-  background task, no poll-for-status endpoint, for either a single replay or a batch. The spec asks for a
-  **single-run** Replay button only (FR-040) — there is no batch action in the UI at all, so `ui/api_client.py`
-  gets only `replay_run(run_id)`, with a timeout that covers one replay (the adaptive time limit plus a margin,
-  the same shape `run_attack`'s own timeout already uses over the adaptive wall clock — never the batch's much
-  larger bound). The **CI script** is the one caller of the batch endpoint, and sizes its own timeout for the
-  batch's worst case instead (`cap × per_replay_time_limit_s + 60`, research D13) — the first draft of this
-  decision gave the sizing job to a UI client (`batch_replay`) that the spec never asked for.
+- **D11 — Both new endpoints stay synchronous; the UI never calls the batch one.** Per the owner's text ("runs
+  stay synchronous, as `POST /api/runs` is today") and FR-038: no background task, no poll-for-status endpoint,
+  for either a single replay or a batch. The spec asks for a **single-run** Replay button only (FR-040) — there
+  is no batch action in the UI at all, so `ui/api_client.py` gets only `replay_run(run_id)`, with a timeout that
+  covers one replay (the adaptive time limit plus a margin, the same shape `run_attack`'s own timeout already
+  uses over the adaptive wall clock — never the batch's much larger bound). The **CI script** is the one caller
+  of the batch endpoint, and sizes its own timeout for the batch's worst case instead (`cap ×
+  per_replay_time_limit_s + 60`, research D13) — the UI needs no `batch_replay` client of its own, since it never
+  calls the batch endpoint.
 - **D12 — The batch cap is a first-class setting, reported on `GET /api/config`.** `KESTREL_REPLAY_BATCH_MAX_RUNS`
   (default 20) is parsed by the existing `positive_int(name, default)` helper (`settings.py`) — the same parser
   already used for `KESTREL_EXPERIMENT_MAX_RUNS` and the adaptive caps, so an invalid value refuses to start exactly
@@ -250,34 +284,32 @@ toward it; the CI script's usage/API-error exit status is `3`).
   `KESTREL_API_URL`/`KESTREL_API_TOKEN` (the same two environment variable names `ui/api_client.py` reads, so one
   CI job's environment serves both), keeping the existing one-directional dependency (`ui` → API; `scripts` → API
   or `kestrel`; never `scripts` → `ui`). Its HTTP timeout for the batch call defaults to
-  `cap × per_replay_time_limit_s + 60`, both read from `GET /api/config` (MAJOR finding, round 1 review: the
-  batch is synchronous and can legitimately run for `cap` replays' worth of wall-clock time, while `httpx`
-  defaults to a 5 s timeout). **`per_replay_time_limit_s` (POSSIBLE finding round 2, accepted) is
-  `max(settings.adaptive_time_limit_s, runs.TOTAL_DEADLINE_S)`** — the longer of the two per-run deadlines the
+  `cap × per_replay_time_limit_s + 60`, both read from `GET /api/config` — the batch is synchronous and can
+  legitimately run for `cap` replays' worth of wall-clock time, far beyond `httpx`'s 5 s default timeout.
+  **`per_replay_time_limit_s` is `max(settings.adaptive_time_limit_s, runs.TOTAL_DEADLINE_S)`** — the longer of
+  the two per-run deadlines the
   server actually enforces, not the adaptive one alone, since a batch can replay single-turn sources too (whose
   own deadline, 90 s today, is a plain module constant in `runs.py`, not a `Settings` field) — reported as a new
   `ConfigOut.replay.per_replay_time_limit_s` rather than making the script know about two separate constants
   itself; at the shipped defaults (300 s adaptive, 90 s single-turn) this is 300 s, so a cap of 20 is a 6060 s
   worst case. `--timeout SECONDS` overrides the computed default outright (`contracts/ci-script.md`).
 - **D14 — `run_adaptive`'s per-turn nodes are lifted to module-level functions where their behaviour is identical
-  live or replayed; `attacker_node`/`record_node` are written separately where it is not (MINOR finding, round 1
-  review).** `judge_node`, `send_node`, `evidence_node` and `decide_node` are closures defined *inside*
-  `run_adaptive` today — not separately callable, and the first draft of this plan's claim that `run_adaptive`'s
-  `judge_node`/`record_node` are simply "reused as-is" by `run_replay_adaptive` was not something Python actually
-  permits without either duplicating their bodies or lifting them out. Since all four of those nodes are
-  genuinely identical in substance whether the turn's message came from the attacker model or from a recorded
-  transcript (FR-008: the per-turn judge-call shape is explicitly unchanged for a replay), they become
-  module-level functions parameterised by what they used to close over, and both `run_adaptive` and
-  `run_replay_adaptive` wire thin node closures to them — a mechanical, behaviour-preserving extraction, proven by
-  `run_adaptive`'s own existing tests passing unmodified afterward (a task, not an assumption; FR-049).
-  `attacker_node` and `record_node` are **not** shared (a model call versus a list lookup; run-wide-constant
-  provenance versus per-turn copied provenance; `attacker_generated` is `turn >= 2` live but always `False`
-  replayed) — `run_replay_adaptive` defines its own two, "written beside" `run_adaptive`'s rather than
-  parameterising them, per the reviewer's own offered alternative. Both of the replay's own node closures index
-  `source_turns` at the **same** `turn - 1` (with `turn = state["turns_used"] + 1`, exactly how the live
-  `attacker_node` already names the current turn) for both the message lookup and the provenance copy — the first
-  draft's task description used `source_turns[turns_used]` for one and `source_turns[turns_used - 1]` for the
-  other, an off-by-one between two expressions that must read the same turn's data (data-model.md).
+  live or replayed; `attacker_node`/`record_node` are written separately where it is not.** `judge_node`,
+  `send_node`, `evidence_node` and `decide_node` are closures defined *inside* `run_adaptive` today — not
+  separately callable by a sibling function without either duplicating their bodies or lifting them out. Since
+  all four of those nodes are genuinely identical in substance whether the turn's message came from the attacker
+  model or from a recorded transcript (FR-008: the per-turn judge-call shape is explicitly unchanged for a
+  replay), they become module-level functions parameterised by what they used to close over, and both
+  `run_adaptive` and `run_replay_adaptive` wire thin node closures to them — a mechanical, behaviour-preserving
+  extraction, proven by `run_adaptive`'s own existing tests passing unmodified afterward (a task, not an
+  assumption; FR-049). `attacker_node` and `record_node` are **not** shared (a model call versus a list lookup;
+  run-wide-constant provenance versus per-turn copied provenance; `attacker_generated` is `turn >= 2` live but
+  always `False` replayed) — `run_replay_adaptive` defines its own two, written beside `run_adaptive`'s rather
+  than parameterising them. Both of the replay's own node closures index `source_turns` at the **same** `turn -
+  1` (with `turn = state["turns_used"] + 1`, exactly how the live `attacker_node` already names the current
+  turn) for both the message lookup and the provenance copy — the same index for both: using
+  `source_turns[turns_used]` for one and `source_turns[turns_used - 1]` for the other would be an off-by-one
+  between two expressions that must read the same turn's data (data-model.md).
   *Import cycle*: `replay.py` must import `run_replay_adaptive` **from** `graph.py` (to dispatch an adaptive
   source there); `compute_outcome` (D5) is needed **inside** `run_replay_adaptive`, and it lives in `replay.py` —
   so `graph.py` importing it at module level would create exactly the cycle `runs.py`'s own docstring already
@@ -288,7 +320,7 @@ toward it; the CI script's usage/API-error exit status is `3`).
   itself, so no lazy import is needed anywhere (rejected: `compute_outcome` is single-turn-and-adaptive-agnostic
   replay scoring, conceptually `replay.py`'s; moving it to avoid one lazy import would scatter replay's own logic
   across modules for a cosmetic reason runs.py already shows is unnecessary).
-- **D15 — An interrupted or crashed replay is never left without an outcome (MAJOR finding, round 1 review).**
+- **D15 — An interrupted or crashed replay is never left without an outcome.**
   `store.py::close_interrupted_runs` (the start-up sweep), `replay.py::execute_replay`'s single-turn exception
   handler (mirroring `runs.py::execute_run`'s own), and a **new** exception handler around
   `run_replay_adaptive`'s `compiled.ainvoke(...)` call (`run_adaptive` has no such handler today — an uncaught
@@ -296,26 +328,26 @@ toward it; the CI script's usage/API-error exit status is `3`).
   finished replay row's `replay_outcome` is never `NULL` (FR-012, FR-015; data-model.md, "Interrupted and crashed
   replays"). The new adaptive-replay exception handler is deliberately **not** added to `run_adaptive` itself
   (FR-049) and is therefore not part of the D14 extraction — it differs between the live and replayed cases by
-  design, not by oversight. **POLISH finding, round 3 review — named, not left implicit**: both of these
-  post-claim handlers (the single-turn one inline in `execute_replay`, the adaptive one in `run_replay_adaptive`)
-  close the row and then `raise ReplayFailed(run_id) from error` — a new exception, `replay.py::ReplayFailed`,
-  carrying the closed run's id — instead of a bare `raise` of the original exception; data-model.md's
-  `execute_replay` docstring names exactly which branch closes the row. A failure **before** `claim_run` ever
-  succeeds propagates unchanged (never wrapped in `ReplayFailed`, which would name a run id that does not exist).
-- **D16 — A server-computed `finding` flag, not a mode check, drives the headline cards (MINOR finding, round 2
-  review).** `RunSummary` gains `finding: bool` — true for a run whose `verdict == "succeeded"` and whose `mode !=
-  "replay"`, computed once, server-side, in the same `run_summary(...)` helper that already builds every other
-  summary field. **POLISH finding, round 3 review — one boolean cannot produce two cards**: `ui/app.py::render_metrics`
-  (`app.py:909-911`) drives its three headline cards from `finding` together with the run's own `hard_evidence`,
-  never a mode check of its own — Confirmed sums runs where `finding` and `hard_evidence` are both true; Suspected
-  sums runs where `finding` is true and `hard_evidence` is false; "Runs" (the total count) is unaffected and still
-  counts every run, replay included, finding or not. The UI needed a mode check in the first draft of this task
-  (`r.get("mode") != "replay"`), which FR-042 (no replay-specific logic in the screen) forbids just as much for a
-  card as for the Replay button itself. The same `finding` flag is exactly what FR-027's report-level exclusion
-  already computes inline at the `target_report` call site (research D9) — this decision just gives the UI a
-  server-computed equivalent instead of asking it to repeat that logic.
-- **D17 — A batch stops, not crashes, when one of its own replays fails unexpectedly (POSSIBLE finding round 2,
-  accepted; redesigned POLISH finding round 3).** `execute_batch_replay`'s loop wraps each `execute_replay` call:
+  design, not by oversight. Both of these post-claim handlers (the single-turn one inline in `execute_replay`,
+  the adaptive one in `run_replay_adaptive`) close the row and then `raise ReplayFailed(run_id) from error` — a
+  named exception, `replay.py::ReplayFailed`, carrying the closed run's id — instead of a bare `raise` of the
+  original exception; data-model.md's `execute_replay` docstring names exactly which branch closes the row. A
+  failure **before** `claim_run` ever succeeds propagates unchanged (never wrapped in `ReplayFailed`, which would
+  name a run id that does not exist).
+- **D16 — A server-computed `finding` flag, not a mode check, drives the headline cards.** `RunSummary` gains
+  `finding: bool` — true for a run whose `verdict == "succeeded"` and whose `mode != "replay"`, computed once,
+  server-side, in the same `run_summary(...)` helper that already builds every other summary field. One boolean
+  cannot produce two cards, so `ui/app.py::render_metrics` (`app.py:909-911`) drives its three headline cards
+  from `finding` together with the run's own `hard_evidence`, never a mode check of its own — Confirmed sums runs
+  where `finding` and `hard_evidence` are both true; Suspected sums runs where `finding` is true and
+  `hard_evidence` is false; "Runs" (the total count) is unaffected and still counts every run, replay included,
+  finding or not. A mode check of the UI's own (`r.get("mode") != "replay"`) is exactly what FR-042 (no
+  replay-specific logic in the screen) forbids, just as much for a card as for the Replay button itself. The same
+  `finding` flag is exactly what FR-027's report-level exclusion already computes inline at the `target_report`
+  call site (research D9) — this decision just gives the UI a server-computed equivalent instead of asking it to
+  repeat that logic.
+- **D17 — A batch stops, not crashes, when one of its own replays fails unexpectedly.**
+  `execute_batch_replay`'s loop wraps each `execute_replay` call:
   on success, record the `BatchEntry` and continue; on `RunInProgress` (a collision, already handled, D-adjacent
   to FR-029), stop with `stop_reason="run_in_progress"`; on `ReplayFailed` (D15 — `execute_replay` raises this,
   chained, once it has already closed that entry's own run inconclusive and logged the cause by class and stack

@@ -97,10 +97,10 @@ uv run uvicorn --factory kestrel.api.main:create_app --port 8000
 # Ctrl+C once it logs ready — create_app's own TargetStore(...) construction already ran the migration on start-up.
 ```
 
-(MINOR finding, round 1 review: the previous one-liner here passed a module object where `Vault` needs key bytes
-and would simply crash; starting the API normally is both simpler and the realistic path, since `create_app`
+(Starting the API normally is both simpler and the realistic path, since `create_app`
 already builds the store through the same `load_or_create_key` → `Vault` → `TargetStore(...)` sequence every
-real start-up uses.) `tests/unit/test_store_migration_v10.py` is the automated version of this and is the one
+real start-up uses — a one-liner that constructs `TargetStore` directly would need to pass `Vault` key bytes,
+not a module object.) `tests/unit/test_store_migration_v10.py` is the automated version of this and is the one
 that gates CI — this manual step is only for eyeballing a real, previously-v9 database file before shipping.
 Confirm the file's `schema_version` meta row reads `10`, every pre-existing run still has
 `source_run_id`/`replay_outcome` as `NULL`, and (`sqlite3 $env:TEMP\kestrel-v10-check.db "select seq from
@@ -116,7 +116,7 @@ Against the real HS-code target and a real judge/attacker key (`OPENROUTER_API_K
 live model's verdict on the day is not guaranteed `"succeeded"` (`tests/e2e/test_us1_attack.py` already documents
 this for a comparable case), so the test promotes its own temporary database row directly — a documented,
 test-only `UPDATE runs SET verdict = 'succeeded' WHERE id = ?`, **not** `TargetStore.finish_run` (which only
-updates a row still `in_progress` and would raise on an already-finished one, MAJOR correction round 2 review) —
+updates a row still `in_progress` and would raise on an already-finished one) —
 so the run becomes replayable; replay it through the real, in-process API, and assert the replay's recorded
 outcome (one of the three labels; the value itself is not asserted) and `GET /api/runs/{replay id}`'s
 `comparison` are both present and consistent with the two runs' own verdicts.

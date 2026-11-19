@@ -14,7 +14,7 @@ FR-045). No existing row changes; three rows are added, and two existing rows ga
 Both follow the log stream's general omit-when-not-applicable rule (`log-records.md`'s "Common fields" rules,
 "fields are omitted when not applicable") — **not** the `| null` pattern `run.end`'s existing `verdict` and
 `succeeded_turn` use (those are always present, `null` when unknown). A normal run's `run.end` line has no
-`replay_outcome` key at all, never `"replay_outcome": null` (MINOR finding, round 1 review).
+`replay_outcome` key at all, never `"replay_outcome": null`.
 
 No other field changes `run.start`/`run.end` already carry. A replay's `turn` lines need **no** new field: every
 turn of a replay passes `attacker_generated=False` (not only turn 1), so `attacker_model`/`attacker_prompt` are
@@ -29,15 +29,15 @@ attacker call, which the field's existing meaning ("what produced this text") al
 | `event` | Level | Emitted | Fields (beyond the common ones) |
 |---------|-------|---------|----------------------------------|
 | `replay.batch.start` | INFO | once, before the first entry of a batch replay is claimed | `target_id`, `replayable_count` (how many runs this batch will process), `cap` (the configured `KESTREL_REPLAY_BATCH_MAX_RUNS` in effect) |
-| `replay.batch.end` | INFO (ERROR when `error` is set) | once, after every entry has finished (or the batch stopped early) | `target_id`, `fixed_count`, `still_vulnerable_count`, `inconclusive_count`, `duration_ms`, `complete` (MINOR finding, round 1 review: `false` on a mid-batch collision, mirroring `BatchResult.complete`; POLISH finding round 3 review: equally `false` on the other stop reason, one entry's own replay failing unexpectedly — `complete` is `false` for **either** `stop_reason`, `"run_in_progress"` or `"replay_failed"`, never just the collision), `stop_reason` (present only when `complete` is `false`), `error` (class name, only on an unexpected failure) |
+| `replay.batch.end` | INFO (ERROR when `error` is set) | once, after every entry has finished (or the batch stopped early) | `target_id`, `fixed_count`, `still_vulnerable_count`, `inconclusive_count`, `duration_ms`, `complete` (`false` on a mid-batch collision, mirroring `BatchResult.complete`; equally `false` on the other stop reason, one entry's own replay failing unexpectedly — `complete` is `false` for **either** `stop_reason`, `"run_in_progress"` or `"replay_failed"`, never just the collision), `stop_reason` (present only when `complete` is `false`), `error` (class name, only on an unexpected failure) |
 
 Both are emitted **outside** any single replay's `run_scope()` — there is no one `run_id` for a whole batch — the
 same way `events.connection_test(...)` already emits an unscoped line; `target_id` needs no catalogue entry (it is
 already a `SCOPE_FIELD`, which `emit()` always allows regardless of catalogue, research "Events" code-fact).
 `replayable_count`, `cap`, `fixed_count`, `still_vulnerable_count`, `inconclusive_count`, `duration_ms`,
-`complete`, `stop_reason` and `error` are the new catalogue entries (MINOR finding, round 2 review: `complete`
-and `stop_reason` — and `error` — were already in the `replay.batch.end` row above but missing from this summary
-sentence; `stop_reason` is `"run_in_progress"` or `"replay_failed"`, research D17).
+`complete`, `stop_reason` and `error` are the new catalogue entries (`complete`
+and `stop_reason` — and `error` — are already in the `replay.batch.end` row above, named again here for
+completeness; `stop_reason` is `"run_in_progress"` or `"replay_failed"`, research D17).
 
 A batch that is refused before it starts (`batch_too_large`, `permission_missing`, `terms_outdated`,
 `run_in_progress`) emits **neither** line — the same convention a refused single run's claim already follows
@@ -49,7 +49,7 @@ Unchanged from a normal run's (`log-records.md`'s existing "Ordering guarantees"
 turn, the same `(model.request kind=judge)? → turn` shape, with **no** `memory.retrieval` line ever (a replay never
 calls the experience store, FR-025) and **no** `model.request kind=attacker` line ever (FR-002); then
 `memory.writeback`? — **never emitted at all** for a replay (FR-026; a replay's `run.end` simply carries
-`memory_written: null`, the existing "not attempted" value, exactly as a run whose write-back was never attempted
+`memory_written: null`, the existing "not attempted" value, exactly as a run that did not attempt a write-back
 already renders); then `run.end` last.
 
 ## Deny-list (unchanged)

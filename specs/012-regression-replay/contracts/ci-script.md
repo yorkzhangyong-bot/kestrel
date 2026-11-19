@@ -19,11 +19,11 @@ uv run python scripts/check_replay.py --target-id TARGET_ID
 
 `--help` documents every exit code below (FR-037).
 
-**MAJOR finding, round 1 review — the batch call's timeout.** The batch is synchronous and can legitimately run
+**The batch call's timeout.** The batch is synchronous and can legitimately run
 for as long as `cap` replays' worth of wall-clock time, far beyond `httpx`'s 5 s default. Before calling the
 batch endpoint, the script `GET`s `/api/config` and defaults its own HTTP timeout for the batch call to
-`config["replay"]["max_batch_runs"] × config["replay"]["per_replay_time_limit_s"] + 60` seconds — **POSSIBLE
-finding round 2 review, accepted**: `per_replay_time_limit_s` is the server's own `max(adaptive time limit,
+`config["replay"]["max_batch_runs"] × config["replay"]["per_replay_time_limit_s"] + 60` seconds:
+`per_replay_time_limit_s` is the server's own `max(adaptive time limit,
 single-turn deadline)` (research D13), not the adaptive limit alone, because a batch can include single-turn
 sources too, whose own 90 s deadline is otherwise invisible to this script; `--timeout SECONDS` overrides this
 computed default outright.
@@ -35,10 +35,10 @@ computed default outright.
 3. On a transport failure (connection refused, DNS failure, timeout) or a non-2xx response: print one line naming
    the problem (never the raw response body, which could echo a URL or header value back) and exit `3`.
 4. On success, print one line per entry — `source_run_id`, `replay_run_id`, `family`, `outcome`, and **both**
-   evidence flags (MINOR finding round 2 review: not just one) — the source's own (`source_hard_evidence` →
+   evidence flags (not just one) — the source's own (`source_hard_evidence` →
    `canary` / `judge`) and the replay's own (`replay_hard_evidence` → `canary` / `judge`), since the two can
    legitimately differ (the judge configured today need not be the one that decided the source) — **except the
-   one entry whose own replay crashed (POLISH finding, round 3 review: `outcome: "inconclusive"` with
+   one entry whose own replay crashed (`outcome: "inconclusive"` with
    `stop_reason: "replay_failed"` on the batch), whose replay evidence kind prints `none` instead of `judge`**:
    `replay_verdict` there is `"unclear"` with no judge call that actually concluded it, so labelling it `judge`
    would claim a verdict no judge gave — and one summary line with the three counts and whether the batch was
@@ -50,7 +50,7 @@ computed default outright.
 | Condition | Exit status |
 |-----------|-------------|
 | `counts.still_vulnerable > 0` (whether or not `complete`) | `1` |
-| `complete` is `false` and no entry is `still_vulnerable` — **MINOR finding, round 1 review: an incomplete batch could not tell, and a CI gate must fail closed on "could not tell", never pass it as if nothing happened** | `2` |
+| `complete` is `false` and no entry is `still_vulnerable` — **an incomplete batch could not tell, and a CI gate must fail closed on "could not tell", never pass it as if nothing happened** | `2` |
 | `complete` is `true`, `counts.still_vulnerable == 0`, `counts.inconclusive > 0` | `2` |
 | `complete` is `true`, `counts.still_vulnerable == 0`, `counts.inconclusive == 0` (every entry fixed, or `entries` is empty) | `0` |
 | the API call itself failed, or the batch was refused (404 unknown target, 409 `permission_missing` /
