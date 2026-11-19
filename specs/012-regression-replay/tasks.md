@@ -613,7 +613,7 @@ collision named and the unreached source ids listed, and is never scored as fini
 
 ### Tests for User Story 3
 
-- [ ] T028 [P] [US3] Integration test `tests/integration/test_replay_batch.py` (`FEATURE = "012"`): seed a target
+- [X] T028 [P] [US3] Integration test `tests/integration/test_replay_batch.py` (`FEATURE = "012"`): seed a target
       with several replayable runs (mixing single-turn and adaptive, and mixing eventual fixed/still-vulnerable/
       inconclusive outcomes) plus one `in_progress` run, one `failed` run, and one `replay`-mode run, and assert
       `POST /api/targets/{id}/replays` processes **only** the replayable ones, oldest `started_at` first (assert
@@ -649,7 +649,7 @@ collision named and the unreached source ids listed, and is never scored as fini
       "replay_failed"`, but that source produces **no** entry at all — it is named only in
       `"not_replayed_source_ids"`, exactly like a source the batch never reached (012/FR-028, FR-029, FR-030,
       FR-031, FR-032, FR-033, 012/SC-006).
-- [ ] T029 [P] [US3] Integration test `tests/integration/test_events_replay.py`, the batch part: through
+- [X] T029 [P] [US3] Integration test `tests/integration/test_events_replay.py`, the batch part: through
       `json_log`, a successful, complete batch emits one `replay.batch.start` (naming `target_id`,
       `replayable_count`, `cap`) and one `replay.batch.end` (the three outcome counts, `duration_ms`,
       `complete: true`, no `stop_reason`, no `error`); a batch refused before it starts (`batch_too_large`, or an
@@ -668,7 +668,7 @@ collision named and the unreached source ids listed, and is never scored as fini
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Implement `BatchEntry` (with `source_hard_evidence`/`replay_hard_evidence`), `BatchResult` (with
+- [X] T030 [US3] Implement `BatchEntry` (with `source_hard_evidence`/`replay_hard_evidence`), `BatchResult` (with
       `complete`, `stop_reason`, `not_replayed_source_ids`), `BatchTooLarge`, and
       `execute_batch_replay(store, *, target_id, cap, ...)` in
       `src/kestrel/replay.py` per `data-model.md`: `store.list_replayable_runs(target_id)` (unaffected by any
@@ -695,7 +695,7 @@ collision named and the unreached source ids listed, and is never scored as fini
       normally, never raises. Wire `events.replay_batch_started`/`_ended` around the whole loop (outside every
       entry's own scope), passing `complete`/`stop_reason` through either way (012/FR-028, FR-029, FR-030,
       FR-031, FR-032, FR-033).
-- [ ] T031 [US3] Implement the API: `POST /api/targets/{target_id}/replays` in `src/kestrel/api/main.py`
+- [X] T031 [US3] Implement the API: `POST /api/targets/{target_id}/replays` in `src/kestrel/api/main.py`
       (preconditions checked once before the first entry, `execute_batch_replay`, the `batch_too_large`/
       `run_in_progress`/`permission_missing`/`terms_outdated` **409**s for a refusal *before* the batch starts and
       the **404**, but **always 200** — never 201, never 409 — for any `BatchResult`, complete or not, per

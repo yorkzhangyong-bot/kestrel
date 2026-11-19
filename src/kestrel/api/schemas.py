@@ -59,6 +59,29 @@ class PromptVersionOut(BaseModel):
     version: str  # the active version ("1", "2", …); never the prompt text (FR-007, FR-012)
 
 
+class BatchReplayEntryOut(BaseModel):
+    """One source run a batch replay (feature 012) processed: both verdicts and both evidence kinds, since the
+    judge configured today need not be the one that decided the source (FR-030)."""
+    source_run_id: int
+    replay_run_id: int
+    family: str
+    source_verdict: str | None
+    source_hard_evidence: bool
+    replay_verdict: str | None
+    replay_hard_evidence: bool
+    outcome: str
+
+
+class BatchReplayResultOut(BaseModel):
+    """A batch replay's result (feature 012, FR-028 to FR-033): always 200, complete or not."""
+    target_id: int
+    entries: list[BatchReplayEntryOut]
+    counts: dict[str, int]
+    complete: bool
+    stop_reason: str | None = None
+    not_replayed_source_ids: list[int] = Field(default_factory=list)
+
+
 class ReplayOut(BaseModel):
     """Regression replay (feature 012): the batch cap in effect, and the longer of the two per-run deadlines the
     server actually enforces - what scripts/check_replay.py sizes its own batch timeout from (FR-031)."""

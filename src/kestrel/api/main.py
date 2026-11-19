@@ -14,7 +14,8 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, ConfigOut, ConnectionSettingsIn,
+from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, BatchReplayEntryOut,
+                                 BatchReplayResultOut, ConfigOut, ConnectionSettingsIn,
                                  ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
                                  JudgeOut, ProfileOut, ReplayComparisonOut, RunDetail, RunRequest, RunSummary,
                                  SaveTargetRequest, TargetDetail, TargetSummary, TermsOut, TurnComparisonOut, TurnOut,
@@ -43,8 +44,9 @@ from kestrel.connection.sessions import FormSessions
 from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
 from kestrel.judge.client import JudgeClient
 from kestrel.logging_setup import configure_logging
-from kestrel.replay import (REPLAY_BLOCKED_REASONS, NotReplayable, ReplayOfReplay, build_comparison,
-                           check_replayable, compute_replay_status, execute_replay, is_finding)
+from kestrel.replay import (REPLAY_BLOCKED_REASONS, BatchTooLarge, NotReplayable, ReplayOfReplay, build_comparison,
+                           check_replayable, compute_replay_status, execute_batch_replay, execute_replay,
+                           is_finding)
 from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
@@ -471,6 +473,52 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                           adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
                           turns=replay_turns)
 
+    @app.post("/api/targets/{target_id}/replays", response_model=BatchReplayResultOut)
+    async def replay_target(target_id: int, request: Request) -> Any:
+        """Batch-replay every currently-replayable run of one target, oldest first (feature 012, FR-028). Its own
+        preconditions (permission, terms, the cap, another run already in progress) are checked once, before the
+        first entry is claimed, and refused as a whole - never a 409 for a batch that stopped partway through
+        (FR-029). Always 200 for any BatchResult, complete or not: a batch result is not "one resource created"."""
+        try:
+            target = store.get_target(target_id)
+        except TargetNotFound:
+            return not_found(target_id)
+        if not target.permission_confirmed_at:
+            return api_error(409, "permission_missing", REPLAY_BLOCKED_REASONS["permission_missing"])
+        if target.terms_version != terms.version:
+            return api_error(409, "terms_outdated", REPLAY_BLOCKED_REASONS["terms_outdated"])
+        cap = settings.replay_batch_max_runs
+        replayable_count = len(store.list_replayable_runs(target_id))
+        if replayable_count > cap:
+            return api_error(409, "batch_too_large", _batch_too_large_message(replayable_count, cap))
+        if store.other_run_in_progress(target_id, excluding_run_id=-1):
+            return api_error(409, "run_in_progress", REPLAY_BLOCKED_REASONS["run_in_progress"])
+
+        resolved = ResolvedSettings(
+            url=target.url, method=target.method,
+            headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
+                          for h in target.headers),
+            body_template=target.body_template, response_path=target.response_path)
+        try:
+            result = await execute_batch_replay(
+                store, target_id=target_id, cap=cap, resolved=resolved, mode=settings.mode,
+                judge=request.app.state.judge, transport=request.app.state.transport,
+                resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
+                adaptive_token_budget=settings.adaptive_token_budget,
+                adaptive_time_limit_s=settings.adaptive_time_limit_s)
+        except BatchTooLarge as error:
+            return api_error(409, "batch_too_large", _batch_too_large_message(error.count, error.cap))
+        return BatchReplayResultOut(
+            target_id=result.target_id,
+            entries=[BatchReplayEntryOut(source_run_id=e.source_run_id, replay_run_id=e.replay_run_id,
+                                         family=e.family, source_verdict=e.source_verdict,
+                                         source_hard_evidence=e.source_hard_evidence,
+                                         replay_verdict=e.replay_verdict,
+                                         replay_hard_evidence=e.replay_hard_evidence, outcome=e.outcome)
+                     for e in result.entries],
+            counts=result.counts, complete=result.complete, stop_reason=result.stop_reason,
+            not_replayed_source_ids=list(result.not_replayed_source_ids))
+
     @app.get("/api/runs/{run_id}/log", response_model=RunLogOut)
     def get_run_log(run_id: int) -> Any:
         """A run's kept log lines, in order (feature 010, FR-011): read-only, the records as the stream carried them.
@@ -608,6 +656,12 @@ def needs_unreadable_value(settings: ConnectionSettingsIn, stored: dict[str, str
 
 def not_found(target_id: int) -> JSONResponse:
     return api_error(404, "not_found", f"No target with id {target_id}.")
+
+
+def _batch_too_large_message(count: int, cap: int) -> str:
+    """FR-031: names the replayable count, the configured cap, and that the cap is configurable."""
+    return (f"{count} runs are replayable, more than the configured maximum of {cap}. Raise "
+           "KESTREL_REPLAY_BATCH_MAX_RUNS to allow a larger batch.")
 
 
 def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None = None) -> ResolvedSettings:

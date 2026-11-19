@@ -109,6 +109,26 @@ def test_an_adaptive_replay_that_fails_to_answer_is_inconclusive_and_still_untou
     assert_spy_untouched(spy)
 
 
+def test_a_batch_replay_touches_the_experience_store_under_no_outcome(make_client, settings, model_transport):
+    """US3's batch replay reuses execute_replay per entry - the same isolation guarantee, proven once more at
+    the batch endpoint, across a mix of single-turn and adaptive sources and outcomes."""
+    client, spy = spy_client(make_client, settings, transport=model_transport.transport,
+                             judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    single = store.claim_run(target.id, **CLAIM)
+    store.finish_run(single, verdict="succeeded", hard_evidence=True)
+    claim_adaptive_source(store, target.id, turns=2)
+    assert_spy_untouched(spy)
+
+    model_transport.verdict = "failed"
+    result = client.post(f"/api/targets/{target.id}/replays").json()
+
+    assert result["complete"] is True and len(result["entries"]) == 2
+    assert all(e["source_run_id"] for e in result["entries"])   # every entry has a replay_outcome, not asserted
+    assert_spy_untouched(spy)
+
+
 def test_replay_and_graph_modules_never_import_the_experience_package():
     """Structural guard, defence in depth (research "Experience isolation" code-fact): the absence of the import
     from kestrel.replay and kestrel.attack.graph's own source is itself a guarantee, not just a runtime

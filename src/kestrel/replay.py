@@ -16,7 +16,7 @@ from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
 from kestrel.judge.client import JudgeError
 from kestrel.runs import JUDGE_LIMIT_S, SEND_LIMIT_S, TOTAL_DEADLINE_S, judge_ref, match_canary
 from kestrel.secrets import mask_values
-from kestrel.store import Run, Target, TargetStore, Turn
+from kestrel.store import Run, RunInProgress, Target, TargetStore, Turn
 
 MAX_REPLY_CHARS = 2000   # matches attack/graph.py's own cap on a stored reply
 
@@ -337,3 +337,103 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
                                   replay_outcome="inconclusive")
         events.run_finished(closed)
         raise ReplayFailed(run_id) from error
+
+
+# ---- batch replay (FR-028 to FR-033; research D17) ----
+
+
+@dataclass(frozen=True)
+class BatchEntry:
+    source_run_id: int
+    replay_run_id: int
+    family: str
+    source_verdict: str | None
+    source_hard_evidence: bool     # canary vs. judge opinion, per entry, independent of the replay's own
+    replay_verdict: str | None
+    replay_hard_evidence: bool
+    outcome: str
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    target_id: int
+    entries: tuple[BatchEntry, ...]
+    counts: dict[str, int]              # {"fixed": n, "still_vulnerable": n, "inconclusive": n}
+    complete: bool                      # False only when the batch stopped partway through
+    stop_reason: str | None             # "run_in_progress" | "replay_failed"; None when complete is True
+    not_replayed_source_ids: tuple[int, ...]   # every planned source never reached; empty when complete is True
+
+
+class BatchTooLarge(Exception):
+    """`.count` replayable runs exceeds the configured maximum `.cap` (FR-031)."""
+
+    def __init__(self, count: int, cap: int) -> None:
+        super().__init__(count, cap)
+        self.count = count
+        self.cap = cap
+
+
+def _batch_entry(source: Run, replay: Run) -> BatchEntry:
+    return BatchEntry(source_run_id=source.id, replay_run_id=replay.id, family=source.family,
+                      source_verdict=source.verdict, source_hard_evidence=source.hard_evidence,
+                      replay_verdict=replay.verdict, replay_hard_evidence=replay.hard_evidence,
+                      outcome=replay.replay_outcome or "inconclusive")
+
+
+async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, resolved: ResolvedSettings,
+                               mode: str, judge: Any, sender: Sender = run_test, transport: Any = None,
+                               resolver: Any = default_resolver, adaptive_max_turns: int,
+                               adaptive_token_budget: int, adaptive_time_limit_s: int,
+                               clock: Callable[[], float] = time.monotonic) -> BatchResult:
+    """Replay every currently-replayable run of a target, oldest first, one at a time (FR-028, FR-029). Raises
+    `BatchTooLarge` before claiming anything, and before emitting any event, when the replayable count exceeds
+    `cap` (FR-031). Never raises for a single entry's own failure (research D17): a `RunInProgress` collision or
+    any other failure before that entry's own row was claimed stops the batch with `stop_reason="replay_failed"`
+    (or `"run_in_progress"` for the collision) and adds no entry for it; a `ReplayFailed` means that entry's own
+    run is already closed inconclusive - its entry is still built, from the now-closed row, and included as the
+    batch's last one. Either way returns a `BatchResult` with `complete=False` - never an exception the caller
+    has to handle as an error."""
+    sources = store.list_replayable_runs(target_id)
+    if len(sources) > cap:
+        raise BatchTooLarge(len(sources), cap)
+
+    started = clock()
+    events.replay_batch_started(target_id=target_id, replayable_count=len(sources), cap=cap)
+    entries: list[BatchEntry] = []
+    counts = {"fixed": 0, "still_vulnerable": 0, "inconclusive": 0}
+
+    def ended(*, complete: bool, stop_reason: str | None, not_replayed: list[int]) -> BatchResult:
+        events.replay_batch_ended(target_id=target_id, fixed=counts["fixed"],
+                                  still_vulnerable=counts["still_vulnerable"], inconclusive=counts["inconclusive"],
+                                  duration_ms=int((clock() - started) * 1000), complete=complete,
+                                  stop_reason=stop_reason)
+        return BatchResult(target_id=target_id, entries=tuple(entries), counts=dict(counts), complete=complete,
+                           stop_reason=stop_reason, not_replayed_source_ids=tuple(not_replayed))
+
+    for index, source in enumerate(sources):
+        source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
+        try:
+            with events.run_scope():
+                replay = await execute_replay(
+                    store, source=source, source_turns=source_turns, resolved=resolved, mode=mode, judge=judge,
+                    sender=sender, transport=transport, resolver=resolver, adaptive_max_turns=adaptive_max_turns,
+                    adaptive_token_budget=adaptive_token_budget, adaptive_time_limit_s=adaptive_time_limit_s,
+                    clock=clock)
+        except RunInProgress:
+            return ended(complete=False, stop_reason="run_in_progress",
+                        not_replayed=[s.id for s in sources[index:]])
+        except ReplayFailed as error:
+            closed = store.get_run(error.run_id)
+            assert closed.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
+            entries.append(_batch_entry(source, closed))
+            counts[closed.replay_outcome] += 1
+            return ended(complete=False, stop_reason="replay_failed",
+                        not_replayed=[s.id for s in sources[index + 1:]])
+        except Exception:
+            return ended(complete=False, stop_reason="replay_failed",
+                        not_replayed=[s.id for s in sources[index:]])
+        assert replay.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
+        entries.append(_batch_entry(source, replay))
+        counts[replay.replay_outcome] += 1
+
+    return ended(complete=True, stop_reason=None, not_replayed=[])

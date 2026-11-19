@@ -18,6 +18,12 @@ def run_attack(client, target_id: int, *, mode: str = "single_turn") -> dict:
     return response.json()
 
 
+def claim_succeeded_single_turn(store, target_id: int, *, prompt_id: str = "spl-001") -> int:
+    run_id = store.claim_run(target_id, **{**CLAIM, "prompt_id": prompt_id})
+    store.finish_run(run_id, verdict="succeeded", hard_evidence=True)
+    return run_id
+
+
 def claim_adaptive_source(store, target_id: int, *, turns: int) -> int:
     """A finished, succeeded adaptive run with `turns` recorded turns, built directly so its shape (and turn
     count) is exact, regardless of how the real judge/attacker doubles would otherwise behave turn by turn."""
@@ -116,6 +122,124 @@ def test_run_end_carries_replay_outcome_only_for_the_replay_never_for_the_source
 
     replay_end = next(line for line in lines_for(json_log, replay["id"]) if line["event"] == "run.end")
     assert replay_end["replay_outcome"] == "fixed"
+
+
+# ---- the batch replay's own lines (T029; 012/FR-029, FR-043, FR-044, FR-045) ----
+
+
+def test_a_complete_batch_emits_one_start_and_one_end_line_around_every_entrys_own_pair(make_client,
+                                                                                          model_transport, json_log):
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    first = claim_succeeded_single_turn(store, target.id, prompt_id="spl-001")
+    second = claim_succeeded_single_turn(store, target.id, prompt_id="spl-002")
+
+    model_transport.verdict = "failed"
+    response = client.post(f"/api/targets/{target.id}/replays")
+    assert response.status_code == 200, response.text
+    replay_ids = [e["replay_run_id"] for e in response.json()["entries"]]
+
+    events = json_log.events()
+    start = next(i for i, e in enumerate(events) if e == "replay.batch.start")
+    end = next(i for i, e in enumerate(events) if e == "replay.batch.end")
+    assert events.count("replay.batch.start") == 1 and events.count("replay.batch.end") == 1
+    assert start < end
+
+    batch_start = json_log.of("replay.batch.start")[0]
+    assert batch_start["target_id"] == target.id and batch_start["replayable_count"] == 2 and batch_start["cap"] == 20
+
+    batch_end = json_log.of("replay.batch.end")[0]
+    assert batch_end["fixed_count"] == 2 and batch_end["still_vulnerable_count"] == 0
+    assert batch_end["inconclusive_count"] == 0 and batch_end["complete"] is True
+    assert "stop_reason" not in batch_end and "error" not in batch_end
+
+    # Every entry's own run.start/run.end sits strictly between the batch's one start and end line - never
+    # replacing them - and each still carries what a replay's own scope always does (source_run_id, mode,
+    # its own replay_outcome).
+    lines = json_log()
+    for source_id, replay_id in ((first, replay_ids[0]), (second, replay_ids[1])):
+        entry_start = next(i for i, line in enumerate(lines)
+                           if line["event"] == "run.start" and line.get("run_id") == replay_id)
+        entry_end = next(i for i, line in enumerate(lines)
+                         if line["event"] == "run.end" and line.get("run_id") == replay_id)
+        assert start < entry_start < entry_end < end
+        assert lines[entry_start]["mode"] == "replay" and lines[entry_start]["source_run_id"] == source_id
+        assert lines[entry_end]["replay_outcome"] == "fixed"
+
+
+def test_a_batch_refused_before_it_starts_emits_neither_line(make_client, settings, model_transport, json_log):
+    import dataclasses
+    lowered = dataclasses.replace(settings, replay_batch_max_runs=1)
+    client = make_client(lowered, transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    claim_succeeded_single_turn(store, target.id, prompt_id="spl-001")
+    claim_succeeded_single_turn(store, target.id, prompt_id="spl-002")
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 409 and response.json()["error"]["code"] == "batch_too_large"
+    assert "replay.batch.start" not in json_log.events() and "replay.batch.end" not in json_log.events()
+
+
+def test_a_mid_batch_collision_ends_the_batch_line_incomplete_with_no_error(make_client, model_transport, json_log,
+                                                                              monkeypatch):
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    claim_succeeded_single_turn(store, target.id, prompt_id="spl-001")
+    claim_succeeded_single_turn(store, target.id, prompt_id="spl-002")
+
+    import kestrel.replay as replay_module
+    real_execute_replay = replay_module.execute_replay
+    calls = {"n": 0}
+
+    async def colliding_execute_replay(store_arg, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            store.claim_run(target.id, prompt_id="spl-999", prompt_title="x", prompt_text="<x>",
+                            family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
+                            attacker_source="library:1.0.0")
+        return await real_execute_replay(store_arg, **kwargs)
+
+    monkeypatch.setattr(replay_module, "execute_replay", colliding_execute_replay)
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 200, response.text
+    batch_end = json_log.of("replay.batch.end")[0]
+    assert batch_end["complete"] is False and batch_end["stop_reason"] == "run_in_progress"
+    assert "error" not in batch_end   # a collision is an expected stop, not a failure (research D17)
+
+
+def test_one_entrys_own_failure_ends_the_batch_line_incomplete_with_no_error(make_client, model_transport,
+                                                                               json_log):
+    import httpx
+
+    from tests.support import MODEL_BASE_URL
+
+    target_calls = {"n": 0}
+
+    def exploding_handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host != httpx.URL(MODEL_BASE_URL).host:
+            target_calls["n"] += 1
+            if target_calls["n"] == 2:
+                raise RuntimeError("simulated target failure")
+        return model_transport.handle(request)
+
+    client = make_client(transport=httpx.MockTransport(exploding_handle), judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    claim_succeeded_single_turn(store, target.id, prompt_id="spl-001")
+    claim_succeeded_single_turn(store, target.id, prompt_id="spl-002")
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 200, response.text
+    batch_end = json_log.of("replay.batch.end")[0]
+    assert batch_end["complete"] is False and batch_end["stop_reason"] == "replay_failed"
+    assert "error" not in batch_end   # the failure belongs to that one entry's own run, not the batch request
 
 
 def test_no_secret_url_name_or_free_text_appears_anywhere_in_the_stream(make_client, model_transport, json_log):
