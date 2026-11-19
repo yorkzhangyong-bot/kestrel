@@ -70,6 +70,96 @@ def _format(conversation: Sequence[tuple[str, str]]) -> str:
     return "\n".join(f"{'attacker' if role == 'attacker' else 'agent'}: {text}" for role, text in conversation)
 
 
+# ---- per-turn nodes shared by a live run (run_adaptive) and a replay (run_replay_adaptive, feature 012) ----
+#
+# judge_node, send_node, evidence_node and decide_node are identical in substance whether this turn's message
+# came from the attacker model or from a recorded transcript (FR-008: the per-turn judge-call shape is explicitly
+# unchanged for a replay), so their bodies live here, as module-level functions parameterised by what they used
+# to close over; both run_adaptive and run_replay_adaptive wire a thin node closure to each (research D14). This
+# is a mechanical, behaviour-preserving extraction - run_adaptive's own existing tests pass unmodified afterward.
+# attacker_node and record_node are NOT shared (a model call versus a list lookup; run-wide-constant provenance
+# versus per-turn copied provenance) and stay defined separately, beside each other, inside their own function.
+
+
+async def _judge_turn(state: _State, *, judge: _Judge, judge_prompt: str | None,
+                      remaining: Callable[[], float], requests: list[int]) -> _State:
+    """judge_node's existing body, unchanged in substance: identical conversation shape, identical token/event
+    accounting. `requests` is a one-item mutable counter (a closure can mutate a list in place but cannot rebind
+    an int by reference): the caller's own `judge_requests` becomes `requests[0] += 1` here."""
+    if not judge.configured:
+        return {"judge_used": True, "last_verdict": "unclear", "last_reason": "No judge is configured.",
+                "last_progress": state["last_progress"]}
+    conversation = list(state["conversation"]) + [("attacker", state["pending_message"]),
+                                                  ("agent", state["pending_reply"] or "")]
+    requests[0] += 1
+    events.judge_requested(judge_prompt)
+    try:
+        verdict = await judge.judge(attack=state["pending_message"], reply=state["pending_reply"] or "",
+                                    conversation=_format(conversation),
+                                    timeout=max(0.1, min(JUDGE_LIMIT_S, remaining())))
+    except JudgeError as error:
+        return {"judge_used": True, "last_verdict": "unclear", "last_reason": f"The judge could not decide: {error}",
+                "last_progress": state["last_progress"]}
+    update: _State = {"judge_used": True, "tokens_used": state["tokens_used"] + verdict.tokens,
+                      "last_verdict": verdict.verdict, "last_reason": verdict.reason,
+                      "last_progress": verdict.progress, "last_judged_turn": state["turns_used"] + 1}
+    if verdict.verdict == "succeeded":
+        update["outcome"] = {"verdict": "succeeded", "hard_evidence": False, "reason": verdict.reason,
+                             "judge_used": True, "stopping_condition": "succeeded",
+                             "succeeded_turn": state["turns_used"] + 1}
+    return update
+
+
+async def _send_turn(state: _State, *, resolved: ResolvedSettings, mode: str, sender: Sender, transport: Any,
+                     resolver: Any, remaining: Callable[[], float], secrets: list[str]) -> _State:
+    """send_node's existing body, unchanged in substance (stated explicitly so the lift cannot silently drop it):
+    still masks the reply with `mask_values(outcome.reply_text or "", secrets)` before returning it - a replay's
+    own stored reply is masked exactly as a live run's is, never the attacker message (which arrives already
+    masked, FR-001). `secrets` is a parameter, not something this function closes over - run_adaptive and
+    run_replay_adaptive each pass their own target's secret values."""
+    outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
+                           deadline_s=max(0.1, min(SEND_LIMIT_S, remaining())), prompt=state["pending_message"])
+    if not outcome.ok:
+        return {"pending_reply": None, "pending_truncated": False,
+                "outcome": {"verdict": None, "hard_evidence": False, "reason": outcome.message,
+                            "judge_used": state["judge_used"], "stopping_condition": "send_failed",
+                            "succeeded_turn": None, "failure_step": outcome.step}}
+    reply = mask_values(outcome.reply_text or "", secrets)[:MAX_REPLY_CHARS]
+    return {"pending_reply": reply, "pending_truncated": bool(outcome.reply_truncated)}
+
+
+def _check_evidence(state: _State, canaries: list[str]) -> _State:
+    """evidence_node's existing body, unchanged in substance."""
+    if match_canary(state["pending_reply"] or "", canaries) is not None:
+        return {"pending_canary": True,
+                "outcome": {"verdict": "succeeded", "hard_evidence": True, "reason": CANARY_REASON,
+                            "judge_used": state["judge_used"], "stopping_condition": "succeeded",
+                            "succeeded_turn": state["turns_used"] + 1}}
+    return {}
+
+
+def _decide_next(state: _State, *, max_turns: int, token_budget: int, remaining: Callable[[], float]) -> _State:
+    """decide_node's existing body, unchanged in substance. For a replay (research D2), `max_turns` is already
+    `min(len(source's recorded messages), the currently configured adaptive turn cap)`, so "ran out of recorded
+    messages" and "hit the turn cap" are the same `stopping_condition == "turn_cap"` value this already produces -
+    no new stopping condition is needed to tell the two apart from inside the graph."""
+    if state.get("outcome"):
+        return {}
+    cap = None
+    if state["turns_used"] >= max_turns:
+        cap = "turn_cap"
+    elif state["tokens_used"] >= token_budget:
+        cap = "token_budget"
+    elif remaining() <= 0:
+        cap = "time_limit"
+    if cap is not None:
+        return {"outcome": {"verdict": state["last_verdict"] or "unclear", "hard_evidence": False,
+                            "reason": state.get("last_reason") or INTERRUPTED_BY_DEADLINE,
+                            "judge_used": state["judge_used"], "stopping_condition": cap,
+                            "succeeded_turn": None}}
+    return {}
+
+
 async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: AttackPrompt, attacker_source: str,
                        canaries: list[str], resolved: ResolvedSettings, attacker: _Attacker, judge: _Judge,
                        sender: Sender = run_test, mode: str = "local", transport=None, resolver=default_resolver,
@@ -95,7 +185,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
     judge_prompt = judge_ref(judge) if judge.configured else None
     attacker_prompt_id, attacker_prompt_version = prompt_registry.split_ref(attacker_prompt)
     judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
-    judge_requests = 0
+    judge_requests_box = [0]   # a one-item mutable counter: a closure can mutate a list, not rebind an int
     events.run_started(store, run_id=run_id, target_id=target_id, mode="adaptive", family=seed_prompt.family,
                        prompt_id=seed_prompt.id, attacker_source=attacker_source, attacker_model=attacker.model,
                        judge_model=judge.model if judge.configured else None, attacker_prompt=attacker_prompt,
@@ -128,48 +218,15 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                 "tokens_used": state["tokens_used"] + reply.tokens}
 
     async def send_node(state: _State) -> _State:
-        outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
-                               deadline_s=max(0.1, min(SEND_LIMIT_S, remaining())), prompt=state["pending_message"])
-        if not outcome.ok:
-            return {"pending_reply": None, "pending_truncated": False,
-                    "outcome": {"verdict": None, "hard_evidence": False, "reason": outcome.message,
-                                "judge_used": state["judge_used"], "stopping_condition": "send_failed",
-                                "succeeded_turn": None, "failure_step": outcome.step}}
-        reply = mask_values(outcome.reply_text or "", secrets)[:MAX_REPLY_CHARS]
-        return {"pending_reply": reply, "pending_truncated": bool(outcome.reply_truncated)}
+        return await _send_turn(state, resolved=resolved, mode=mode, sender=sender, transport=transport,
+                                resolver=resolver, remaining=remaining, secrets=secrets)
 
     def evidence_node(state: _State) -> _State:
-        if match_canary(state["pending_reply"] or "", canaries) is not None:
-            return {"pending_canary": True,
-                    "outcome": {"verdict": "succeeded", "hard_evidence": True, "reason": CANARY_REASON,
-                                "judge_used": state["judge_used"], "stopping_condition": "succeeded",
-                                "succeeded_turn": state["turns_used"] + 1}}
-        return {}
+        return _check_evidence(state, canaries)
 
     async def judge_node(state: _State) -> _State:
-        nonlocal judge_requests
-        if not judge.configured:
-            return {"judge_used": True, "last_verdict": "unclear", "last_reason": "No judge is configured.",
-                    "last_progress": state["last_progress"]}
-        conversation = list(state["conversation"]) + [("attacker", state["pending_message"]),
-                                                      ("agent", state["pending_reply"] or "")]
-        judge_requests += 1
-        events.judge_requested(judge_prompt)
-        try:
-            verdict = await judge.judge(attack=state["pending_message"], reply=state["pending_reply"] or "",
-                                        conversation=_format(conversation),
-                                        timeout=max(0.1, min(JUDGE_LIMIT_S, remaining())))
-        except JudgeError as error:
-            return {"judge_used": True, "last_verdict": "unclear", "last_reason": f"The judge could not decide: {error}",
-                    "last_progress": state["last_progress"]}
-        update: _State = {"judge_used": True, "tokens_used": state["tokens_used"] + verdict.tokens,
-                          "last_verdict": verdict.verdict, "last_reason": verdict.reason,
-                          "last_progress": verdict.progress, "last_judged_turn": state["turns_used"] + 1}
-        if verdict.verdict == "succeeded":
-            update["outcome"] = {"verdict": "succeeded", "hard_evidence": False, "reason": verdict.reason,
-                                 "judge_used": True, "stopping_condition": "succeeded",
-                                 "succeeded_turn": state["turns_used"] + 1}
-        return update
+        return await _judge_turn(state, judge=judge, judge_prompt=judge_prompt, remaining=remaining,
+                                 requests=judge_requests_box)
 
     def record_node(state: _State) -> _State:
         turn = state["turns_used"] + 1
@@ -197,21 +254,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
         return {"conversation": conversation, "turns_used": turn}
 
     def decide_node(state: _State) -> _State:
-        if state.get("outcome"):
-            return {}
-        cap = None
-        if state["turns_used"] >= max_turns:
-            cap = "turn_cap"
-        elif state["tokens_used"] >= token_budget:
-            cap = "token_budget"
-        elif remaining() <= 0:
-            cap = "time_limit"
-        if cap is not None:
-            return {"outcome": {"verdict": state["last_verdict"] or "unclear", "hard_evidence": False,
-                                "reason": state.get("last_reason") or INTERRUPTED_BY_DEADLINE,
-                                "judge_used": state["judge_used"], "stopping_condition": cap,
-                                "succeeded_turn": None}}
-        return {}
+        return _decide_next(state, max_turns=max_turns, token_budget=token_budget, remaining=remaining)
 
     graph = StateGraph(_State)
     graph.add_node("attacker", attacker_node)
@@ -244,7 +287,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                            failure_step=outcome.get("failure_step"), stopping_condition=outcome["stopping_condition"],
                            succeeded_turn=outcome["succeeded_turn"], turns_used=final["turns_used"],
                            tokens_used=final["tokens_used"],
-                           judge_prompt_id=judge_prompt_id if judge_requests else None,
-                           judge_prompt_version=judge_prompt_version if judge_requests else None)
+                           judge_prompt_id=judge_prompt_id if judge_requests_box[0] else None,
+                           judge_prompt_version=judge_prompt_version if judge_requests_box[0] else None)
     events.run_finished(run)   # run.end is emitted by the caller's run scope, after the write-back (FR-001)
     return run
