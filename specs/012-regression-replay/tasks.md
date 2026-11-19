@@ -718,7 +718,7 @@ printed.
 
 ### Tests for User Story 4
 
-- [ ] T032 [P] [US4] Unit test `tests/unit/test_check_replay_script.py` (`FEATURE = "012"`), over an
+- [X] T032 [P] [US4] Unit test `tests/unit/test_check_replay_script.py` (`FEATURE = "012"`), over an
       `httpx.MockTransport` standing in for the Kestrel API (no real server, and no real `GET /api/config` either
       — stub it too): a complete batch response with every entry `fixed`, and separately an empty-entries
       response, each exit `0`; a complete response with at least one `still_vulnerable` entry (even alongside an
@@ -746,7 +746,7 @@ printed.
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Implement `scripts/check_replay.py` per `contracts/ci-script.md`: `argparse` with `--target-id`
+- [X] T033 [US4] Implement `scripts/check_replay.py` per `contracts/ci-script.md`: `argparse` with `--target-id`
       (required, `int`) and `--timeout SECONDS` (optional float, overrides the computed default);
       `KESTREL_API_URL`/`KESTREL_API_TOKEN` read directly from the environment (a small, local `httpx` request
       helper — no import of `ui.api_client`, research D13); `GET /api/config` first, to compute the default batch
