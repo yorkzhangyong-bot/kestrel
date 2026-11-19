@@ -59,3 +59,22 @@ def test_invalid_mode_in_the_environment_stops_create_app(monkeypatch):
     monkeypatch.setenv("KESTREL_MODE", "dev")
     with pytest.raises(SettingsError, match="KESTREL_MODE"):
         create_app()
+
+
+# ---- feature 011: the config reports the retrieval controls (011/FR-012) ----
+
+
+def test_config_reports_the_retrieval_controls_defaults(client):  # 011/FR-012
+    experience = client.get("/api/config").json()["experience"]
+    assert experience["pattern_k"] == 5 and experience["memory_cap"] == 10
+    assert experience["distance_floor"] == 1.8 and experience["dedupe_threshold"] == 0.15
+
+
+def test_config_reports_a_control_switched_off_as_null(make_client, settings):  # 011/FR-012
+    import dataclasses
+    off = dataclasses.replace(settings, experience_distance_floor=None, experience_dedupe_threshold=None)
+    experience = make_client(off).get("/api/config").json()["experience"]
+    assert experience["distance_floor"] is None and experience["dedupe_threshold"] is None
+    one_off = dataclasses.replace(settings, experience_dedupe_threshold=None)
+    experience = make_client(one_off).get("/api/config").json()["experience"]
+    assert experience["distance_floor"] == 1.8 and experience["dedupe_threshold"] is None

@@ -28,13 +28,21 @@ class _Experience:
     def write_memory(self, **kw):
         self.writes += 1
 
-    def write_pattern(self, **kw):
+    def write_pattern(self, **kw):   # 011/FR-015, 011/SC-009: counts the call as before, answers like a real store
+        from kestrel.experience.store import PatternWrite
         self.writes += 1
+        return PatternWrite("added", "pattern:run:0", 1, None)
 
     def retrieve_memory(self, **kw):
         return []
 
     def retrieve_patterns(self, **kw):
+        return []
+
+    def count(self, type=None, *, family=None, target_id=None):   # 011/FR-015, 011/SC-009: the shared path's pool
+        return 0
+
+    def query_patterns(self, **kw):
         return []
 
 

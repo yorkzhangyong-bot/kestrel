@@ -25,9 +25,11 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  validate_experiment, validate_save, validate_settings)
 from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
-from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, family_label, load_library
-from kestrel.experience.hints import format_hints
-from kestrel.experience.store import ExperienceStore, ExperienceStoreError, store_error_kind
+from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
+from kestrel.experience.retrieval import background_provider
+from kestrel.experience.store import (EMBEDDING_MODEL_MISMATCH_MESSAGE, SPACE_MISMATCH_MESSAGE,
+                                      EmbeddingModelMismatch, ExperienceStore, ExperienceStoreError, SpaceMismatch,
+                                      store_error_kind)
 from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
 from kestrel.experiments import results as exp_results
@@ -121,12 +123,13 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             experience = ExperienceStore(settings.chroma_path)
             experience.self_check()  # surface a bad store (mismatched EF, failed model download) clearly, now
         except Exception as error:
-            # The self-check wraps the store's own error: name that one (its class and kind, never its text).
+            # The self-check wraps the store's own error: name that one (its class and kind, never its text). A
+            # mismatch of the embedding model or the distance space (feature 011) carries both values as fields
+            # and a mismatch-specific constant message that states the remedy.
             cause = error.__cause__ if isinstance(error, ExperienceStoreError) and error.__cause__ else error
             events.emit("experience.unavailable", logging.ERROR, exc_info=(type(cause), cause, cause.__traceback__),
-                        reason_kind=store_error_kind(cause),
-                        message="The experience store is unavailable, so runs will record loudly as not written "
-                                "back (Principle V).")
+                        reason_kind=store_error_kind(cause), message=_unavailable_message(cause),
+                        **_mismatch_fields(cause))
             experience = None
     if experience is not None and library is not None:
         try:
@@ -173,6 +176,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                                   time_limit_s=settings.adaptive_time_limit_s),
                          experience=ExperienceOut(pattern_k=settings.experience_pattern_k,
                                                   memory_cap=settings.experience_memory_cap,
+                                                  distance_floor=settings.experience_distance_floor,
+                                                  dedupe_threshold=settings.experience_dedupe_threshold,
                                                   use_prior_experience_default=True),
                          prompts=[PromptVersionOut(id=e.id, version=e.version)
                                   for e in prompt_registry.registry()])
@@ -318,21 +323,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
-        experience = request.app.state.experience
-
-        def hint_provider(conversation: list[tuple[str, str]]) -> str | None:
-            """The attacker's background each turn: purpose always; patterns + memory only on a warm run (FR-021)."""
-            purpose = target.description
-            if not body.use_prior_experience or experience is None:
-                return format_hints(purpose=purpose, patterns=[], memory=[])  # cold: purpose only (FR-015)
-            memory = experience.retrieve_memory(target_id=target.id, family=prompt.family,
-                                                 cap=settings.experience_memory_cap)
-            query = f"{family_label(prompt.family)} {_recent_conversation(conversation)}".strip()
-            found = experience.retrieve_patterns_with_ids(family=prompt.family, query_text=query,
-                                                          k=settings.experience_pattern_k)
-            # Feature 010 (FR-016): counts and pattern ids, whenever the store was asked — zero when nothing came back.
-            events.memory_retrieval(pattern_ids=[pattern_id for pattern_id, _ in found], memory_count=len(memory))
-            return format_hints(purpose=purpose, patterns=[document for _, document in found], memory=memory)
+        # The attacker's background each turn (feature 004 FR-021): the one shared retrieval path of feature 011 —
+        # the attacker-only query, the floor and the de-duplication — identical for an experiment-executed run.
+        hint_provider = background_provider(request.app.state.experience, target_id=target.id,
+                                            purpose=target.description, family=prompt.family, settings=settings,
+                                            use_prior_experience=body.use_prior_experience)
 
         # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
         # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
@@ -360,7 +355,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             # Write back to the experience store after every run; a failure is loud, never discards the run
             # (FR-006/10).
             turns = store.list_turns(run.id)
-            write_back(request.app.state.experience, store, run, turns)
+            write_back(request.app.state.experience, store, run, turns,
+                       dedupe_threshold=settings.experience_dedupe_threshold)
         return run_detail(store.get_run(run.id), turns)
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
@@ -579,9 +575,27 @@ def _clean_description(description: str | None) -> str | None:
     return cleaned or None
 
 
-def _recent_conversation(conversation: list[tuple[str, str]], turns: int = 2) -> str:
-    """The text of the last `turns` turns (up to 2*turns messages), for the pattern-retrieval query (U1)."""
-    return " ".join(text for _, text in conversation[-2 * turns:])
+EXPERIENCE_UNAVAILABLE = ("The experience store is unavailable, so runs will record loudly as not written back "
+                          "(Principle V).")
+
+
+def _unavailable_message(error: BaseException) -> str:
+    """The constant `message` of the `experience.unavailable` line: mismatch-specific text with the remedy for an
+    embedding-model or distance-space mismatch (feature 011), the generic constant for every other cause."""
+    if isinstance(error, EmbeddingModelMismatch):
+        return EMBEDDING_MODEL_MISMATCH_MESSAGE
+    if isinstance(error, SpaceMismatch):
+        return SPACE_MISMATCH_MESSAGE
+    return EXPERIENCE_UNAVAILABLE
+
+
+def _mismatch_fields(error: BaseException) -> dict[str, Any]:
+    """Both values of a mismatch as line fields (model and space names are not secrets); nothing otherwise."""
+    if isinstance(error, EmbeddingModelMismatch):
+        return {"stored_model": error.stored, "expected_model": error.expected}
+    if isinstance(error, SpaceMismatch):
+        return {"stored_space": error.stored, "expected_space": error.expected}
+    return {}
 
 
 def _experience_counts(experience: Any, target_id: int) -> dict | None:

@@ -12,10 +12,9 @@ from typing import Callable
 
 from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerClient
-from kestrel.attacks.library import family_label
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings
-from kestrel.experience.hints import format_hints
+from kestrel.experience.retrieval import background_provider
 from kestrel.experience.writeback import write_back
 from kestrel.judge.client import JudgeClient
 from kestrel.runs import execute_adaptive_run, execute_run
@@ -138,7 +137,10 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
                     max_turns=arm.turn_cap, token_budget=arm.token_budget,
                     time_limit_s=settings.adaptive_time_limit_s, transport=transport, resolver=resolver,
                     use_prior_experience=arm.use_prior_experience,
-                    hint_provider=_hint_provider(arm, target, seed, experience, settings))
+                    # Feature 011: the same retrieval path as POST /api/runs, so the two cannot drift apart.
+                    hint_provider=background_provider(experience, target_id=target.id, purpose=target.description,
+                                                      family=seed.family, settings=settings,
+                                                      use_prior_experience=arm.use_prior_experience))
             else:
                 run = await execute_run(store, target_id=experiment.target_id, prompt=seed,
                                         attacker_source=library.attacker_source, canaries=canaries,
@@ -152,7 +154,8 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
         store.add_experiment_run(experiment_id=experiment.id, arm_id=arm.id, rep_index=rep, family=family,
                                  run_id=run.id, send_ok=run.failure_step is None)
         if arm.write_back:   # a cold arm skips write-back so the other arm is not warmed by it (FR-005);
-            write_back(experience, store, run, store.list_turns(run.id))   # otherwise learn from the run (Principle V)
+            write_back(experience, store, run, store.list_turns(run.id),   # otherwise learn from the run (Principle V)
+                       dedupe_threshold=settings.experience_dedupe_threshold)
         return run
 
 
@@ -162,21 +165,3 @@ def _resolve(store: TargetStore, target) -> ResolvedSettings:
     headers = tuple((h.name, stored.get(h.name.lower()) or "") for h in target.headers)
     return ResolvedSettings(url=target.url, method=target.method, headers=headers,
                             body_template=target.body_template, response_path=target.response_path)
-
-
-def _hint_provider(arm, target, seed, experience, settings):
-    """The attacker's background each turn: purpose always; patterns + memory only on a warm arm (feature 004)."""
-    def provider(conversation):
-        purpose = target.description
-        if not arm.use_prior_experience or experience is None:
-            return format_hints(purpose=purpose, patterns=[], memory=[])
-        memory = experience.retrieve_memory(target_id=target.id, family=seed.family,
-                                            cap=settings.experience_memory_cap)
-        recent = " ".join(text for _, text in conversation[-4:])
-        query = f"{family_label(seed.family)} {recent}".strip()
-        found = experience.retrieve_patterns_with_ids(family=seed.family, query_text=query,
-                                                      k=settings.experience_pattern_k)
-        # Feature 010 (FR-016): counts and pattern ids whenever the store was asked — zero when nothing came back.
-        events.memory_retrieval(pattern_ids=[pattern_id for pattern_id, _ in found], memory_count=len(memory))
-        return format_hints(purpose=purpose, patterns=[document for _, document in found], memory=memory)
-    return provider

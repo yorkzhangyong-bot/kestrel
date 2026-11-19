@@ -1,4 +1,9 @@
-"""Deleting a target deletes its memory; shared patterns survive (FR-024, FR-025, SC-010)."""
+"""Deleting a target deletes its memory; shared patterns survive (FR-024, FR-025, SC-010).
+
+Changed on purpose by feature 011 (011/FR-006, 011/FR-008, 011/SC-009): the single-turn success below replays its
+library seed verbatim, which now *merges* into that seed — its hit count rises, no pattern is added — instead of
+adding a success-derived copy. The deletion assertions (memory gone, the shared pattern count unchanged) are as
+they were."""
 import uuid
 
 import httpx
@@ -31,12 +36,16 @@ def test_delete_removes_memory_and_keeps_patterns(make_client):
     # A succeeding judge so the run also contributes a shared pattern.
     api = make_client(transport=REPLY, library=fixture_library(), judge=StubJudge(verdict="succeeded"))
     tid = save_target(api)
-    api.post("/api/runs", json={"target_id": tid, "family": "system_prompt_leak", "mode": "single_turn"})
+    run = api.post("/api/runs", json={"target_id": tid, "family": "system_prompt_leak",
+                                      "mode": "single_turn"}).json()
 
     experience = api.app.state.experience
     assert experience.count("memory", target_id=tid) >= 1
     patterns_before = experience.count("pattern")
-    assert patterns_before > len(fixture_library().prompts)  # the seed plus the success-derived pattern
+    # 011/FR-006, 011/FR-008: the success replayed its seed verbatim, so it merged into the seed — no copy added.
+    assert patterns_before == len(fixture_library().prompts)
+    seed = experience._collection.get(ids=[f"pattern:lib:{run['prompt_id']}"], include=["metadatas"])
+    assert seed["metadatas"][0]["hit_count"] == 2 and seed["metadatas"][0]["last_hit_run_id"] == run["id"]
 
     assert api.delete(f"/api/targets/{tid}").status_code == 204
     assert experience.count("memory", target_id=tid) == 0          # FR-024, SC-010

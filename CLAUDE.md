@@ -76,6 +76,13 @@ have written permission".
   permitted default is `deepseek/deepseek-v4.1-flash`.
 - **ChromaDB embedding function:** the store persists the embedding function by name, so a stub-EF store poisons
   the real app's `data/chroma`. Tests must use a tmp `chroma_path`, never the repo's.
+- **ChromaDB mutates the collection configuration it is given:** `get_or_create_collection(configuration=...)`
+  writes the call's embedding function into that dict (chromadb 1.5.9, `api/client.py`), so a dict shared between
+  calls pins the first store's function onto every later store in the process — a default store silently built
+  on the stub while recording `all-MiniLM-L6-v2`, or `ValueError: Multiple embedding functions provided` the other
+  way round, and an order-dependent offline suite. Never share a mutable configuration between ChromaDB calls;
+  `ExperienceStore.__init__` builds a fresh one per call (`tests/unit/test_experience_store_model.py` proves both
+  orders).
 - **No `.env` auto-load:** the app reads real environment variables and does **not** load `.env`. Export settings
   into the shell first (`set -a; . ./.env; set +a`) or pass `uvicorn --env-file`, then start the API.
 - **ChromaDB systems must be stopped in tests:** `SharedSystemClient.clear_system_cache()` only forgets chroma Systems; on Windows every seeded persistent store keeps 3–4 C-runtime descriptors (limit 8192) until `System.stop()`, so `tests/conftest.py::_release_chroma` stops every cached System after each test. Without it, running the integration suite before the unit suite fails the connection-tester test with "Too many open files".
@@ -139,3 +146,77 @@ same commit. Before opening any implementation PR, review this file and add anyt
   handler kept a later test's records twice. Provenance is now written from the reference the client actually
   sends (a pinned arm's version; a single-turn verdict's judge version), judge provenance only when a judge request
   was made. `KESTREL_TEST_BLOCK_OTLP=1` blocks the OTLP exporter import for a whole test session (SC-007).
+- 2026-11-16 — **Retrieval controls (011).** Settings: `KESTREL_EXPERIENCE_DISTANCE_FLOOR=1.8` and
+  `KESTREL_EXPERIENCE_DEDUPE_THRESHOLD=0.15` (both on by default; `off` disables one; a negative, non-finite or
+  non-numeric value refuses to start), parsed by `settings.non_negative_float_or_off`, read as `Settings.retrieval` →
+  `RetrievalSettings(k, distance_floor, dedupe_threshold)`, reported on `GET /api/config`. Distances are the
+  collection's own `l2` (squared Euclidean) values. **One retrieval path**: `experience/retrieval.py` —
+  `background_provider(...)` is the per-turn callable both `api/main.py::start_run` and `experiments/engine.py::_run_rep`
+  hand to the graph (`attack/graph.py` still takes a plain callable and never imports the store). The query is
+  `family_label(family)` + the last `QUERY_MESSAGES = 2` messages whose role is exactly `attacker` (the graph's
+  `(role, text)` list; `agent` replies are filtered, and the judge reason/progress, memory summaries and the purpose
+  description are not in that list at all — `tests/integration/test_retrieval_query_isolation.py` proves it with the
+  known markers through a `SpyExperienceStore`). Pool = `min(k × CANDIDATE_MULTIPLIER (4), family count)` from
+  `ExperienceStore.query_patterns` (`Candidate`: id, document, distance, stored embedding); `select_patterns` walks
+  nearest first — a candidate `> floor` ends the walk and every later one counts in `dropped_floor`; one whose squared
+  distance to an already selected hit is `<= threshold` is skipped (`dropped_duplicate`, no slot spent); stop at `k`.
+  The `memory.retrieval` line carries `k`, `distance_floor`, `dedupe_threshold` (`null` when off), `candidate_count`
+  (always `dropped_floor + dropped_duplicate + pattern_count`), `distances` (4 decimals) and `query_messages`; a floor
+  that admits nothing gives `pattern_count` 0 and the run goes on. **Write-back**: `write_pattern(...,
+  dedupe_threshold=)` returns `PatternWrite` — the nearest same-family pattern (library seeds included) within the
+  threshold gets `hit_count + 1` and `last_hit_run_id` (`merged`), else a new `pattern:run:<id>` with `hit_count` 1
+  (`added`); `memory.writeback` carries `pattern_outcome`, `pattern_id`, `hit_count`, `pattern_distance`. ChromaDB
+  metadata semantics that make this work: `upsert`/`update` with a metadata dict **merge keys** (an omitted key is
+  kept — `seed_patterns` upserts existing seed ids without `hit_count`, so counts survive every start-up), while
+  `collection.modify(metadata=...)` **replaces** the whole collection dict (the stamp rewrites all three keys).
+  **Model stamp**: the collection is created with `configuration={"hnsw": {"space": "l2"}}` and metadata
+  `kestrel_embedding_model` + `kestrel_distance_space`; the name comes from `embedding_model_name(ef)` — `None` or
+  ChromaDB's `DefaultEmbeddingFunction` → `all-MiniLM-L6-v2` (`ONNXMiniLM_L6_V2.MODEL_NAME`; the default delegates
+  every call to it), else the function's `MODEL_NAME`, else its `name()`; the stub's is `kestrel-lexical-stub`. The
+  ctor keyword `embedding_model=` is the test seam for "another model" (ChromaDB's own check on the registered
+  function *name* would fire first). `self_check` compares the space, then the name, before the probe:
+  `SpaceMismatch` / `EmbeddingModelMismatch` → one ERROR `experience.unavailable` with `reason_kind`
+  `space_mismatch`/`embedding_model_mismatch`, `stored_*`/`expected_*` fields and a mismatch-specific constant
+  `message` with the remedy (`api/main.py::_unavailable_message`); the store is `None` for the session, runs record
+  `memory_written` false. A feature-004 store (version only) is stamped on first open (one `message` line) — only if
+  its index really is `l2`; a recorded name is never overwritten. Gotcha: `get_or_create_collection` **ignores a
+  conflicting `configuration` on reopen**, so the actual space is read back from
+  `collection.configuration_json["hnsw"]["space"]`, never assumed. **Offline scale**: `tests/support.py::
+  StubEmbeddingFunction` is a hashed bag of words (`zlib.crc32(token) % 256`, L2-normalised): identical texts 0,
+  disjoint 2.0, one token of six changed ≈ 0.333 — every offline floor/threshold test states values on this scale
+  (the shipped 1.8/0.15 still behave against the placeholder seeds). **Recall fixture**:
+  `tests/fixtures/retrieval_recall.json` (contract `specs/011-retrieval-controls/contracts/recall-fixture.md`): k 3,
+  floor 0.8, threshold 0.5, a 21-word collision-free vocabulary; `tests/unit/test_retrieval_recall.py` reproduces the
+  published distances rounded to 4 decimals and asserts a ≥ 0.1 margin from both controls — extend it only with words
+  whose `crc32 % 256` bucket is free, and keep every text placeholder vocabulary. **Measured real-model distances**
+  behind the defaults (research D6): seedless on-theme queries up to 1.74 from the nearest family seed, unrelated
+  text 2.0–2.15; whitespace/spelling/one-word variants 0.004–0.088, a paraphrase 0.253, the nearest two shipped seeds
+  of one family 0.543 — the e2e (`tests/e2e/test_us011_retrieval.py`, API in-process, up to four warm runs until one
+  reaches a seedless turn-4 query) confirms merged at ~0.09 and added at ~0.25. The subprocess-based
+  `assert_no_secret_in_logs` fixture does not apply to an in-process e2e; `json_log` captures the stream there.
+- 2026-11-17 — **Retrieval controls (011), independent-review fix.** `ExperienceStore.write_pattern`'s add path
+  gives every added pattern a unique `pattern:run:<uuid4().hex>` id via `collection.add` (never `upsert`): the old
+  `pattern:run:<run_id>` id assumed `run_id` was unique, but `runs.id` was `INTEGER PRIMARY KEY` without
+  `AUTOINCREMENT`, so deleting a target (cascading its runs) freed its numeric ids for SQLite to reissue, and a
+  later run that reused one silently overwrote an unrelated, still-shared pattern (same id, new document, `hit_count`
+  reset to 1, stale `last_hit_run_id`) — reproduced in a temp directory by the reviewer. `run_id` now lives only in
+  metadata (`origin_run_id`, `source`); a legacy `pattern:run:<run_id>` id from before this fix stays a valid merge
+  target. Schema **v9**: `runs.id INTEGER PRIMARY KEY AUTOINCREMENT`, so a run id is never reissued once its row is
+  gone. SQLite can't `ALTER` AUTOINCREMENT into a column, so an existing database's `runs` is rebuilt following
+  SQLite's documented procedure (lang_altertable.html, "Making Other Kinds Of Table Schema Changes"): a `runs_new`
+  built from the same column list (now with AUTOINCREMENT), `INSERT ... SELECT` by explicit column name (read live
+  from `PRAGMA table_info(runs)`, so it can't drift from whatever columns the additive migrations just added),
+  `DROP TABLE runs`, rename back, reindex, `PRAGMA foreign_key_check` required empty before commit. Gotcha:
+  `PRAGMA foreign_keys` is a no-op inside an open transaction — Python's sqlite3 (legacy mode) only auto-opens one
+  before INSERT/UPDATE/DELETE, never before CREATE/DROP/ALTER, so `PRAGMA foreign_keys = OFF` still takes effect
+  right before the rebuild's own first `INSERT ... SELECT` opens one; four tables reference `runs` (`run_turns`,
+  `report_recommendations`, `run_log` all `ON DELETE CASCADE`, `experiment_runs` `ON DELETE SET NULL`), and with
+  foreign keys on, `DROP TABLE runs` performs an implicit DELETE that fires those actions and wipes or nulls every
+  child row. A second gotcha: `db.executescript(...)` commits any open transaction before running, so the rebuild's
+  two index-recreation statements are issued as separate `db.execute()` calls, not one script, or the commit would
+  land before `foreign_key_check` gets to refuse it. Both gotchas were verified empirically (a standalone sqlite3
+  script) before being committed, not just reasoned about. `sqlite_sequence` carries over the highest copied id, so
+  an id freed by a deletion *before* this migration can be reissued once — harmless now that pattern ids are never
+  derived from it. Migration tests that pin "the current schema version" as a literal string needed only the digit
+  bumped (`8` → `9`) wherever one already existed; the new `tests/unit/test_store_migration_v9.py` follows the
+  `test_store_migration_v<N>.py` convention each version bump has used since v3.

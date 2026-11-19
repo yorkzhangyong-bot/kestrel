@@ -14,7 +14,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -22,7 +22,54 @@ MIN_CANARY_LENGTH = 8
 # `log.truncated` marker row records how many were dropped. A constant, not a setting.
 RUN_LOG_CAP = 1000
 
-SCHEMA = """
+# The `runs` table's columns: shared by a fresh database's CREATE TABLE (below) and the schema-v9 rebuild
+# (`runs_new` in `_rebuild_runs_with_autoincrement`), so the two definitions cannot drift apart. SQLite cannot
+# ALTER a column into AUTOINCREMENT, so an existing database is migrated by rebuilding the table from this same
+# text (https://www.sqlite.org/lang_altertable.html, "Making Other Kinds Of Table Schema Changes").
+RUNS_COLUMNS_SQL = """
+    id INTEGER PRIMARY KEY AUTOINCREMENT,                        -- v9: never reissued once a run row is gone
+    target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+    prompt_id TEXT NOT NULL,
+    prompt_title TEXT NOT NULL,
+    prompt_text TEXT NOT NULL,                                   -- copied, so a library edit can't rewrite history
+    family TEXT NOT NULL CHECK (family IN
+        ('direct_injection', 'system_prompt_leak', 'tool_exfiltration', 'indirect_injection')),
+    owasp_category TEXT NOT NULL,
+    attacker_source TEXT NOT NULL,                               -- 'library:<version>' (FR-005, FR-019)
+    status TEXT NOT NULL CHECK (status IN ('in_progress', 'finished')),
+    reply_text TEXT,                                             -- masked and cut; null when the send failed
+    reply_truncated INTEGER NOT NULL DEFAULT 0,
+    verdict TEXT CHECK (verdict IS NULL OR verdict IN ('succeeded', 'failed', 'unclear')),
+    hard_evidence INTEGER NOT NULL DEFAULT 0,                    -- set by a canary match alone (FR-018)
+    reason TEXT,
+    judge_used INTEGER NOT NULL DEFAULT 0,
+    judge_model TEXT,
+    failure_step TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    -- Added in schema version 3 (feature 003): single-turn runs leave these at their defaults/null.
+    mode TEXT NOT NULL DEFAULT 'single_turn' CHECK (mode IN ('single_turn', 'adaptive')),
+    attacker_model TEXT,                                         -- the model driving an adaptive run (FR-015)
+    turn_budget INTEGER, turns_used INTEGER,
+    token_budget INTEGER, tokens_used INTEGER,
+    time_limit_s INTEGER,
+    stopping_condition TEXT,                                     -- how an adaptive run ended (FR-012)
+    succeeded_turn INTEGER,                                      -- the turn it succeeded at, or null (FR-019)
+    -- Added in schema version 4 (feature 004).
+    use_prior_experience INTEGER NOT NULL DEFAULT 1,            -- warm (1, default) or cold (0), per run (FR-014)
+    memory_written INTEGER,                                      -- null not attempted, 1 written, 0 failed (FR-010)
+    -- Added in schema version 7 (feature 009): the judge prompt behind this run's verdict (null = not recorded).
+    judge_prompt_id TEXT, judge_prompt_version TEXT
+"""
+# The indexes on `runs`: also shared, textually, with `_rebuild_runs_with_autoincrement` (which must issue these
+# as separate `execute()` calls rather than this joined form - see that method's docstring).
+RUNS_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_runs_target ON runs (target_id, started_at DESC);
+-- FR-010 as a property of the database, so two API workers can't both start a run on one target (any mode).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_active ON runs (target_id) WHERE status = 'in_progress';
+"""
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS targets (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 100),   -- trimmed, 1 to 100 characters
@@ -59,44 +106,8 @@ CREATE TABLE IF NOT EXISTS target_canaries (
     created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS target_canaries_value ON target_canaries (target_id, value);
-CREATE TABLE IF NOT EXISTS runs (
-    id INTEGER PRIMARY KEY,
-    target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
-    prompt_id TEXT NOT NULL,
-    prompt_title TEXT NOT NULL,
-    prompt_text TEXT NOT NULL,                                   -- copied, so a library edit can't rewrite history
-    family TEXT NOT NULL CHECK (family IN
-        ('direct_injection', 'system_prompt_leak', 'tool_exfiltration', 'indirect_injection')),
-    owasp_category TEXT NOT NULL,
-    attacker_source TEXT NOT NULL,                               -- 'library:<version>' (FR-005, FR-019)
-    status TEXT NOT NULL CHECK (status IN ('in_progress', 'finished')),
-    reply_text TEXT,                                             -- masked and cut; null when the send failed
-    reply_truncated INTEGER NOT NULL DEFAULT 0,
-    verdict TEXT CHECK (verdict IS NULL OR verdict IN ('succeeded', 'failed', 'unclear')),
-    hard_evidence INTEGER NOT NULL DEFAULT 0,                    -- set by a canary match alone (FR-018)
-    reason TEXT,
-    judge_used INTEGER NOT NULL DEFAULT 0,
-    judge_model TEXT,
-    failure_step TEXT,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    -- Added in schema version 3 (feature 003): single-turn runs leave these at their defaults/null.
-    mode TEXT NOT NULL DEFAULT 'single_turn' CHECK (mode IN ('single_turn', 'adaptive')),
-    attacker_model TEXT,                                         -- the model driving an adaptive run (FR-015)
-    turn_budget INTEGER, turns_used INTEGER,
-    token_budget INTEGER, tokens_used INTEGER,
-    time_limit_s INTEGER,
-    stopping_condition TEXT,                                     -- how an adaptive run ended (FR-012)
-    succeeded_turn INTEGER,                                      -- the turn it succeeded at, or null (FR-019)
-    -- Added in schema version 4 (feature 004).
-    use_prior_experience INTEGER NOT NULL DEFAULT 1,            -- warm (1, default) or cold (0), per run (FR-014)
-    memory_written INTEGER,                                      -- null not attempted, 1 written, 0 failed (FR-010)
-    -- Added in schema version 7 (feature 009): the judge prompt behind this run's verdict (null = not recorded).
-    judge_prompt_id TEXT, judge_prompt_version TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_runs_target ON runs (target_id, started_at DESC);
--- FR-010 as a property of the database, so two API workers can't both start a run on one target (any mode).
-CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_active ON runs (target_id) WHERE status = 'in_progress';
+CREATE TABLE IF NOT EXISTS runs ({RUNS_COLUMNS_SQL});
+{RUNS_INDEXES_SQL}
 -- Added in schema version 3: the conversation of an adaptive run, one row per turn (FR-020).
 CREATE TABLE IF NOT EXISTS run_turns (
     id INTEGER PRIMARY KEY,
@@ -401,15 +412,17 @@ class TargetStore:
 
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
-        """Additive migrations. New tables (v2 canaries/runs, v3 turns, v5 report_recommendations) come from the
-        schema script (CREATE IF NOT EXISTS); the version-3 columns (adaptive) and version-4 columns (experience)
-        on the existing tables are ALTER-added for an older database (R9). Versions 5 and 8 (feature 010's run_log)
-        add only a new table."""
+        """Additive migrations, plus the version-9 `runs` rebuild. New tables (v2 canaries/runs, v3 turns, v5
+        report_recommendations) come from the schema script (CREATE IF NOT EXISTS); the version-3 columns
+        (adaptive) and version-4 columns (experience) on the existing tables are ALTER-added for an older database
+        (R9). Versions 5 and 8 (feature 010's run_log) add only a new table. Version 9 cannot be additive: SQLite
+        has no ALTER that adds AUTOINCREMENT to an existing column, so `_rebuild_runs_with_autoincrement` rebuilds
+        `runs` once every additive column it needs has been added above."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7"):
+        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
         # An older database may lack the adaptive (v3), experience (v4) and prompt-version (v7) columns on `runs`.
@@ -430,10 +443,57 @@ class TargetStore:
         target_columns = {r["name"] for r in db.execute("PRAGMA table_info(targets)")}
         if "description" not in target_columns:
             db.execute("ALTER TABLE targets ADD COLUMN description TEXT")
+        # Now that `runs` carries every current column, rebuild it under AUTOINCREMENT if it does not already
+        # (a no-op for a database already migrated to v9, and for a fresh one: its `runs` came from SCHEMA above).
+        TargetStore._rebuild_runs_with_autoincrement(db)
         if current is None:
             db.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
         else:
             db.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (SCHEMA_VERSION,))
+
+    @staticmethod
+    def _rebuild_runs_with_autoincrement(db: sqlite3.Connection) -> None:
+        """Schema v9 (post-review fix): give `runs.id` AUTOINCREMENT, so a run's id is never reissued once its row
+        is gone (directly, or by a cascaded target deletion) — closing the path by which a reused numeric id could
+        collide with a pattern `write_pattern` had derived from it (patterns now get their own unique id instead;
+        `kestrel.experience.store.write_pattern`). SQLite cannot ALTER a column into AUTOINCREMENT, so this follows
+        SQLite's own documented procedure for schema changes ALTER TABLE cannot express
+        (https://www.sqlite.org/lang_altertable.html, "Making Other Kinds Of Table Schema Changes"): copy `runs`
+        into a new table built from `RUNS_COLUMNS_SQL` (now with AUTOINCREMENT), drop the old one, rename the new
+        one back, recreate its indexes, and require `PRAGMA foreign_key_check` to come back empty before
+        committing. `sqlite_sequence` then holds the highest copied id, so a numeric id freed by a row deleted
+        *before* this migration could still be issued once more — harmless, now that pattern ids are never derived
+        from a run id.
+
+        Four tables reference `runs` (`run_turns`, `report_recommendations` and `run_log` ON DELETE CASCADE,
+        `experiment_runs` ON DELETE SET NULL). With foreign keys on, `DROP TABLE runs` performs an implicit DELETE
+        that fires those actions and wipes or nulls every child row, so foreign keys must be off first. `PRAGMA
+        foreign_keys` is a no-op inside an open transaction, and the first DML statement below (`INSERT INTO
+        runs_new ... SELECT`) opens one implicitly, so the PRAGMA is set before it, while nothing but DDL
+        (CREATE/DROP/ALTER, which do not open a transaction on their own) has run yet in this call. The index
+        statements are issued individually here rather than via `RUNS_INDEXES_SQL` as one script, because
+        `executescript` commits any open transaction before it runs — which would commit this rebuild before
+        `foreign_key_check` has had a chance to refuse it.
+        """
+        definition = db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'").fetchone()
+        if definition is None or "AUTOINCREMENT" in definition["sql"].upper():
+            return   # no `runs` table yet (unreachable: SCHEMA already created it), or already rebuilt
+        columns = ", ".join(r["name"] for r in db.execute("PRAGMA table_info(runs)"))
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("DROP TABLE IF EXISTS runs_new")   # left over from a previous, interrupted migration attempt
+        db.execute(f"CREATE TABLE runs_new ({RUNS_COLUMNS_SQL})")
+        db.execute(f"INSERT INTO runs_new ({columns}) SELECT {columns} FROM runs")
+        db.execute("DROP TABLE runs")
+        db.execute("ALTER TABLE runs_new RENAME TO runs")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_runs_target ON runs (target_id, started_at DESC)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_active ON runs (target_id) WHERE status ="
+                   " 'in_progress'")
+        violations = db.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"schema v9 migration would leave dangling foreign keys: {[tuple(v) for v in violations]}")
+        db.commit()
+        db.execute("PRAGMA foreign_keys = ON")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

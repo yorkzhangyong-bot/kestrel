@@ -49,6 +49,8 @@ class AdaptiveCapsOut(BaseModel):
 class ExperienceOut(BaseModel):
     pattern_k: int
     memory_cap: int
+    distance_floor: float | None     # feature 011: the retrieval controls in effect; null = switched off
+    dedupe_threshold: float | None
     use_prior_experience_default: bool  # the screen defaults the toggle to this (feature 004, FR-014)
 
 

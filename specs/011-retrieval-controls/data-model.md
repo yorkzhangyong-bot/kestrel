@@ -1,8 +1,18 @@
 # Phase 1 Data Model: Retrieval Controls for the Experience Store (011)
 
-No SQLite change (schema stays at v8). Every change is in the ChromaDB collection's metadata, in two in-process
-value types, in the settings, and in the fields of three existing log events. No field anywhere holds a target URL,
-display name, auth value, attack message, reply text or judge text (Principle IV, `010/FR-009`).
+**SQLite, schema v9 (post-review fix).** `runs.id` changes from `INTEGER PRIMARY KEY` to `INTEGER PRIMARY KEY
+AUTOINCREMENT`, so a run id is never reissued once its row is gone — directly, or by a cascaded target deletion —
+closing the path by which a `pattern:run:<run_id>` id (below) could have collided with an unrelated, earlier
+pattern. SQLite cannot `ALTER` a column into `AUTOINCREMENT`, so an existing database's `runs` table is rebuilt:
+copied into a new table under the same columns plus `AUTOINCREMENT`, the old one dropped, the new one renamed
+back, every index recreated, with foreign keys off for the rebuild and a `PRAGMA foreign_key_check` required to
+pass before commit (`src/kestrel/store.py::TargetStore._rebuild_runs_with_autoincrement`). `sqlite_sequence`
+carries over the highest copied id, so a numeric id freed by a row deleted *before* this migration could still be
+issued once more — harmless now that pattern ids are never derived from a run id (below).
+
+Every other change is in the ChromaDB collection's metadata, in two in-process value types, in the settings, and
+in the fields of three existing log events. No field anywhere holds a target URL, display name, auth value, attack
+message, reply text or judge text (Principle IV, `010/FR-009`).
 
 ## ChromaDB collection metadata (`kestrel_experience`)
 
@@ -18,8 +28,13 @@ actual index space is `l2` is stamped; a non-`l2` store is left unstamped and un
 
 ## Pattern record (`type = "pattern"`) — extended
 
-Feature-004 fields unchanged (`id`, `document`, `type`, `family`, `owasp_category`, `source`, `prompt_id` or
-`origin_run_id`). New metadata:
+Feature-004 fields unchanged (`document`, `type`, `family`, `owasp_category`, `source`, `prompt_id` or
+`origin_run_id`), **except `id`** (post-review fix): a success-derived pattern's id is a fresh `pattern:run:<uuid4
+hex>`, never `pattern:run:<run_id>` — `run_id` is not guaranteed unique (a deleted target's run ids could be
+reissued on a pre-schema-v9 database) and is recorded only as metadata (`source`, `origin_run_id`). The add uses
+`collection.add`, never `upsert`, so an id collision (astronomically unlikely) keeps the existing record rather
+than overwriting it. A legacy `pattern:run:<run_id>` id written before this fix stays a valid merge target. New
+metadata:
 
 | Field | Type | Set | Rule |
 |-------|------|-----|------|
@@ -27,8 +42,9 @@ Feature-004 fields unchanged (`id`, `document`, `type`, `family`, `owasp_categor
 | `last_hit_run_id` | int | on each merge | the run whose success was merged into this pattern most recently; absent until the first merge |
 
 Lifecycle of a success write-back (FR-006, FR-008): `nearest same-family pattern within the threshold` → **merge**
-(`hit_count + 1`, `last_hit_run_id = run`, no new record) · otherwise → **add** (`pattern:run:<run_id>`,
-`hit_count = 1`). Non-success → nothing. De-duplication off → always add.
+(`hit_count + 1`, `last_hit_run_id = run`, no new record) · otherwise → **add** under a fresh `pattern:run:<uuid>`
+id (`run_id` recorded only as `origin_run_id` metadata), `hit_count = 1`. Non-success → nothing. De-duplication
+off → always add.
 
 ## Memory record (`type = "memory"`)
 
