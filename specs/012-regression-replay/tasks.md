@@ -767,7 +767,7 @@ printed.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T034 [P] End-to-end test `tests/e2e/test_us012_replay.py` (marker `e2e`, `FEATURE = "012"`), modelled on
+- [X] T034 [P] End-to-end test `tests/e2e/test_us012_replay.py` (marker `e2e`, `FEATURE = "012"`), modelled on
       `tests/e2e/test_us011_retrieval.py` — **that pattern runs the
       Kestrel API *in-process* via `fastapi.testclient.TestClient(create_app(settings, ...))` over a `tmp_path`
       `Settings`, against the real HS-code target started as its own subprocess via the `hs_target` fixture; it is
