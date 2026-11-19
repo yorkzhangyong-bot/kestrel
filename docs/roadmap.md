@@ -32,6 +32,10 @@ Planned next, not yet specified.
 - **Third-party vulnerable targets.** Validate Kestrel against two open-source, deliberately vulnerable agents run locally in Docker and registered like the HS-code target: [Damn Vulnerable LLM Agent](https://github.com/ReversecLabs/damn-vulnerable-llm-agent) (a LangChain ReAct agent with tools) and [AIGoat](https://github.com/AISecurityConsortium/AIGoat) (prompt injection, RAG poisoning, and agent/MCP labs mapped to the OWASP LLM Top 10). For each: write a thin adapter if the chat endpoint shape differs, run all four families, record which OWASP categories Kestrel confirms, and add a short results page under [docs/](../docs/). Not part of CI — manual validation. Shows Kestrel generalises beyond its own sacrificial target.
 - **Product-grade front end on the existing FastAPI API.** The UI is already API-only (the screen holds no logic), so this is a client swap, not a rewrite. Options: **Next.js / React** (the standard, best look, TypeScript), **Reflex** (Python, compiles to React), **NiceGUI** (Python over Vue). Motivation: full layout control, no full-script reruns on every interaction, and a look fit for non-developer users. Streamlit stays as the internal/demo screen until the new front end reaches parity.
 
+## Housekeeping
+
+- **Remove `SKIP_AI_REVIEW` once API credit is topped up.** The repository variable bypasses the Claude Code review gate while the reviewer account's `ANTHROPIC_API_KEY` has no API credit ([qa-pipeline.md](qa-pipeline.md)). When the credit is topped up, delete the variable so the `review` job fails closed again, and remove the bypass notes from `CLAUDE.md`, [qa-pipeline.md](qa-pipeline.md) and [branch-protection.md](branch-protection.md).
+
 ## Done
 
 - **009 — Versioned prompts** — judge, recommendation, attacker prompts and family goal sentences in `prompts/<name>.<version>.md` with front-matter; cached `load_prompt`; `judge_prompt_version`/`attacker_prompt_version` on runs and experiment_arms (schema v7), shown in report headers; a prompt-version arm in 007 for A/B on the golden set or a campaign. Goal sentences stay neutral. Shipped in #18/#19.

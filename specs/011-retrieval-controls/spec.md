@@ -323,8 +323,8 @@ as exactly one new pattern or one merge into a near-identical same-family patter
 feature-004 edge case "many near-identical successes — patterns may repeat" no longer holds, because they merge;
 and — owner-approved after an independent review found that a reused numeric run id could silently overwrite a
 surviving pattern, because `runs.id` was not `AUTOINCREMENT` — the `pattern:run:<run_id>` id and the "deterministic
-ids make seeding and write-back idempotent via upsert" claim (`004/FR-009`'s id clause,
-`004/contracts/experience-store.md:21,31`, `004/data-model.md:52`, `004/quickstart.md:32`) become: an added pattern
+ids make seeding and write-back idempotent via upsert" claim
+(`004/contracts/experience-store.md:21,31`, `004/data-model.md:52`, `004/quickstart.md:32`) become: an added pattern
 gets a unique `pattern:run:<uuid>` id (the run id kept only as `origin_run_id` metadata, FR-006); seeding stays
 idempotent through its own deterministic `pattern:lib:<prompt_id>` ids, and write-back's safety against repeats now
 comes from running exactly once per run plus de-duplication's merge, never from an upsert on a derived id. Where

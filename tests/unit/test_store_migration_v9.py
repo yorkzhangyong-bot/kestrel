@@ -9,7 +9,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from kestrel.secrets import Vault
-from kestrel.store import SCHEMA_VERSION, TargetStore, UnknownSchemaVersion
+from kestrel.store import SCHEMA_VERSION, RunInProgress, TargetStore, UnknownSchemaVersion
 
 FEATURE = "011"
 
@@ -147,6 +147,19 @@ def foreign_key_violations(path) -> list:
         db.close()
 
 
+def runs_indexes(path) -> dict[str, tuple[int, int, list[str]]]:
+    """The indexes CREATE INDEX made on `runs` (no automatic ones): name -> (unique, partial, columns)."""
+    db = sqlite3.connect(path)
+    try:
+        found = {}
+        for _seq, name, unique, origin, partial in db.execute("PRAGMA index_list(runs)").fetchall():
+            if origin == "c":
+                found[name] = (unique, partial, [row[2] for row in db.execute(f"PRAGMA index_info({name})")])
+        return found
+    finally:
+        db.close()
+
+
 def test_a_fresh_database_is_created_at_version_9_with_autoincrement(tmp_path, vault):  # 011/FR-006
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
@@ -195,6 +208,27 @@ def test_a_v8_database_is_rebuilt_with_autoincrement_and_keeps_every_row(v8_db, 
                              family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
                              attacker_source="library:1.0.0")
     assert newest > 2
+
+
+def test_the_rebuild_recreates_both_runs_indexes(v8_db, tmp_path, vault):  # 011/FR-006
+    """Dropping the old `runs` drops its indexes with it, so the rebuild must recreate both exactly as a fresh v9
+    database has them, and the partial unique one must still refuse a second in-progress run on one target, which is
+    how `claim_run` keeps two workers from starting runs on the same target."""
+    expected = {"idx_runs_target": (0, 0, ["target_id", "started_at"]),
+                "uq_runs_active": (1, 1, ["target_id"])}
+    fresh = tmp_path / "fresh" / "kestrel.db"
+    TargetStore(fresh, vault)
+    assert runs_indexes(fresh) == expected
+    assert runs_indexes(v8_db) == expected   # the v8 fixture has both, so the rebuild has something to lose
+
+    store = TargetStore(v8_db, vault)
+
+    assert runs_indexes(v8_db) == expected
+    claim = dict(prompt_title="t3", prompt_text="<seed3>", family="system_prompt_leak",
+                 owasp_category="LLM07: System Prompt Leakage", attacker_source="library:1.0.0")
+    store.claim_run(1, prompt_id="spl-002", **claim)
+    with pytest.raises(RunInProgress):
+        store.claim_run(1, prompt_id="spl-003", **claim)
 
 
 def test_a_fresh_v9_database_never_reuses_a_deleted_runs_id(tmp_path, vault):  # 011/FR-006
