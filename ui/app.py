@@ -754,9 +754,9 @@ def render_runs(config: dict) -> None:
         st.caption("No runs yet for this target.")
         return
     frame = pd.DataFrame([{"When": pd.to_datetime(r["started_at"]), "Mode": _mode_label(r),
-                           "Source": r.get("source_run_id") or "", "Family": r["family"],
-                           "Prompt": r["prompt_title"], "Verdict": r["verdict"] or r["failure_step"] or "—",
-                           "Evidence": _evidence(r)}
+                           "Source": str(r["source_run_id"]) if r.get("source_run_id") else "",
+                           "Family": r["family"], "Prompt": r["prompt_title"],
+                           "Verdict": r["verdict"] or r["failure_step"] or "—", "Evidence": _evidence(r)}
                           for r in runs])
     # column_config formats the timestamps; a Styler colours the verdict (item 4; the data-display.md pattern).
     styled = frame.style.apply(lambda _col: [_verdict_css(r) for r in runs], subset=["Verdict"])

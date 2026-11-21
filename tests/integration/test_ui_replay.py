@@ -198,12 +198,12 @@ def test_the_result_card_and_a_different_opened_run_cause_no_duplicate_widget_id
 # ---- the run list's Mode and Source columns (FR-039) ----
 
 
-def test_the_run_list_shows_the_replay_mode_label_and_source_column(api):
+def test_the_run_list_shows_the_replay_mode_label_and_source_column_as_a_string(api):
     api.runs = [run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed")]
     at = loaded()
     frame = at.dataframe[0].value
     assert frame["Mode"].tolist() == ["replay"]
-    assert frame["Source"].tolist() == [7]
+    assert frame["Source"].tolist() == ["7"]
 
 
 def test_a_non_replay_run_leaves_the_source_column_blank(api):
@@ -211,3 +211,14 @@ def test_a_non_replay_run_leaves_the_source_column_blank(api):
     at = loaded()
     frame = at.dataframe[0].value
     assert frame["Source"].tolist() == [""]
+
+
+def test_a_mixed_run_list_never_fails_arrow_serialisation(api):
+    """review item 15: a bare int next to "" in the same column fails Arrow serialisation inside st.dataframe
+    (CLAUDE.md's own note on this feature) - every cell must be a string, even when a replay and a non-replay
+    run are listed together."""
+    api.runs = [run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed"), run(id=7)]
+    at = loaded()
+    assert not at.exception
+    frame = at.dataframe[0].value
+    assert frame["Source"].tolist() == ["7", ""]
