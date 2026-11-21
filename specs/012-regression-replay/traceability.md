@@ -1,7 +1,7 @@
 # Traceability — 012 Regression Replay
 
-54 of 60 ids carry a `012/FR-###`/`012/SC-###` token or a bare id in a test file marked `FEATURE = "012"`; the
-remaining 6 are justified below (`uv run python scripts/check_traceability.py`).
+55 of 60 ids carry a `012/FR-###`/`012/SC-###` token or a bare id in a test file marked `FEATURE = "012"`; the
+remaining 5 are justified below (`uv run python scripts/check_traceability.py`).
 
 | id | Covered by |
 |----|------------|
@@ -46,6 +46,7 @@ remaining 6 are justified below (`uv run python scripts/check_traceability.py`).
 | SC-006 | `tests/integration/test_replay_batch.py` (N entries oldest-first, the cap refusal, the two incomplete-batch shapes) |
 | SC-007 | `tests/unit/test_check_replay_script.py` (every exit code, including the incomplete-batch and "still vulnerable wins" cases) |
 | SC-010 | `tests/e2e/test_us012_replay.py` |
+| FR-050 | `tests/unit/test_roadmap.py::test_012_is_listed_under_done_and_no_longer_planned` (listed under Done, no longer in Next features) |
 
 ## Untraced ids (justified)
 
@@ -54,4 +55,3 @@ remaining 6 are justified below (`uv run python scripts/check_traceability.py`).
 - 012/FR-048: this feature adds no new dependency, required or optional. Covered by the existing, repo-wide `tests/unit/test_optional_extra.py` (unchanged by this feature, since nothing was added to `pyproject.toml`) and confirmed directly in the implementation PR by `git diff --stat -- pyproject.toml uv.lock` staying empty (T038).
 - 012/SC-009: Kestrel's required dependencies are unchanged after this feature ships. Same evidence as FR-048 immediately above: `tests/unit/test_optional_extra.py` unchanged, `git diff --stat -- pyproject.toml uv.lock` empty.
 - 012/FR-049: every non-replay run's behaviour, scoring, storage, logging, shared-pattern/memory write-back and OWASP report stay exactly as they are today. Covered by the full existing offline test suite passing **unmodified** (T038) — 1205 tests, none of them carrying a `012/` token, which is exactly the point: this feature is strictly additive. The one named, on-purpose exception is the five schema-version-literal tests `test_store_migration_v5.py`/`v6.py`/`v8.py`/`v9.py` and `test_provenance_migration.py` (T036), each bumped from pinning `"9"` to `"10"` as "the current version" — a necessary consequence of FR-020's own schema change, not a behaviour change to a non-replay run.
-- 012/FR-050: the feature's implementation pull request marks regression replay as done in `docs/roadmap.md` (T039) — a documentation/process step for the code owner to review, not a testable behaviour.

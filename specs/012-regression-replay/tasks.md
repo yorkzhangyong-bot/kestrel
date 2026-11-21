@@ -826,13 +826,13 @@ printed.
       existing offline suite passing unmodified (T038) — so it needs no justification here, only a note of which
       five files were touched on purpose (T036) despite "unmodified" being the general rule. Run
       `uv run python scripts/check_traceability.py` until every `012/FR-###` and `012/SC-###` is traced.
-- [ ] T038 Gates: `uv run pytest tests/unit tests/integration` (coverage ≥ 85% on `src`; every pre-existing test
+- [X] T038 Gates: `uv run pytest tests/unit tests/integration` (coverage ≥ 85% on `src`; every pre-existing test
       passes **unmodified**, with the five schema-version literals of T036 as the one named, on-purpose
       exception — not a silent regression), `uvx ruff check src ui tests scripts` clean, `uv run mypy src`
       advisory, `git diff --stat -- pyproject.toml uv.lock` empty (FR-048), the offline sections of
       `specs/012-regression-replay/quickstart.md` reproduced; fix anything that fails (012/FR-048, FR-049,
       012/SC-009).
-- [ ] T039 LAST — Roadmap and status lines (implementation pull request only, never the spec-only one): in
+- [X] T039 LAST — Roadmap and status lines (implementation pull request only, never the spec-only one): in
       `docs/roadmap.md`, move the "Regression replay" bullet out of "Next features" into "Done" as **012 —
       Regression replay** (one bullet in the Done style: verbatim resend with no attacker call, canary-then-judge
       scoring read from every turn, the fixed/still-vulnerable/inconclusive outcome and side-by-side, no memory or
