@@ -391,8 +391,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                           attacker_generated=False)
         turn_results.append("succeeded" if canary else (state.get("last_verdict") if judged else None))
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]
-        if state.get("pending_reply") is not None:
-            conversation.append(("agent", state["pending_reply"]))
+        if reply is not None:   # the already-bound local narrows to str for mypy, unlike a fresh state.get() (item 16)
+            conversation.append(("agent", reply))
         return {"conversation": conversation, "turns_used": turn}
 
     def decide_node(state: _State) -> _State:
