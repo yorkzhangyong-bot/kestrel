@@ -66,6 +66,7 @@ def test_a_batch_processes_only_the_replayable_runs_oldest_first(make_client, mo
     assert "source_hard_evidence" in body["entries"][0] and "replay_hard_evidence" in body["entries"][0]
     assert sum(body["counts"].values()) == len(body["entries"]) == 3
     assert body["complete"] is True and body["stop_reason"] is None and body["not_replayed_source_ids"] == []
+    assert body["failed_source_run_id"] is None
 
 
 def test_a_target_with_zero_replayable_runs_completes_trivially(client):
@@ -151,6 +152,7 @@ def test_a_mid_batch_collision_stops_the_batch_at_200_never_409(make_client, mod
     assert body["complete"] is False and body["stop_reason"] == "run_in_progress"
     assert [e["source_run_id"] for e in body["entries"]] == [sources[0]]
     assert body["not_replayed_source_ids"] == sources[1:]
+    assert body["failed_source_run_id"] is None   # a collision, never a replay failure (review item 5)
 
 
 def test_one_entrys_own_replay_failure_is_included_inconclusive_and_the_batch_stops(make_client, model_transport):
@@ -183,6 +185,7 @@ def test_one_entrys_own_replay_failure_is_included_inconclusive_and_the_batch_st
     assert body["entries"][1]["outcome"] == "inconclusive"
     assert body["entries"][1]["replay_verdict"] == "unclear"
     assert body["not_replayed_source_ids"] == sources[2:]
+    assert body["failed_source_run_id"] == sources[1]   # after the claim: the crashed source has its own entry
 
 
 def test_a_fault_before_any_row_is_claimed_adds_no_entry_for_that_source(make_client, model_transport, monkeypatch):
@@ -209,3 +212,35 @@ def test_a_fault_before_any_row_is_claimed_adds_no_entry_for_that_source(make_cl
     assert body["complete"] is False and body["stop_reason"] == "replay_failed"
     assert body["entries"] == []
     assert body["not_replayed_source_ids"] == sources
+    assert body["failed_source_run_id"] == sources[0]   # before the claim: no entry of its own was ever added
+
+
+def test_a_fault_before_claim_on_a_later_source_never_blames_the_prior_clean_entry(make_client, model_transport,
+                                                                                   monkeypatch):
+    """The real defect the review caught (item 5): a before-claim failure on the SECOND source adds no entry for
+    it, but the first source's own entry - cleanly judged, judged with real evidence - sits last in the list. A
+    reader that assumed "the last entry is always the crashed one" would misattribute the clean entry."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    sources = [claim_succeeded_single_turn(store, target.id) for _ in range(2)]
+
+    original_claim_run = store.claim_run
+    calls = {"n": 0}
+
+    def exploding_claim_run(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:   # the batch's second claim, inside execute_replay for the second source
+            raise RuntimeError("simulated claim failure")
+        return original_claim_run(*args, **kwargs)
+
+    monkeypatch.setattr(store, "claim_run", exploding_claim_run)
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["complete"] is False and body["stop_reason"] == "replay_failed"
+    assert [e["source_run_id"] for e in body["entries"]] == [sources[0]]   # the first source's own clean entry
+    assert body["failed_source_run_id"] == sources[1]   # never sources[0], whose entry is unrelated
+    assert body["not_replayed_source_ids"] == sources[1:]

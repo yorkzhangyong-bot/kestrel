@@ -43,12 +43,13 @@ def entry(source_id, replay_id, family, outcome, *, source_hard_evidence=True, r
            "url": TARGET_URL, "name": TARGET_NAME, "attack": ATTACK_TEXT, "reply": REPLY_TEXT}
 
 
-def batch_result(*, entries, complete, stop_reason=None, not_replayed=None):
+def batch_result(*, entries, complete, stop_reason=None, not_replayed=None, failed_source_run_id=None):
     counts = {"fixed": sum(1 for e in entries if e["outcome"] == "fixed"),
              "still_vulnerable": sum(1 for e in entries if e["outcome"] == "still_vulnerable"),
              "inconclusive": sum(1 for e in entries if e["outcome"] == "inconclusive")}
     return {"target_id": 1, "entries": entries, "counts": counts, "complete": complete,
-           "stop_reason": stop_reason, "not_replayed_source_ids": not_replayed or []}
+           "stop_reason": stop_reason, "not_replayed_source_ids": not_replayed or [],
+           "failed_source_run_id": failed_source_run_id}
 
 
 def transport_for(*, batch_response=None, batch_status=200, config=CONFIG, config_status=200, error=None,
@@ -222,19 +223,32 @@ def test_both_evidence_flags_are_printed_separately_since_they_can_differ():
 
 
 def test_the_crashed_entrys_own_replay_evidence_prints_none():
-    """The one entry whose own replay crashed (research D17): outcome "inconclusive" with the batch's own
-    stop_reason "replay_failed" - its replay evidence kind is "none", never "judge", since no judge call
-    actually concluded it."""
+    """The one entry whose own replay crashed (research D17, after the claim): outcome "inconclusive" with the
+    batch's own stop_reason "replay_failed" - its replay evidence kind is "none", never "judge", since no judge
+    call actually concluded it. The API names it explicitly (review item 5): the script never assumes "the last
+    entry", it matches failed_source_run_id."""
     result = batch_result(
         entries=[entry(12, 41, "direct_injection", "fixed"),
                 entry(15, 43, "system_prompt_leak", "inconclusive", source_hard_evidence=False,
                       replay_verdict="unclear")],
-        complete=False, stop_reason="replay_failed", not_replayed=[19, 23])
+        complete=False, stop_reason="replay_failed", not_replayed=[19, 23], failed_source_run_id=15)
     code, out, _ = run_check(transport_for(batch_response=result))
     assert code == 2
     assert "replay: none" in out
     assert "run 15 -> replay 43: system_prompt_leak: inconclusive (source: judge, replay: none)" in out
     assert "batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23)" in out
+
+
+def test_a_before_claim_failure_never_marks_the_prior_clean_entry_as_crashed():
+    """The real bug the review caught: a before-claim failure (research D17) adds no entry of its own, so
+    failed_source_run_id names a source with no matching entry at all - the one clean, completed entry before it
+    must print its own real evidence, never "replay: none"."""
+    result = batch_result(entries=[entry(12, 41, "direct_injection", "fixed")], complete=False,
+                          stop_reason="replay_failed", not_replayed=[15], failed_source_run_id=15)
+    code, out, _ = run_check(transport_for(batch_response=result))
+    assert code == 2
+    assert "replay: none" not in out
+    assert "run 12 -> replay 41: direct_injection: fixed (source: canary, replay: judge)" in out
 
 
 # ---- --help documents every exit code and the --timeout flag ----

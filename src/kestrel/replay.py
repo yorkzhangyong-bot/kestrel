@@ -374,6 +374,11 @@ class BatchResult:
     complete: bool                      # False only when the batch stopped partway through
     stop_reason: str | None             # "run_in_progress" | "replay_failed"; None when complete is True
     not_replayed_source_ids: tuple[int, ...]   # every planned source never reached; empty when complete is True
+    failed_source_run_id: int | None = None   # the source whose replay crashed, only when stop_reason is
+    # "replay_failed" (review item 5): identifies the crashed source explicitly, whether or not it has an entry
+    # of its own (one does, when the failure came after its claim; it does not, and is then the first of
+    # not_replayed_source_ids, when the failure came before the claim) - a reader must never guess from position
+    # alone, since a before-claim failure leaves the *previous*, cleanly judged source as the last entry.
 
 
 class BatchTooLarge(Exception):
@@ -414,13 +419,15 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
     entries: list[BatchEntry] = []
     counts = {"fixed": 0, "still_vulnerable": 0, "inconclusive": 0}
 
-    def ended(*, complete: bool, stop_reason: str | None, not_replayed: list[int]) -> BatchResult:
+    def ended(*, complete: bool, stop_reason: str | None, not_replayed: list[int],
+             failed_source_run_id: int | None = None) -> BatchResult:
         events.replay_batch_ended(target_id=target_id, fixed=counts["fixed"],
                                   still_vulnerable=counts["still_vulnerable"], inconclusive=counts["inconclusive"],
                                   duration_ms=int((clock() - started) * 1000), complete=complete,
                                   stop_reason=stop_reason)
         return BatchResult(target_id=target_id, entries=tuple(entries), counts=dict(counts), complete=complete,
-                           stop_reason=stop_reason, not_replayed_source_ids=tuple(not_replayed))
+                           stop_reason=stop_reason, not_replayed_source_ids=tuple(not_replayed),
+                           failed_source_run_id=failed_source_run_id)
 
     for index, source in enumerate(sources):
         source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
@@ -440,10 +447,10 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
             entries.append(_batch_entry(source, closed))
             counts[closed.replay_outcome] += 1
             return ended(complete=False, stop_reason="replay_failed",
-                        not_replayed=[s.id for s in sources[index + 1:]])
+                        not_replayed=[s.id for s in sources[index + 1:]], failed_source_run_id=source.id)
         except Exception:
             return ended(complete=False, stop_reason="replay_failed",
-                        not_replayed=[s.id for s in sources[index:]])
+                        not_replayed=[s.id for s in sources[index:]], failed_source_run_id=source.id)
         assert replay.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
         entries.append(_batch_entry(source, replay))
         counts[replay.replay_outcome] += 1

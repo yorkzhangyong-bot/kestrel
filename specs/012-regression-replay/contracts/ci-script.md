@@ -41,10 +41,13 @@ computed default outright.
    one entry whose own replay crashed (`outcome: "inconclusive"` with
    `stop_reason: "replay_failed"` on the batch), whose replay evidence kind prints `none` instead of `judge`**:
    `replay_verdict` there is `"unclear"` with no judge call that actually concluded it, so labelling it `judge`
-   would claim a verdict no judge gave — and one summary line with the three counts and whether the batch was
-   complete; **never** attack text, reply text, the target's URL, or a header value (FR-035; the response body
-   itself never contains any of those either, per `contracts/api.md`, so this is a belt-and-braces rule on the
-   script's own formatting, not a redaction step it must perform).
+   would claim a verdict no judge gave. The crashed entry is identified by matching each entry's own
+   `source_run_id` against the batch result's `failed_source_run_id` (spec-change, review item 5, `contracts/
+   api.md`) — never by assuming it is the last entry in the list, which a before-claim failure (no entry of its
+   own) would misattribute to the *previous*, cleanly judged source — and one summary line with the three counts
+   and whether the batch was complete; **never** attack text, reply text, the target's URL, or a header value
+   (FR-035; the response body itself never contains any of those either, per `contracts/api.md`, so this is a
+   belt-and-braces rule on the script's own formatting, not a redaction step it must perform).
 5. Exit:
 
 | Condition | Exit status |

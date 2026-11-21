@@ -120,10 +120,12 @@ def check(target_id: int, *, timeout: float | None = None, client: httpx.Client 
 
         result = response.json()
         entries = result["entries"]
-        crashed_index = len(entries) - 1 if (not result["complete"] and result["stop_reason"] == "replay_failed"
-                                             and entries) else None
-        for index, entry in enumerate(entries):
-            print(_entry_line(entry, is_crashed=index == crashed_index), file=out)
+        # The API names the crashed source explicitly (review item 5) - never assume it is the last entry: a
+        # before-claim failure adds no entry of its own, leaving the *previous*, cleanly judged source last.
+        crashed_source = result.get("failed_source_run_id")
+        for entry in entries:
+            print(_entry_line(entry, is_crashed=crashed_source is not None
+                                               and entry["source_run_id"] == crashed_source), file=out)
         print(_summary_line(result), file=out)
         return _exit_code(result)
     except Exception as error:

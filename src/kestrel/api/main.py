@@ -520,7 +520,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                          replay_hard_evidence=e.replay_hard_evidence, outcome=e.outcome)
                      for e in result.entries],
             counts=result.counts, complete=result.complete, stop_reason=result.stop_reason,
-            not_replayed_source_ids=list(result.not_replayed_source_ids))
+            not_replayed_source_ids=list(result.not_replayed_source_ids),
+            failed_source_run_id=result.failed_source_run_id)
 
     @app.get("/api/runs/{run_id}/log", response_model=RunLogOut)
     def get_run_log(run_id: int) -> Any:

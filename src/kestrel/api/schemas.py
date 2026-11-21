@@ -80,6 +80,7 @@ class BatchReplayResultOut(BaseModel):
     complete: bool
     stop_reason: str | None = None
     not_replayed_source_ids: list[int] = Field(default_factory=list)
+    failed_source_run_id: int | None = None
 
 
 class ReplayOut(BaseModel):
