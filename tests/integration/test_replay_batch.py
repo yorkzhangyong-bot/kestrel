@@ -281,3 +281,43 @@ def test_a_fault_before_claim_on_a_later_source_never_blames_the_prior_clean_ent
     assert [e["source_run_id"] for e in body["entries"]] == [sources[0]]   # the first source's own clean entry
     assert body["failed_source_run_id"] == sources[1]   # never sources[0], whose entry is unrelated
     assert body["not_replayed_source_ids"] == sources[1:]
+
+
+def test_a_failure_between_the_claim_and_the_try_is_recorded_as_an_entry_not_lost(make_client, model_transport,
+                                                                                   monkeypatch):
+    """The residual (review round 2, item 1): a failure after a batch entry's own claim but before its own try
+    (judge_ref, building or compiling the graph) must be treated as an after-claim failure, not a before-claim
+    one - the batch records an entry for it, inconclusive, failed_source_run_id names it, and the target is not
+    left locked once the batch request returns."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    sources = [claim_succeeded_single_turn(store, target.id) for _ in range(2)]
+
+    import kestrel.replay as replay_module
+    original_judge_ref = replay_module.judge_ref
+    calls = {"n": 0}
+
+    def exploding_judge_ref(judge):
+        calls["n"] += 1
+        if calls["n"] == 1:   # the first entry's own judge_ref call, after its claim
+            raise RuntimeError("simulated judge_ref failure")
+        return original_judge_ref(judge)
+
+    monkeypatch.setattr(replay_module, "judge_ref", exploding_judge_ref)
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["complete"] is False and body["stop_reason"] == "replay_failed"
+    assert [e["source_run_id"] for e in body["entries"]] == [sources[0]]
+    assert body["entries"][0]["outcome"] == "inconclusive"
+    assert body["failed_source_run_id"] == sources[0]
+    assert body["not_replayed_source_ids"] == sources[1:]
+
+    # The target is not locked: a new run can be claimed immediately.
+    new_run_id = store.claim_run(target.id, prompt_id="spl-999", prompt_title="x", prompt_text="<x>",
+                                 family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
+                                 attacker_source="library:1.0.0")
+    assert new_run_id is not None

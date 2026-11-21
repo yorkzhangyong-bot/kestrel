@@ -292,16 +292,19 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
                              owasp_category=source.owasp_category, attacker_source=source.attacker_source,
                              mode="replay", source_run_id=source.id, attacker_model=None,
                              use_prior_experience=False)
-    judge_prompt = judge_ref(judge) if judge.configured else None
-    events.run_started(store, run_id=run_id, target_id=source.target_id, mode="replay", family=source.family,
-                       prompt_id=source.prompt_id, attacker_source=source.attacker_source,
-                       judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
-                       turn_budget=1, time_limit_s=int(TOTAL_DEADLINE_S), use_prior_experience=False,
-                       source_run_id=source.id)
-    events.turn_started(1)
-    deadline = clock() + TOTAL_DEADLINE_S
-    secrets = [value for _, value in resolved.headers]
+    # The claim and everything after it is one protected region (review round 2, item 1): a failure anywhere
+    # below - judge_ref included - must still close the row, never leave it in_progress (locking the target)
+    # until the start-up sweep.
     try:
+        judge_prompt = judge_ref(judge) if judge.configured else None
+        events.run_started(store, run_id=run_id, target_id=source.target_id, mode="replay", family=source.family,
+                           prompt_id=source.prompt_id, attacker_source=source.attacker_source,
+                           judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
+                           turn_budget=1, time_limit_s=int(TOTAL_DEADLINE_S), use_prior_experience=False,
+                           source_run_id=source.id)
+        events.turn_started(1)
+        deadline = clock() + TOTAL_DEADLINE_S
+        secrets = [value for _, value in resolved.headers]
         send_budget = max(0.1, min(SEND_LIMIT_S, deadline - clock()))
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
                                deadline_s=send_budget, prompt=source.prompt_text)

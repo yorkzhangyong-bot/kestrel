@@ -365,6 +365,61 @@ def test_a_crash_mid_replay_closes_the_row_inconclusive_and_raises_replay_failed
     assert crashed.replay_outcome == "inconclusive"
 
 
+def _assert_target_not_locked(store, target) -> None:
+    """A fresh claim on the same target succeeds immediately - the residual's own proof that no row was left
+    `in_progress` (review round 2, item 1)."""
+    new_run_id = store.claim_run(target.id, prompt_id="spl-999", prompt_title="x", prompt_text="<x>",
+                                 family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
+                                 attacker_source="library:1.0.0")
+    assert new_run_id is not None
+
+
+def test_a_failure_between_the_claim_and_the_try_still_closes_the_row_single_turn(store, target, monkeypatch):
+    """The residual (review round 2, item 1): an exception raised after claim_run but before the single-turn
+    branch's own try (judge_ref, for example) must not leave the row in_progress forever - it closes
+    inconclusive, like any other mid-replay failure, and the target is not left locked."""
+    source = make_single_turn_source(store, target)
+    import kestrel.replay as replay_module
+
+    def exploding_judge_ref(judge):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(replay_module, "judge_ref", exploding_judge_ref)
+
+    with pytest.raises(ReplayFailed) as excinfo:
+        asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                   judge=StubJudge(verdict="failed"),
+                                   sender=sender_returning(ok("a harmless reply")), **REPLAY_CAPS))
+
+    crashed = store.get_run(excinfo.value.run_id)
+    assert crashed.status == "finished" and crashed.verdict == "unclear"
+    assert crashed.replay_outcome == "inconclusive"
+    _assert_target_not_locked(store, target)
+
+
+def test_a_failure_between_the_claim_and_the_try_still_closes_the_row_adaptive(store, target, monkeypatch):
+    """The same residual, adaptive branch: a failure while building/compiling the graph or in judge_ref, before
+    run_replay_adaptive's own try around compiled.ainvoke, must not leave the row in_progress."""
+    source, source_turns = make_adaptive_source(store, target, turns=3)
+    import kestrel.attack.graph as graph_module
+
+    def exploding_judge_ref(judge):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(graph_module, "judge_ref", exploding_judge_ref)
+
+    with pytest.raises(ReplayFailed) as excinfo:
+        asyncio.run(execute_replay(
+            store, source=source, source_turns=source_turns, resolved=RESOLVED, mode="local",
+            judge=SequencedJudge("failed", "failed", "failed"), sender=sender_returning(ok("a harmless reply")),
+            **REPLAY_CAPS))
+
+    crashed = store.get_run(excinfo.value.run_id)
+    assert crashed.status == "finished" and crashed.verdict == "unclear"
+    assert crashed.replay_outcome == "inconclusive"
+    _assert_target_not_locked(store, target)
+
+
 def test_the_lifted_send_turn_still_masks_a_replayed_turns_reply(store, target):
     source, source_turns = make_adaptive_source(store, target, turns=3)
 
