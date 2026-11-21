@@ -747,8 +747,9 @@ def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_tu
 
 def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> ReplayComparisonOut | None:
     """The side-by-side comparison (feature 012, research D8): computed fresh, never stored, only when `run` is
-    itself a replay."""
-    if run.mode != "replay" or run.source_run_id is None:
+    itself a finished replay - a replay still in_progress (one entry of a batch still running, opened from
+    another request) has no outcome yet and reports comparison: null, never a fabricated "inconclusive"."""
+    if run.mode != "replay" or run.source_run_id is None or run.status == "in_progress":
         return None
     source = store.get_run(run.source_run_id)
     source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []

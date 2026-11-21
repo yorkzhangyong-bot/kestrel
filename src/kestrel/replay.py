@@ -221,8 +221,9 @@ def build_comparison(source: Run, source_turns: list[Turn], replay: Run, replay_
             built.append(TurnComparison(position=position, sent=sent, source_verdict=source_verdict,
                                         replay_verdict=replay_verdict))
         turns = tuple(built)
+    assert replay.replay_outcome is not None   # the caller never builds a comparison for an in-progress replay
     return Comparison(
-        source_run_id=source.id, replay_run_id=replay.id, outcome=replay.replay_outcome or "inconclusive",
+        source_run_id=source.id, replay_run_id=replay.id, outcome=replay.replay_outcome,
         source_verdict=source.verdict, source_hard_evidence=source.hard_evidence,
         source_judge_model=source.judge_model, source_judge_prompt=_judge_prompt_ref(source),
         replay_verdict=replay.verdict, replay_hard_evidence=replay.hard_evidence,

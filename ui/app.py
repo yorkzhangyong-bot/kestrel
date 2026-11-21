@@ -553,7 +553,10 @@ def _comparison_cell(value) -> str:
 def _render_replay_comparison(replay_run: dict) -> None:
     """The outcome line, the multi-turn caption (when present) and the side-by-side comparison (feature 012,
     FR-017, FR-041) - exact strings and row labels; every value is API-computed, never re-derived here (FR-042)."""
-    st.write("Outcome: " + OUTCOME_LABELS[replay_run["replay_outcome"]])
+    outcome = replay_run.get("replay_outcome")
+    if outcome is None:   # the replay is still in progress (for example one entry of a running batch): nothing
+        return            # to show yet - never a KeyError on an outcome that has not been decided
+    st.write("Outcome: " + OUTCOME_LABELS[outcome])
     comparison = replay_run.get("comparison")
     if not comparison:
         return

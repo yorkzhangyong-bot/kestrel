@@ -132,6 +132,23 @@ def test_run_in_progress_precondition_refuses_a_replay(make_client, model_transp
     store.finish_run(other, verdict="failed")
 
 
+def test_a_replay_still_in_progress_has_no_comparison_yet(make_client, model_transport):
+    """MINOR (review item 2): a replay row still in_progress - for example one entry of a batch that is still
+    running, opened from another request - must never report an "inconclusive" outcome or comparison; both must
+    be null until the replay actually finishes."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    model_transport.verdict = "succeeded"
+    source = run_attack(client, target.id)
+    in_progress_replay = store.claim_run(target.id, mode="replay", source_run_id=source["id"], **CLAIM)
+
+    body = client.get(f"/api/runs/{in_progress_replay}").json()
+
+    assert body["replay_outcome"] is None
+    assert body["comparison"] is None
+
+
 def test_a_non_replay_run_carries_null_replay_fields(make_client, model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
     target = saved_target(client.app.state.store, url=TARGET_URL)

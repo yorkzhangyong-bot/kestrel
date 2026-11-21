@@ -139,6 +139,15 @@ def test_opening_a_replay_run_shows_its_outcome_and_comparison(api):
     assert "Verdict" in frame[""].tolist() and "Turn 1" in frame[""].tolist()
 
 
+def test_an_in_progress_replay_renders_without_crashing(api):
+    """MINOR (review item 2): opening a replay run that is itself still in progress - e.g. one entry of a batch
+    still running - must not crash on OUTCOME_LABELS[None]."""
+    at = opened(api, run(id=41, mode="replay", status="in_progress", verdict=None, hard_evidence=False,
+                         source_run_id=7, replay_outcome=None, replayable=False,
+                         replay_blocked_reason="This run is itself a replay of run #7.", comparison=None))
+    assert not at.exception
+
+
 def test_the_multi_turn_caption_shows_only_for_a_multi_message_source(api):
     multi = {**COMPARISON, "multi_turn_caption": MULTI_TURN_CAPTION}
     at = opened(api, run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed", replayable=False,
