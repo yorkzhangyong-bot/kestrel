@@ -228,6 +228,25 @@ def test_terms_outdated_refuses_a_single_replay(make_client, model_transport):  
     assert error["message"] == "The terms of service have changed; read them and tick the box again."
 
 
+def test_a_finished_replay_with_no_recorded_outcome_never_500s(make_client, model_transport):
+    """R1 (review round 2): a hand-edited, or otherwise corrupted, finished replay row with no recorded
+    replay_outcome at all must report comparison: null, never a 500 through build_comparison's own assert -
+    every real code path sets an outcome, but the API must not crash if one somehow does not."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    model_transport.verdict = "succeeded"
+    source = run_attack(client, target.id)
+    replay_id = store.claim_run(target.id, mode="replay", source_run_id=source["id"], **CLAIM)
+    store.finish_run(replay_id, verdict="failed")   # finished, but replay_outcome was never set
+
+    body = client.get(f"/api/runs/{replay_id}").json()
+
+    assert body["status"] == "finished"
+    assert body["replay_outcome"] is None
+    assert body["comparison"] is None
+
+
 def test_a_non_replay_run_carries_null_replay_fields(make_client, model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
     target = saved_target(client.app.state.store, url=TARGET_URL)

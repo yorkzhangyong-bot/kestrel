@@ -762,9 +762,12 @@ def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_tu
 
 def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> ReplayComparisonOut | None:
     """The side-by-side comparison (feature 012, research D8): computed fresh, never stored, only when `run` is
-    itself a finished replay - a replay still in_progress (one entry of a batch still running, opened from
-    another request) has no outcome yet and reports comparison: null, never a fabricated "inconclusive"."""
-    if run.mode != "replay" or run.source_run_id is None or run.status == "in_progress":
+    itself a replay with a recorded outcome - a replay still in_progress (one entry of a batch still running,
+    opened from another request) has no outcome yet and reports comparison: null, never a fabricated
+    "inconclusive"; the same null, rather than a 500 through build_comparison's own assert, covers the
+    defensive case of a finished replay row with no recorded outcome at all (R1, review round 2) - every real
+    code path sets one, but a hand-edited or otherwise corrupted row must not crash the API."""
+    if run.mode != "replay" or run.source_run_id is None or run.replay_outcome is None:
         return None
     source = store.get_run(run.source_run_id)
     source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
