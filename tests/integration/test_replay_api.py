@@ -202,6 +202,22 @@ def test_replayable_becomes_false_when_the_targets_permission_lapses_then_when_t
     assert body["replay_blocked_reason"] == "The terms of service have changed; read them and tick the box again."
 
 
+def test_an_adaptive_run_whose_turns_used_lies_about_recorded_rows_is_not_replayable(make_client, model_transport):
+    """Defensive (review item 3): a succeeded adaptive run whose turns_used claims messages that were never
+    actually recorded - not reachable through normal operation - must not read as replayable through the real
+    API, which is the only place `check_replayable`'s eligibility decision actually gates an action."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    run_id = store.claim_run(target.id, mode="adaptive", **CLAIM)
+    store.finish_run(run_id, verdict="succeeded", turns_used=3)   # no add_turn call: zero actual run_turns rows
+
+    body = client.get(f"/api/runs/{run_id}").json()
+
+    assert body["replayable"] is False
+    assert body["replay_blocked_reason"] == "This run has no recorded message to resend."
+
+
 def test_an_adaptive_source_over_the_current_turn_limit_is_replayable_with_an_advisory(make_client, settings,
                                                                                         model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))

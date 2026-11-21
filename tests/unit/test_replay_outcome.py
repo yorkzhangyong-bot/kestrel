@@ -38,6 +38,13 @@ def test_a_single_message_source_that_never_sent_is_inconclusive():  # FR-015 (t
     assert compute_outcome([], 1, winning_turn=None) == "inconclusive"
 
 
+def test_nothing_recorded_at_all_is_inconclusive_never_fixed():  # defensive (review item 3)
+    """A naive reading of the vacuous `all(...)` over an empty list would call this "fixed": `len([]) ==
+    recorded_total == 0` and `all(... for _ in [])` are both true. recorded_total < 1 must fail closed before
+    that check is ever reached."""
+    assert compute_outcome([], 0, winning_turn=None) == "inconclusive"
+
+
 # ---- the multi-message case without the winning-turn addition: every turn sent and judged failed ----
 
 

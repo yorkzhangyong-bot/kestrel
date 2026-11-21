@@ -70,15 +70,23 @@ class ReplayOfReplay(Exception):
         self.source_run_id = source_run_id
 
 
-def check_replayable(run: Run) -> None:
-    """Raise ReplayOfReplay or NotReplayable; return normally when `run` is eligible (FR-004, FR-005)."""
+def check_replayable(run: Run, *, recorded_turns: int | None = None) -> None:
+    """Raise ReplayOfReplay or NotReplayable; return normally when `run` is eligible (FR-004, FR-005).
+
+    `recorded_turns` is the adaptive source's actual `run_turns` row count, when the caller already has it (the
+    real replay-execution gate always does: `source_turns` is needed anyway to drive the replay). It overrides
+    `run.turns_used` when supplied - the counter alone is never trusted for this decision (defensive, review
+    item 3): normal operation cannot produce a mismatch (record_node always writes a row before turns_used
+    advances), but nothing here should rely on that invariant holding. `None` (the default) falls back to
+    `run.turns_used`, for a caller - a plain run listing - that has not loaded the actual rows."""
     if run.mode == "replay":
         raise ReplayOfReplay(run.source_run_id)
     if run.status == "in_progress":
         raise NotReplayable("in_progress")
     if run.verdict != "succeeded":
         raise NotReplayable("not_succeeded")
-    if run.mode == "adaptive" and not run.turns_used:
+    turns_present = run.turns_used if recorded_turns is None else recorded_turns
+    if run.mode == "adaptive" and not turns_present:
         raise NotReplayable("no_message")
 
 
@@ -91,15 +99,16 @@ class ReplayStatus:
 
 
 def compute_replay_status(run: Run, target: Target, terms_version: str, adaptive_max_turns: int,
-                          target_has_other_run_in_progress: bool) -> ReplayStatus:
+                          target_has_other_run_in_progress: bool, *, recorded_turns: int | None = None) -> ReplayStatus:
     """FR-004 to FR-006, FR-040, FR-042. `terms_version` is the currently loaded terms (load_terms().version);
     `adaptive_max_turns` is settings.adaptive_max_turns; `target_has_other_run_in_progress` is whether a run
-    *other than this one* is currently in progress on `run`'s own target. Checked in a fixed order - replay-of-a-
-    replay, then check_replayable's own three reasons, then permission, then terms, then another run in progress -
-    the same order the single-replay endpoint's own 409 table checks them in, so the two can never disagree. Never
+    *other than this one* is currently in progress on `run`'s own target. `recorded_turns` is forwarded to
+    `check_replayable` (defensive, review item 3). Checked in a fixed order - replay-of-a-replay, then
+    check_replayable's own three reasons, then permission, then terms, then another run in progress - the same
+    order the single-replay endpoint's own 409 table checks them in, so the two can never disagree. Never
     raises."""
     try:
-        check_replayable(run)
+        check_replayable(run, recorded_turns=recorded_turns)
     except ReplayOfReplay as error:
         return ReplayStatus(False, f"This run is itself a replay of run #{error.source_run_id}.", None)
     except NotReplayable as error:
@@ -144,6 +153,8 @@ def compute_outcome(turn_results: list[str | None], recorded_total: int, winning
     `succeeded_turn` is always `None` (`store.py`'s schema: "single-turn runs leave these at their defaults/null");
     gating on `recorded_total > 1`, not on `winning_turn is None`, is what keeps a single-message source's outcome
     exactly as it was before this addition."""
+    if recorded_total < 1 or not turn_results:
+        return "inconclusive"   # fail closed: nothing was recorded at all (defensive, review item 3)
     if any(result == "succeeded" for result in turn_results):
         return "still_vulnerable"
     if not (len(turn_results) == recorded_total and all(result == "failed" for result in turn_results)):

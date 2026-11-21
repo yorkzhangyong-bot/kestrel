@@ -981,13 +981,18 @@ class TargetStore:
         oldest first (FR-028, FR-029). Unaffected by whether a different run is currently in progress on the
         target - that is `replay.compute_replay_status`'s own, display-time concern (research D10), never folded
         into this query, so the batch's own in-flight replays can never make the rest of its planned list look
-        ineligible to itself."""
+        ineligible to itself.
+
+        An adaptive run's eligibility is keyed on its actual `run_turns` rows via the `EXISTS` subquery, never the
+        `turns_used` counter alone (defensive, review item 3): normal operation cannot produce a mismatch between
+        the two, but the counter is never trusted over the rows for this decision."""
         with self.connect() as db:
             if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
                 raise TargetNotFound(target_id)
             rows = db.execute(
                 "SELECT * FROM runs WHERE target_id = ? AND status = 'finished' AND verdict = 'succeeded'"
-                " AND mode != 'replay' AND (mode = 'single_turn' OR turns_used >= 1)"
+                " AND mode != 'replay' AND (mode = 'single_turn'"
+                " OR EXISTS (SELECT 1 FROM run_turns WHERE run_turns.run_id = runs.id))"
                 " ORDER BY started_at ASC, id ASC", (target_id,)).fetchall()
         return [self._run(row) for row in rows]
 

@@ -65,6 +65,17 @@ def test_a_succeeded_adaptive_run_with_a_recorded_message_is_eligible():  # FR-0
     check_replayable(replace(BASE_RUN, mode="adaptive", turns_used=3))
 
 
+def test_recorded_turns_overrides_turns_used_when_they_disagree():  # FR-004 (defensive, review item 3)
+    """Eligibility is keyed on the actual run_turns rows, never the turns_used counter alone - a row this
+    inconsistent cannot arise from normal operation (record_node always writes a row before turns_used advances),
+    but the caller may pass the real count explicitly, and it must win."""
+    run = replace(BASE_RUN, mode="adaptive", turns_used=3)
+    with pytest.raises(NotReplayable) as excinfo:
+        check_replayable(run, recorded_turns=0)
+    assert excinfo.value.reason == "no_message"
+    check_replayable(run, recorded_turns=3)   # agrees with turns_used: still eligible
+
+
 # ---- list_replayable_runs: the batch's own ordered query (data-model.md) ----
 
 
@@ -128,6 +139,18 @@ def test_list_replayable_runs_raises_target_not_found_for_an_unknown_target(stor
         store.list_replayable_runs(999)
 
 
+def test_list_replayable_runs_excludes_an_adaptive_run_with_no_actual_turn_rows(store):  # FR-028 (defensive,
+    # review item 3): a succeeded adaptive run whose turns_used claims messages it never actually recorded (not
+    # reachable through normal operation - record_node always writes a row before turns_used advances) must not
+    # be selected for batch replay with nothing to send.
+    target = store.create_target(name="A", url="http://a/chat", method="POST", headers=[], body_template="{}",
+                                 response_path="$.reply", terms_version="10")
+    no_rows = _claim(store, target.id, mode="adaptive")
+    store.finish_run(no_rows, verdict="succeeded", turns_used=3)   # no add_turn call at all
+
+    assert store.list_replayable_runs(target.id) == []
+
+
 # ---- compute_replay_status: the display fields, from the run AND its target (research D10) ----
 
 
@@ -186,3 +209,10 @@ def test_a_source_within_the_current_turn_limit_carries_no_advisory():  # FR-040
     status = compute_replay_status(run, BASE_TARGET, terms_version="10", adaptive_max_turns=6,
                                     target_has_other_run_in_progress=False)
     assert status == ReplayStatus(True, None, None)
+
+
+def test_compute_replay_status_prefers_the_real_recorded_turn_count_over_turns_used():  # defensive (review item 3)
+    run = replace(BASE_RUN, mode="adaptive", turns_used=3)
+    status = compute_replay_status(run, BASE_TARGET, terms_version="10", adaptive_max_turns=6,
+                                    target_has_other_run_in_progress=False, recorded_turns=0)
+    assert status == ReplayStatus(False, REPLAY_BLOCKED_REASONS["no_message"], None)
