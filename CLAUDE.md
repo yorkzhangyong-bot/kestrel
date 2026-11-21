@@ -294,3 +294,15 @@ same commit. Before opening any implementation PR, review this file and add anyt
   fixture that claims a second `in_progress` row on a target whose first one is still open hits the same
   `uq_runs_active` constraint `RunInProgress` is built on — a seed fixture needs every prior claim finished before
   claiming the next.
+- 2026-11-21 — **OpenRouter ZDR guardrail blocks the HS-code target's own model (infra, not a Kestrel bug).**
+  `targets/hs_code` defaults its conversational model to `openai/gpt-4o-mini` over OpenRouter
+  (`CARGOLINT_CHAT_MODEL`, `agent/config.py`); as of this date the account's workspace guardrails (a Zero Data
+  Retention policy, configurable at `openrouter.ai/workspaces/default/guardrails`) filter out the only endpoint
+  for that model, so the target's own `/chat` 502s with `openai.NotFoundError`/`OpenAIModelNotFoundError`
+  ("0 endpoints out of 1 requested are available matching your guardrail restrictions") before Kestrel's own
+  attacker/judge calls are ever reached — every e2e test against the live target fails identically on the
+  connection-test step (`{"ok": false, "step": "endpoint_error", "detail": "Status 502"}`), not just a given
+  feature's own test. Confirmed external to this repo by running an untouched, pre-existing e2e file
+  (`tests/e2e/test_us1_connection.py`) and seeing the same failure. Fix is account-side (relax the guardrail, or
+  point `CARGOLINT_CHAT_MODEL` at a ZDR-compliant model) — don't chase this as a code regression; the offline
+  suite (`tests/unit`, `tests/integration`) exercises everything the e2e layer does except the live model call.
