@@ -316,6 +316,13 @@ def start_replay(run_id: int) -> None:
     st.session_state["replay_notice"] = None
 
 
+def open_source_run(run_id: int) -> None:
+    """Navigate the Runs tab's own "Open a run" selectbox to `run_id` (feature 012, FR-041, T023): a plain
+    session-state assignment before the next rerun renders render_runs, which reads "open_run" as that
+    selectbox's own key."""
+    st.session_state["open_run"] = run_id
+
+
 def run_pending_replay() -> None:
     run_id = st.session_state.get("pending_replay")
     if run_id is None:
@@ -550,7 +557,7 @@ def _comparison_cell(value) -> str:
     return str(value)
 
 
-def _render_replay_comparison(replay_run: dict) -> None:
+def _render_replay_comparison(replay_run: dict, key_prefix: str) -> None:
     """The outcome line, the multi-turn caption (when present) and the side-by-side comparison (feature 012,
     FR-017, FR-041) - exact strings and row labels; every value is API-computed, never re-derived here (FR-042)."""
     outcome = replay_run.get("replay_outcome")
@@ -562,7 +569,11 @@ def _render_replay_comparison(replay_run: dict) -> None:
         return
     if comparison.get("multi_turn_caption"):
         st.write(comparison["multi_turn_caption"])
-    st.caption(f"Replay of run #{comparison['source_run_id']}")
+    source_id = comparison["source_run_id"]
+    # A button, not plain caption text, so the label opens the source run (feature 012, FR-041, T023) - the
+    # exact same visible label a caption would have shown.
+    st.button(f"Replay of run #{source_id}", key=f"open_source_{key_prefix}_{replay_run['id']}",
+             on_click=open_source_run, args=(source_id,))
     source_col = f"Source (run #{comparison['source_run_id']})"
     replay_col = f"Replay (run #{comparison['replay_run_id']})"
     rows = [("Verdict", comparison["source_verdict"], comparison["replay_verdict"]),
@@ -599,7 +610,7 @@ def _render_replay_action(run: dict, key_prefix: str) -> None:
         if result is not None and result.get("source_run_id") == run["id"]:
             shown = result
     if shown is not None:
-        _render_replay_comparison(shown)
+        _render_replay_comparison(shown, key_prefix)
 
 
 def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:

@@ -133,10 +133,25 @@ def test_opening_a_replay_run_shows_its_outcome_and_comparison(api):
     at = opened(api, run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed", replayable=False,
                          replay_blocked_reason="This run is itself a replay of run #7.", comparison=COMPARISON))
     assert any("Outcome: fixed" in w.value for w in at.markdown)
-    assert any("Replay of run #7" in c.value for c in at.caption)
+    assert any(b.label == "Replay of run #7" for b in at.button)
     # dataframe[0] is the run-listing table (rendered first by render_runs); the comparison table comes after.
     frame = at.dataframe[1].value
     assert "Verdict" in frame[""].tolist() and "Turn 1" in frame[""].tolist()
+
+
+def test_clicking_the_source_link_opens_the_source_run(api):
+    """FR-041, T023 (review item 12): "Replay of run #N" is a button that opens run N, not plain caption text."""
+    replay_run = run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed", replayable=False,
+                     replay_blocked_reason="This run is itself a replay of run #7.", comparison=COMPARISON)
+    source_run = run(id=7, prompt_title="The original finding")
+    api.runs = [replay_run, source_run]
+    at = loaded()
+    at = at.selectbox(key="open_run").select(41).run()
+
+    link = next(b for b in at.button if b.label == "Replay of run #7")
+    at = link.click().run()
+
+    assert at.selectbox(key="open_run").value == 7
 
 
 def test_an_in_progress_replay_renders_without_crashing(api):
