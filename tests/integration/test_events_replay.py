@@ -91,6 +91,31 @@ def test_every_turn_of_an_adaptive_replay_omits_attacker_fields_even_turn_two_on
     replay_lines = lines_for(json_log, replay["id"])
     replay_turn_two = next(line for line in replay_lines if line["event"] == "turn" and line["turn"] == 2)
     assert "attacker_model" not in replay_turn_two and "attacker_prompt" not in replay_turn_two
+    # The source turn has no stored provenance at all (claim_adaptive_source never passes attacker_prompt_id);
+    # the live path's own fallback applies, never "None@None" (review item 10).
+    assert replay_turn_two["source"] == "attacker:system_prompt_leak"
+
+
+def test_a_turn_with_a_known_id_but_no_known_version_omits_the_at_n_suffix(make_client, model_transport, json_log):
+    """The other half of review item 10: an id is known but its version is not - append @N only when a version
+    is actually known, never "<id>@None"."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    run_id = store.claim_run(target.id, mode="adaptive", attacker_model="a/m", turn_budget=6, token_budget=40000,
+                             time_limit_s=300, **CLAIM)
+    store.add_turn(run_id, position=1, attacker_message="<turn 1>", reply_text="<reply>", judge_verdict="failed")
+    store.add_turn(run_id, position=2, attacker_message="<turn 2>", reply_text="<reply>", judge_verdict="failed",
+                   attacker_prompt_id="attacker:system_prompt_leak")   # id known, version not recorded
+    store.finish_run(run_id, verdict="succeeded", hard_evidence=False, judge_used=True, judge_model="j/m",
+                     stopping_condition="succeeded", succeeded_turn=2, turns_used=2)
+
+    model_transport.verdict = "failed"
+    replay = client.post(f"/api/runs/{run_id}/replay").json()
+
+    replay_turn_two = next(line for line in lines_for(json_log, replay["id"])
+                           if line["event"] == "turn" and line["turn"] == 2)
+    assert replay_turn_two["source"] == "attacker:system_prompt_leak"
 
 
 def test_a_replays_turn_lines_still_carry_duration_and_token_fields(make_client, model_transport, json_log):

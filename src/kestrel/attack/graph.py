@@ -293,6 +293,19 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
     return run
 
 
+def _replay_turn_source(source_turn: Turn, family: str) -> str:
+    """The replay turn-line's `source` field, turn 2 onward (review item 10): a source turn from before feature
+    009 (prompt provenance) stores neither `attacker_prompt_id` nor `attacker_prompt_version`, so copying them
+    verbatim would render `"None@None"`. Falls back the same way the live path's own `record_node` does for an
+    unknown reference - the bare family-based id (`prompt_registry.attacker_id`) - when no id is stored at all;
+    `@N` is appended only when a version is actually known, never `"<id>@None"`."""
+    if source_turn.attacker_prompt_id is None:
+        return prompt_registry.attacker_id(family)
+    if source_turn.attacker_prompt_version is None:
+        return source_turn.attacker_prompt_id
+    return f"{source_turn.attacker_prompt_id}@{source_turn.attacker_prompt_version}"
+
+
 async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run, source_turns: list[Turn],
                               canaries: list[str], resolved: ResolvedSettings, judge: _Judge, sender: Sender = run_test,
                               mode: str = "local", transport: Any = None, resolver: Any = default_resolver,
@@ -369,8 +382,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                        judge_prompt_version=judge_prompt_version if judged else None)
         reply = state.get("pending_reply")
         canary = bool(state.get("pending_canary", False))
-        source_label = (f"library:{source.prompt_id}" if turn == 1 else
-                        f"{source_turn.attacker_prompt_id}@{source_turn.attacker_prompt_version}")
+        source_label = (f"library:{source.prompt_id}" if turn == 1
+                        else _replay_turn_source(source_turn, source.family))
         events.turn_ended(turn=turn, source=source_label, message_chars=len(state["pending_message"]),
                           reply_chars=None if reply is None else len(reply),
                           reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
