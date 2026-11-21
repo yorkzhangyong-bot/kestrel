@@ -266,6 +266,31 @@ def test_one_entrys_own_failure_ends_the_batch_line_with_the_root_cause_class(ma
     assert batch_end["level"] == "ERROR"
 
 
+def test_a_failure_outside_the_per_entry_handling_still_closes_the_batch_line(make_client, model_transport,
+                                                                               json_log, monkeypatch):
+    """A failure in store.list_turns or store.get_run - outside the per-entry try/except entirely - must still
+    close the batch's own log line with the root-cause class before the exception propagates (review item 9): a
+    start line is never left without a matching end line."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    claim_adaptive_source(store, target.id, turns=1)
+
+    def exploding_list_turns(run_id):
+        raise RuntimeError("simulated store failure")
+
+    monkeypatch.setattr(store, "list_turns", exploding_list_turns)
+
+    with pytest.raises(RuntimeError):
+        client.post(f"/api/targets/{target.id}/replays")
+
+    assert json_log.events().count("replay.batch.start") == 1
+    batch_end = json_log.of("replay.batch.end")[0]
+    assert batch_end["complete"] is False
+    assert batch_end["error"] == "RuntimeError"
+    assert batch_end["level"] == "ERROR"
+
+
 def test_no_secret_url_name_or_free_text_appears_anywhere_in_the_stream(make_client, model_transport, json_log):
     model_transport.verdict = "succeeded"
     attacker = real_attacker(model_transport)

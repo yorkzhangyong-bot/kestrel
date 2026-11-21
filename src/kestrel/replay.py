@@ -429,35 +429,46 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
                            stop_reason=stop_reason, not_replayed_source_ids=tuple(not_replayed),
                            failed_source_run_id=failed_source_run_id)
 
-    for index, source in enumerate(sources):
-        source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
-        try:
-            with events.run_scope():
-                replay = await execute_replay(
-                    store, source=source, source_turns=source_turns, resolved=resolved, mode=mode, judge=judge,
-                    sender=sender, transport=transport, resolver=resolver, adaptive_max_turns=adaptive_max_turns,
-                    adaptive_token_budget=adaptive_token_budget, adaptive_time_limit_s=adaptive_time_limit_s,
-                    clock=clock)
-        except RunInProgress:
-            return ended(complete=False, stop_reason="run_in_progress",
-                        not_replayed=[s.id for s in sources[index:]])
-        except ReplayFailed as error:
-            closed = store.get_run(error.run_id)
-            assert closed.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
-            entries.append(_batch_entry(source, closed))
-            counts[closed.replay_outcome] += 1
-            # The entry's own run.end already names the root cause (events._root_cause, review item 8); the
-            # batch's own end line carries the same class, never the ReplayFailed wrapper's name.
-            root_cause = error.__cause__ if error.__cause__ is not None else error
-            return ended(complete=False, stop_reason="replay_failed",
-                        not_replayed=[s.id for s in sources[index + 1:]], failed_source_run_id=source.id,
-                        error=type(root_cause).__name__)
-        except Exception as crash:
-            return ended(complete=False, stop_reason="replay_failed",
-                        not_replayed=[s.id for s in sources[index:]], failed_source_run_id=source.id,
-                        error=type(crash).__name__)
-        assert replay.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
-        entries.append(_batch_entry(source, replay))
-        counts[replay.replay_outcome] += 1
+    try:
+        for index, source in enumerate(sources):
+            source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
+            try:
+                with events.run_scope():
+                    replay = await execute_replay(
+                        store, source=source, source_turns=source_turns, resolved=resolved, mode=mode, judge=judge,
+                        sender=sender, transport=transport, resolver=resolver,
+                        adaptive_max_turns=adaptive_max_turns, adaptive_token_budget=adaptive_token_budget,
+                        adaptive_time_limit_s=adaptive_time_limit_s, clock=clock)
+            except RunInProgress:
+                return ended(complete=False, stop_reason="run_in_progress",
+                            not_replayed=[s.id for s in sources[index:]])
+            except ReplayFailed as error:
+                closed = store.get_run(error.run_id)
+                assert closed.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
+                entries.append(_batch_entry(source, closed))
+                counts[closed.replay_outcome] += 1
+                # The entry's own run.end already names the root cause (events._root_cause, review item 8); the
+                # batch's own end line carries the same class, never the ReplayFailed wrapper's name.
+                root_cause = error.__cause__ if error.__cause__ is not None else error
+                return ended(complete=False, stop_reason="replay_failed",
+                            not_replayed=[s.id for s in sources[index + 1:]], failed_source_run_id=source.id,
+                            error=type(root_cause).__name__)
+            except Exception as crash:
+                return ended(complete=False, stop_reason="replay_failed",
+                            not_replayed=[s.id for s in sources[index:]], failed_source_run_id=source.id,
+                            error=type(crash).__name__)
+            assert replay.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
+            entries.append(_batch_entry(source, replay))
+            counts[replay.replay_outcome] += 1
 
-    return ended(complete=True, stop_reason=None, not_replayed=[])
+        return ended(complete=True, stop_reason=None, not_replayed=[])
+    except Exception as crash:
+        # Anything outside the per-entry handling above (store.list_turns, store.get_run inside the
+        # ReplayFailed branch, or anything else) must still close the batch's own log line - with the root
+        # cause's class - before the exception propagates (review item 9): a start line is never left without
+        # a matching end line.
+        events.replay_batch_ended(target_id=target_id, fixed=counts["fixed"],
+                                  still_vulnerable=counts["still_vulnerable"], inconclusive=counts["inconclusive"],
+                                  duration_ms=int((clock() - started) * 1000), complete=False,
+                                  error=type(crash).__name__)
+        raise
