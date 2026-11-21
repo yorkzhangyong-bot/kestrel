@@ -277,9 +277,14 @@ same commit. Before opening any implementation PR, review this file and add anyt
   mirroring `events.connection_test`); a batch's own end line carries no `error` field for a `run_in_progress`
   collision (an expected stop, not a failure), but does carry one — the same root-cause class name its own
   crashed entry's `run.end` already logged, never the internal `ReplayFailed` wrapper's name — whenever
-  `stop_reason` is `replay_failed`, including a crash entirely outside the per-entry handling (`store.list_turns`,
-  rebuilding a crashed entry's row), which a second, outer `try` around the whole batch loop now logs before
-  re-raising (code-review round 1, items 8–9). **UI**: the Replay button, its disabled reason/advisory, the
+  `stop_reason` is `replay_failed` (code-review round 1, items 8–9). A third shape exists for a crash entirely
+  outside the per-entry handling (`store.list_turns`, rebuilding a crashed entry's row): a second, outer `try`
+  around the whole batch loop logs this same line with `complete=false`, `error=<root-cause class>`, and **no**
+  `stop_reason` at all — that failure never resolves into a `BatchResult`, so the exception still propagates
+  after the line is logged and the HTTP request itself fails with a 500 (round 2, item D1; deliberately kept
+  behaviour, only the docs here and in `specs/010-structured-logging/contracts/log-records.md` and
+  `specs/012-regression-replay/contracts/log-records-delta.md` were wrong about it). **UI**: the Replay button,
+  its disabled reason/advisory, the
   outcome line and the comparison table must render ahead of `_render_finding`'s own failure-step early return
   (`app.py`, `if run.get("failure_step"): ... return`), or a run that failed to send would never show them at
   all, even disabled — placed-after-the-return is an easy, silent mistake since every *other* line in that
