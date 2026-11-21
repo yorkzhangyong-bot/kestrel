@@ -5,12 +5,12 @@ import httpx
 import pytest
 
 from kestrel.replay import ReplayFailed
-from tests.support import (JUDGE_PROGRESS, JUDGE_REASON, REPLY_TEXT, SECRET, TARGET_NAME, TARGET_URL, real_attacker,
-                           real_judge, saved_target)
+from tests.support import (ATTACK_TEXT, JUDGE_PROGRESS, JUDGE_REASON, REPLY_TEXT, SECRET, TARGET_NAME, TARGET_URL,
+                           real_attacker, real_judge, saved_target)
 
 FEATURE = "012"
 
-MARKERS = (SECRET, TARGET_URL, TARGET_NAME, REPLY_TEXT, JUDGE_REASON, JUDGE_PROGRESS)
+MARKERS = (ATTACK_TEXT, SECRET, TARGET_URL, TARGET_NAME, REPLY_TEXT, JUDGE_REASON, JUDGE_PROGRESS)
 
 CLAIM = dict(prompt_id="spl-001", prompt_title="t", prompt_text="<seed>", family="system_prompt_leak",
             owasp_category="LLM07: System Prompt Leakage", attacker_source="library:1.0.0")
@@ -314,6 +314,48 @@ def test_a_failure_outside_the_per_entry_handling_still_closes_the_batch_line(ma
     assert batch_end["complete"] is False
     assert batch_end["error"] == "RuntimeError"
     assert batch_end["level"] == "ERROR"
+
+
+def test_the_sources_own_attack_text_never_appears_on_a_replays_stream(make_client, model_transport, json_log):
+    """SC-008: the full marker set, including the source's own recorded attacker message (copied verbatim into
+    the replay, FR-001) - built directly so the source genuinely reaches turn 2 and the attacker message is
+    exactly ATTACK_TEXT, sidestepping model_transport.verdict's single flat attribute (it cannot fail turn 1 and
+    succeed turn 2 in the same run)."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    run_id = store.claim_run(target.id, mode="adaptive", attacker_model="a/m", turn_budget=6, token_budget=40000,
+                             time_limit_s=300, **CLAIM)
+    store.add_turn(run_id, position=1, attacker_message="<seed>", reply_text="<reply>", judge_verdict="failed")
+    store.add_turn(run_id, position=2, attacker_message=ATTACK_TEXT, reply_text="<reply>", judge_verdict="failed")
+    store.finish_run(run_id, verdict="succeeded", hard_evidence=False, judge_used=True, judge_model="j/m",
+                     stopping_condition="succeeded", succeeded_turn=2, turns_used=2)
+
+    model_transport.verdict = "failed"
+    client.post(f"/api/runs/{run_id}/replay")
+
+    text = json_log.text()
+    for marker in MARKERS:
+        assert marker not in text, marker
+
+
+def test_the_sources_own_attack_text_never_appears_on_a_batch_replays_stream(make_client, model_transport, json_log):
+    """SC-008: the same guarantee, through the batch endpoint - not only a single replay."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL, name=TARGET_NAME)
+    run_id = store.claim_run(target.id, mode="adaptive", attacker_model="a/m", turn_budget=6, token_budget=40000,
+                             time_limit_s=300, **CLAIM)
+    store.add_turn(run_id, position=1, attacker_message=ATTACK_TEXT, reply_text="<reply>", judge_verdict="failed")
+    store.finish_run(run_id, verdict="succeeded", hard_evidence=False, judge_used=True, judge_model="j/m",
+                     stopping_condition="succeeded", succeeded_turn=1, turns_used=1)
+
+    model_transport.verdict = "failed"
+    client.post(f"/api/targets/{target.id}/replays")
+
+    text = json_log.text()
+    for marker in MARKERS:
+        assert marker not in text, marker
 
 
 def test_no_secret_url_name_or_free_text_appears_anywhere_in_the_stream(make_client, model_transport, json_log):

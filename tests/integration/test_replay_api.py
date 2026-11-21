@@ -173,6 +173,61 @@ def test_a_replay_claim_race_returns_409_run_in_progress(make_client, model_tran
     assert error["message"] == "A run against this target is already in progress."
 
 
+def test_a_replays_own_get_renders_the_same_fields_any_finished_run_does(make_client, model_transport):  # FR-019
+    """An offline test that GETs a replay run and confirms its own result looks like any finished run's detail,
+    not only its replay-specific fields (review item 13)."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    target = saved_target(client.app.state.store, url=TARGET_URL)
+    model_transport.verdict = "succeeded"
+    source = run_attack(client, target.id)
+    model_transport.verdict = "failed"
+    replay = client.post(f"/api/runs/{source['id']}/replay").json()
+
+    body = client.get(f"/api/runs/{replay['id']}").json()
+
+    assert body["id"] == replay["id"] and body["status"] == "finished"
+    assert body["verdict"] == "failed" and body["hard_evidence"] is False
+    assert body["prompt_text"] == source["prompt_text"]
+    assert body["reply_text"] is not None
+    assert body["attacker_model"] is None and body["turn_budget"] is None   # null for any single-turn run
+    assert body["reason"] is not None
+    assert body["failure_step"] is None
+
+
+def test_permission_missing_refuses_a_single_replay(make_client, model_transport):  # FR-006
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    model_transport.verdict = "succeeded"
+    source = run_attack(client, target.id)
+    with store.connect() as db:
+        db.execute("UPDATE targets SET permission_confirmed_at = '' WHERE id = ?", (target.id,))
+
+    response = client.post(f"/api/runs/{source['id']}/replay")
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "permission_missing"
+    assert error["message"] == "Tick the permission box and save the target before attacking it."
+
+
+def test_terms_outdated_refuses_a_single_replay(make_client, model_transport):  # FR-006
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    model_transport.verdict = "succeeded"
+    source = run_attack(client, target.id)
+    with store.connect() as db:
+        db.execute("UPDATE targets SET terms_version = 'old' WHERE id = ?", (target.id,))
+
+    response = client.post(f"/api/runs/{source['id']}/replay")
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "terms_outdated"
+    assert error["message"] == "The terms of service have changed; read them and tick the box again."
+
+
 def test_a_non_replay_run_carries_null_replay_fields(make_client, model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
     target = saved_target(client.app.state.store, url=TARGET_URL)

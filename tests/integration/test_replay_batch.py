@@ -80,6 +80,43 @@ def test_a_target_with_zero_replayable_runs_completes_trivially(client):
     assert body["counts"] == {"fixed": 0, "still_vulnerable": 0, "inconclusive": 0}
 
 
+def test_an_unknown_target_404s_a_batch_replay(client):  # FR-029
+    response = client.post("/api/targets/999/replays")
+    assert response.status_code == 404
+
+
+def test_permission_missing_refuses_the_whole_batch(make_client, model_transport):  # FR-006, FR-029
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    claim_succeeded_single_turn(store, target.id)
+    with store.connect() as db:
+        db.execute("UPDATE targets SET permission_confirmed_at = '' WHERE id = ?", (target.id,))
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "permission_missing"
+    assert error["message"] == "Tick the permission box and save the target before attacking it."
+
+
+def test_terms_outdated_refuses_the_whole_batch(make_client, model_transport):  # FR-006, FR-029
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    claim_succeeded_single_turn(store, target.id)
+    with store.connect() as db:
+        db.execute("UPDATE targets SET terms_version = 'old' WHERE id = ?", (target.id,))
+
+    response = client.post(f"/api/targets/{target.id}/replays")
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "terms_outdated"
+    assert error["message"] == "The terms of service have changed; read them and tick the box again."
+
+
 def test_a_target_over_the_configured_cap_refuses_the_whole_batch_before_sending_anything(make_client, settings,
                                                                                             model_transport):
     lowered = dataclasses.replace(settings, replay_batch_max_runs=2)

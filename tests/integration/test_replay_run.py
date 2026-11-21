@@ -193,6 +193,44 @@ def test_single_turn_replay_records_tokens_used_like_a_live_run(store, target):
     assert send_failed.failure_step == "unreachable" and send_failed.tokens_used == 0
 
 
+def test_family_owasp_category_and_prompt_fields_are_copied_from_the_source(store, target):  # FR-021
+    """Not only a docstring claim (review item 13): family, OWASP category, prompt id, title and text are copied
+    onto the replay run verbatim, never recomputed."""
+    source = make_single_turn_source(store, target)
+    run = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                     judge=StubJudge(verdict="failed"),
+                                     sender=sender_returning(ok("a harmless reply")), **REPLAY_CAPS))
+    assert run.family == source.family
+    assert run.owasp_category == source.owasp_category
+    assert run.prompt_id == source.prompt_id
+    assert run.prompt_title == source.prompt_title
+    assert run.prompt_text == source.prompt_text
+
+
+def test_an_adaptive_replays_family_owasp_category_and_prompt_fields_are_also_copied(store, target):  # FR-021
+    source, source_turns = make_adaptive_source(store, target, turns=2)
+    run = asyncio.run(execute_replay(store, source=source, source_turns=source_turns, resolved=RESOLVED,
+                                     mode="local", judge=SequencedJudge("failed", "failed"),
+                                     sender=sender_returning(ok()), **REPLAY_CAPS))
+    assert run.family == source.family and run.owasp_category == source.owasp_category
+    assert run.prompt_id == source.prompt_id and run.prompt_title == source.prompt_title
+    assert run.prompt_text == source.prompt_text
+
+
+def test_no_judge_configured_gives_inconclusive_unless_a_canary_matched(store, target):  # SC-002
+    source = make_single_turn_source(store, target)
+
+    no_judge = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                          judge=StubJudge(configured=False),
+                                          sender=sender_returning(ok("a harmless reply")), **REPLAY_CAPS))
+    assert no_judge.verdict == "unclear" and no_judge.replay_outcome == "inconclusive"
+
+    canary_hit = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                            judge=StubJudge(configured=False),
+                                            sender=sender_returning(ok("leak KESTREL-CANARY-X")), **REPLAY_CAPS))
+    assert canary_hit.verdict == "succeeded" and canary_hit.replay_outcome == "still_vulnerable"
+
+
 def test_no_attacker_exists_and_the_judge_sees_no_conversation_argument(store, target):
     """execute_replay accepts no attacker parameter at all - zero attacker-model calls is a structural guarantee,
     not something to assert per call (FR-002). The judge call itself is shaped like execute_run's (FR-008)."""

@@ -75,7 +75,7 @@ def test_replaying_a_real_run_has_the_right_structure(tmp_path, hs_target, libra
         if source["verdict"] != "succeeded":
             _promote_to_succeeded(settings.db_path, source["id"])
 
-        attacker_calls_before = len(experience.queries) + len(experience.pattern_writes) + len(experience.memory_writes)
+        experience_calls_before = len(experience.queries) + len(experience.pattern_writes) + len(experience.memory_writes)
 
         response = api.post(f"/api/runs/{source['id']}/replay")
         assert response.status_code == 201, response.text
@@ -94,9 +94,15 @@ def test_replaying_a_real_run_has_the_right_structure(tmp_path, hs_target, libra
         if not replay["hard_evidence"]:
             assert comparison["replay_judge_prompt"] is not None
 
-        # Zero experience-store calls of any kind (FR-025, FR-026) and zero attacker-model calls (FR-002).
+        # Zero attacker-model calls, a real count straight off the stream, not inferred from attacker_model being
+        # None (FR-002, review item 13).
+        attacker_calls = [line for line in json_log() if line.get("event") == "model.request"
+                         and line.get("kind") == "attacker"]
+        assert attacker_calls == []
+
+        # Zero experience-store calls of any kind, kept under its own name (FR-025, FR-026).
         assert len(experience.queries) + len(experience.pattern_writes) + len(experience.memory_writes) == \
-            attacker_calls_before
+            experience_calls_before
 
         # A second replay of the replay itself is refused, naming the original source (FR-005).
         again = api.post(f"/api/runs/{replay['id']}/replay")

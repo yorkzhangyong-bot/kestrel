@@ -163,6 +163,36 @@ def test_an_in_progress_replay_renders_without_crashing(api):
     assert not at.exception
 
 
+def test_clicking_replay_shows_the_outcome_line_and_comparison_headings(api):
+    """US1 scenario 7: clicking Replay on a replayable run shows the outcome line and the comparison table, not
+    just the button's own disabled/enabled state (review item 13)."""
+    api.runs = [run(id=7, replayable=True)]
+    api.replay_result = run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed", comparison=COMPARISON)
+    at = opened(api, run(id=7, replayable=True))
+
+    at = replay_button(at, "opened", 7).click().run()
+
+    assert any("Outcome: fixed" in w.value for w in at.markdown)
+    # dataframe[0] is the run-listing table (rendered first by render_runs); the comparison table comes after.
+    frame = at.dataframe[1].value
+    assert "Verdict" in frame[""].tolist() and "Turn 1" in frame[""].tolist()
+
+
+def test_a_replay_run_whose_own_send_failed_still_shows_outcome_comparison_and_source_link(api):
+    """T023's required case: a replay run whose own send failed (failure_step set, no verdict) must still show
+    the outcome line, the comparison and the source link - placed ahead of _render_finding's failure-step early
+    return, the same guarantee an in-progress or ineligible run already gets."""
+    at = opened(api, run(id=41, mode="replay", source_run_id=7, status="finished", verdict=None,
+                         hard_evidence=False, failure_step="unreachable", reply_text=None, reason=None,
+                         replay_outcome="inconclusive", replayable=False,
+                         replay_blocked_reason="This run is itself a replay of run #7.",
+                         comparison={**COMPARISON, "outcome": "inconclusive"}))
+
+    assert any("Outcome: inconclusive" in w.value for w in at.markdown)
+    assert any(b.label == "Replay of run #7" for b in at.button)
+    assert at.error   # the failure-step error display still renders too, alongside the outcome and comparison
+
+
 def test_the_multi_turn_caption_shows_only_for_a_multi_message_source(api):
     multi = {**COMPARISON, "multi_turn_caption": MULTI_TURN_CAPTION}
     at = opened(api, run(id=41, mode="replay", source_run_id=7, replay_outcome="fixed", replayable=False,
