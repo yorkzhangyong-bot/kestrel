@@ -464,12 +464,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             body_template=target.body_template, response_path=target.response_path)
         # No write_back call: a replay never touches the experience store (FR-025, FR-026).
         with events.run_scope():
-            run = await execute_replay(
-                store, source=source, source_turns=source_turns, resolved=resolved, mode=settings.mode,
-                judge=request.app.state.judge, transport=request.app.state.transport,
-                resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
-                adaptive_token_budget=settings.adaptive_token_budget,
-                adaptive_time_limit_s=settings.adaptive_time_limit_s)
+            try:
+                run = await execute_replay(
+                    store, source=source, source_turns=source_turns, resolved=resolved, mode=settings.mode,
+                    judge=request.app.state.judge, transport=request.app.state.transport,
+                    resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
+                    adaptive_token_budget=settings.adaptive_token_budget,
+                    adaptive_time_limit_s=settings.adaptive_time_limit_s)
+            except RunInProgress:
+                # A claim race (two requests on the same target at once) - the same precondition start_run
+                # already catches (main.py's own pre-check above is the common case; this is the rare, genuinely
+                # concurrent one, review item 7).
+                return api_error(409, "run_in_progress", REPLAY_BLOCKED_REASONS["run_in_progress"])
         replay_turns = store.list_turns(run.id)   # [] for a single-turn replay; its real turns for an adaptive one
         in_progress = store.other_run_in_progress(target.id, excluding_run_id=run.id)
         return run_detail(store, run, target=target, terms_version=terms.version,

@@ -149,6 +149,30 @@ def test_a_replay_still_in_progress_has_no_comparison_yet(make_client, model_tra
     assert body["comparison"] is None
 
 
+def test_a_replay_claim_race_returns_409_run_in_progress(make_client, model_transport, monkeypatch):
+    """A RunInProgress raised by the claim itself (a genuine race between two requests on the same target) must
+    be caught the same way start_run already catches it - never surface as a 500 (review item 7)."""
+    from kestrel.store import RunInProgress
+
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    model_transport.verdict = "succeeded"
+    source = run_attack(client, target.id)
+
+    def racing_claim_run(*args, **kwargs):
+        raise RunInProgress(target.id)
+
+    monkeypatch.setattr(store, "claim_run", racing_claim_run)
+
+    response = client.post(f"/api/runs/{source['id']}/replay")
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "run_in_progress"
+    assert error["message"] == "A run against this target is already in progress."
+
+
 def test_a_non_replay_run_carries_null_replay_fields(make_client, model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
     target = saved_target(client.app.state.store, url=TARGET_URL)
