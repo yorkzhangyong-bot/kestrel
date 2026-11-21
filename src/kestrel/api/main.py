@@ -467,7 +467,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                 resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
                 adaptive_token_budget=settings.adaptive_token_budget,
                 adaptive_time_limit_s=settings.adaptive_time_limit_s)
-        replay_turns = store.list_turns(run.id) if run.mode == "adaptive" else []
+        replay_turns = store.list_turns(run.id)   # [] for a single-turn replay; its real turns for an adaptive one
         in_progress = store.other_run_in_progress(target.id, excluding_run_id=run.id)
         return run_detail(store, run, target=target, terms_version=terms.version,
                           adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
@@ -752,7 +752,7 @@ def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> R
         return None
     source = store.get_run(run.source_run_id)
     source_turns = store.list_turns(source.id) if source.mode == "adaptive" else []
-    replay_turns = turns if turns is not None else (store.list_turns(run.id) if run.mode == "adaptive" else [])
+    replay_turns = turns if turns is not None else store.list_turns(run.id)
     comparison = build_comparison(source, source_turns, run, replay_turns)
     return ReplayComparisonOut(
         source_run_id=comparison.source_run_id, replay_run_id=comparison.replay_run_id,

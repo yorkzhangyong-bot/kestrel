@@ -212,6 +212,25 @@ def test_an_adaptive_source_within_the_current_turn_limit_carries_no_advisory(ma
     assert body["replayable"] is True and body["replay_advisory"] is None
 
 
+def test_an_adaptive_replays_post_body_matches_its_own_get_turn_for_turn(make_client, model_transport):
+    """MAJOR (review item 1): the 201 body must show the same turns as a later GET of the same replay, not an
+    empty conversation with every turn marked "not sent"."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    source_id = claim_adaptive_source(store, target.id, turns=["failed", "succeeded"], succeeded_turn=2)
+
+    model_transport.verdict = "failed"
+    post_body = client.post(f"/api/runs/{source_id}/replay").json()
+    get_body = client.get(f"/api/runs/{post_body['id']}").json()
+
+    assert post_body["turns"] != []
+    assert post_body["turns"] == get_body["turns"]
+    assert post_body["comparison"]["turns"] == get_body["comparison"]["turns"]
+    assert all(turn["sent"] for turn in post_body["comparison"]["turns"])
+    assert all(turn["replay_verdict"] is not None for turn in post_body["comparison"]["turns"])
+
+
 def test_multi_turn_caption_present_for_a_multi_message_source_absent_for_single_message(make_client,
                                                                                           model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
