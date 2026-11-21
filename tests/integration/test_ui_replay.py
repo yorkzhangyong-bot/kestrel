@@ -176,6 +176,8 @@ def test_clicking_replay_shows_the_outcome_line_and_comparison_headings(api):
     # dataframe[0] is the run-listing table (rendered first by render_runs); the comparison table comes after.
     frame = at.dataframe[1].value
     assert "Verdict" in frame[""].tolist() and "Turn 1" in frame[""].tolist()
+    # FR-017's own pinned column headings (round-2 review item 6), not only the row content.
+    assert list(frame.columns) == ["", "Source (run #7)", "Replay (run #41)"]
 
 
 def test_a_replay_run_whose_own_send_failed_still_shows_outcome_comparison_and_source_link(api):

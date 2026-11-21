@@ -18,7 +18,7 @@ remaining 5 are justified below (`uv run python scripts/check_traceability.py`).
 | FR-013 | `tests/unit/test_replay_outcome.py` (any `"succeeded"` wins) |
 | FR-014 | `tests/unit/test_replay_outcome.py` (the winning-turn rule); `tests/integration/test_replay_run.py` (on a real multi-turn source) |
 | FR-016 | `tests/integration/test_replay_api.py` (`replay_outcome` values); `tests/integration/test_ui_replay.py` (`OUTCOME_LABELS`, the exact "Outcome: " line) |
-| FR-017, FR-018 | `tests/unit/test_replay_comparison.py` (`build_comparison`'s per-turn walk, the terminal-turn derivation, the pinned row labels); `tests/integration/test_ui_replay.py` (the rendered table) |
+| FR-017, FR-018 | `tests/unit/test_replay_comparison.py` (`build_comparison`'s per-turn walk, the terminal-turn derivation, the pinned row labels); `tests/integration/test_ui_replay.py` (the rendered table, including the exact "Source (run #N)"/"Replay (run #N)" column headings, `test_clicking_replay_shows_the_outcome_line_and_comparison_headings`) |
 | FR-019 | `tests/integration/test_replay_api.py::test_a_replays_own_get_renders_the_same_fields_any_finished_run_does` (status, verdict, prompt/reply text, attacker_model, reason — not only its replay-specific fields) |
 | FR-020 | `tests/unit/test_store_migration_v10.py` (the schema); `tests/integration/test_replay_run.py` (`mode == "replay"`, `source_run_id`) |
 | FR-021 | `tests/integration/test_replay_run.py::test_family_owasp_category_and_prompt_fields_are_copied_from_the_source`/`test_an_adaptive_replays_family_owasp_category_and_prompt_fields_are_also_copied` (family, OWASP category, prompt id, title and text asserted equal to the source's own, never recomputed) |
@@ -42,7 +42,7 @@ remaining 5 are justified below (`uv run python scripts/check_traceability.py`).
 | FR-042 | `tests/unit/test_replay_eligibility.py` (`compute_replay_status` computes everything server-side); `tests/integration/test_ui_replay.py` (the UI only displays given fields) |
 | FR-043, FR-044 | `tests/integration/test_events_replay.py` (`run.start`/`run.end` fields; `replay.batch.start`/`.end`) |
 | FR-045, FR-047, SC-008 | `tests/integration/test_events_replay.py` (no secret/URL/name/text anywhere on the stream; `test_the_sources_own_attack_text_never_appears_on_a_replays_stream`/`..._on_a_batch_replays_stream` for the attack-text marker, single and batch); `tests/unit/test_check_replay_script.py` (the script's own output) |
-| SC-002 | `tests/unit/test_replay_outcome.py` (every branch, including the unresolved-early-turn and winning-turn cases); `tests/integration/test_replay_run.py` (the same cases on a real multi-turn source; `test_no_judge_configured_gives_inconclusive_unless_a_canary_matched` for no judge configured at all) |
+| SC-002 | `tests/unit/test_replay_outcome.py` (every branch, including the unresolved-early-turn and winning-turn cases); `tests/integration/test_replay_run.py` (the same cases on a real multi-turn source; `test_no_judge_configured_gives_inconclusive_unless_a_canary_matched` and `test_an_adaptive_replay_with_no_judge_configured_gives_inconclusive_unless_a_canary_matched` for no judge configured at all, single-turn and adaptive) |
 | SC-006 | `tests/integration/test_replay_batch.py` (N entries oldest-first, the cap refusal, the two incomplete-batch shapes) |
 | SC-007 | `tests/unit/test_check_replay_script.py` (every exit code, including the incomplete-batch and "still vulnerable wins" cases) |
 | SC-010 | `tests/e2e/test_us012_replay.py` |
