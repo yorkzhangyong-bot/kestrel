@@ -39,6 +39,13 @@ already a `SCOPE_FIELD`, which `emit()` always allows regardless of catalogue, r
 and `stop_reason` — and `error` — are already in the `replay.batch.end` row above, named again here for
 completeness; `stop_reason` is `"run_in_progress"` or `"replay_failed"`, research D17).
 
+**Clarified after independent review (round 1, item 8):** `error` is present exactly when `stop_reason` is
+`"replay_failed"` — the crashed entry's own root-cause class (the same one its own `run.end` already carries,
+never the internal `ReplayFailed` wrapper's name) — and absent for a `run_in_progress` collision, which is an
+expected stop, not a failure. The first implementation round left this field unset in both cases; independent
+review caught that `run.end` for the crashed entry itself also named the wrapper (`"ReplayFailed"`) instead of
+the original fault.
+
 A batch that is refused before it starts (`batch_too_large`, `permission_missing`, `terms_outdated`,
 `run_in_progress`) emits **neither** line — the same convention a refused single run's claim already follows
 (`run.start` is never emitted for a claim `RunInProgress` refuses today).

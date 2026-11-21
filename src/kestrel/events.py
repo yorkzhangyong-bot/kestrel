@@ -390,6 +390,18 @@ def run_finished(run: Any) -> None:
         _backstop("run.end", error)
 
 
+def _root_cause(error: BaseException) -> BaseException:
+    """`error`'s own class, unless it is a `kestrel.replay.ReplayFailed` wrapper (feature 012, review item 8):
+    `execute_replay`/`run_replay_adaptive` always raise `ReplayFailed(run_id) from error`, so logging the
+    wrapper's own class would always say "ReplayFailed" and never the real fault. Lazy import: avoids a
+    module-load cycle (replay.py imports this module), the same convention replay.py and graph.py already use
+    for each other (research D14)."""
+    from kestrel.replay import ReplayFailed
+    if isinstance(error, ReplayFailed) and error.__cause__ is not None:
+        return error.__cause__
+    return error
+
+
 def _run_end(ctx: RunContext, error: BaseException | None) -> None:
     try:
         outcome = ctx.outcome or {}
@@ -403,7 +415,7 @@ def _run_end(ctx: RunContext, error: BaseException | None) -> None:
         if cost is None:
             fields["cost_note"] = note
         if error is not None:
-            fields["error"] = type(error).__name__
+            fields["error"] = type(_root_cause(error)).__name__
         # Feature 012: present only for a replay (never "replay_outcome": null for a normal run), unlike
         # verdict/succeeded_turn above, which are always present.
         fields.update(_present({"replay_outcome": outcome.get("replay_outcome")}))

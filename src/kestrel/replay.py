@@ -420,11 +420,11 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
     counts = {"fixed": 0, "still_vulnerable": 0, "inconclusive": 0}
 
     def ended(*, complete: bool, stop_reason: str | None, not_replayed: list[int],
-             failed_source_run_id: int | None = None) -> BatchResult:
+             failed_source_run_id: int | None = None, error: str | None = None) -> BatchResult:
         events.replay_batch_ended(target_id=target_id, fixed=counts["fixed"],
                                   still_vulnerable=counts["still_vulnerable"], inconclusive=counts["inconclusive"],
                                   duration_ms=int((clock() - started) * 1000), complete=complete,
-                                  stop_reason=stop_reason)
+                                  stop_reason=stop_reason, error=error)
         return BatchResult(target_id=target_id, entries=tuple(entries), counts=dict(counts), complete=complete,
                            stop_reason=stop_reason, not_replayed_source_ids=tuple(not_replayed),
                            failed_source_run_id=failed_source_run_id)
@@ -446,11 +446,16 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
             assert closed.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
             entries.append(_batch_entry(source, closed))
             counts[closed.replay_outcome] += 1
+            # The entry's own run.end already names the root cause (events._root_cause, review item 8); the
+            # batch's own end line carries the same class, never the ReplayFailed wrapper's name.
+            root_cause = error.__cause__ if error.__cause__ is not None else error
             return ended(complete=False, stop_reason="replay_failed",
-                        not_replayed=[s.id for s in sources[index + 1:]], failed_source_run_id=source.id)
-        except Exception:
+                        not_replayed=[s.id for s in sources[index + 1:]], failed_source_run_id=source.id,
+                        error=type(root_cause).__name__)
+        except Exception as crash:
             return ended(complete=False, stop_reason="replay_failed",
-                        not_replayed=[s.id for s in sources[index:]], failed_source_run_id=source.id)
+                        not_replayed=[s.id for s in sources[index:]], failed_source_run_id=source.id,
+                        error=type(crash).__name__)
         assert replay.replay_outcome is not None   # a finished replay always has one (FR-012, FR-015)
         entries.append(_batch_entry(source, replay))
         counts[replay.replay_outcome] += 1
