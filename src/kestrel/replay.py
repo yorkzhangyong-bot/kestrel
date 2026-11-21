@@ -306,7 +306,8 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
                                deadline_s=send_budget, prompt=source.prompt_text)
         if not outcome.ok:
-            return _finish_single_turn(store, run_id, source, turn_results=[], failure_step=outcome.step)
+            return _finish_single_turn(store, run_id, source, turn_results=[], failure_step=outcome.step,
+                                       tokens_used=0)
 
         # Masked explicitly here (never trusting the sender alone, FR-001/Principle IV): the attacker message
         # resent is already masked (it is the source's own stored, already-masked text) - only the *new* reply
@@ -318,16 +319,18 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
         if hit is not None:
             return _finish_single_turn(store, run_id, source, turn_results=["succeeded"], canary_hit=True,
                                        verdict="succeeded", hard_evidence=True, reason=CANARY_REASON,
-                                       reply_text=reply, reply_truncated=truncated)
+                                       reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         if not judge.configured:
             return _finish_single_turn(store, run_id, source, turn_results=[None], verdict="unclear",
-                                       reason=NO_JUDGE_REASON, reply_text=reply, reply_truncated=truncated)
+                                       reason=NO_JUDGE_REASON, reply_text=reply, reply_truncated=truncated,
+                                       tokens_used=0)
 
         judge_budget = min(JUDGE_LIMIT_S, deadline - clock())
         if judge_budget <= 0:
             return _finish_single_turn(store, run_id, source, turn_results=[None], verdict="unclear",
-                                       reason=DEADLINE_REASON, reply_text=reply, reply_truncated=truncated)
+                                       reason=DEADLINE_REASON, reply_text=reply, reply_truncated=truncated,
+                                       tokens_used=0)
 
         judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
         events.judge_requested(judge_prompt)
@@ -338,12 +341,12 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
                                        judge_used=True, judge_model=judge.model,
                                        reason=f"The judge could not decide: {error}", reply_text=reply,
                                        reply_truncated=truncated, judge_prompt_id=judge_prompt_id,
-                                       judge_prompt_version=judge_prompt_version)
+                                       judge_prompt_version=judge_prompt_version, tokens_used=0)
         return _finish_single_turn(store, run_id, source, turn_results=[verdict.verdict], judged=True,
                                    verdict=verdict.verdict, hard_evidence=False, judge_used=True,
                                    judge_model=judge.model, reason=verdict.reason, reply_text=reply,
                                    reply_truncated=truncated, judge_prompt_id=judge_prompt_id,
-                                   judge_prompt_version=judge_prompt_version)
+                                   judge_prompt_version=judge_prompt_version, tokens_used=verdict.tokens)
     except Exception as error:
         closed = store.finish_run(run_id, verdict="unclear", reason=UNEXPECTED_FAILURE_REASON,
                                   replay_outcome="inconclusive")

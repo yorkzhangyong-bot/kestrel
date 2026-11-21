@@ -161,6 +161,38 @@ def test_replay_resends_the_source_verbatim_and_each_behaviour_yields_its_own_ou
     assert crashed.replay_outcome == "inconclusive"
 
 
+def test_single_turn_replay_records_tokens_used_like_a_live_run(store, target):
+    """execute_run records 0 tokens for a send failure, a canary hit, no judge configured, or a judge error, and
+    the judge's own verdict.tokens on a genuine judge call; the single-turn replay branch recorded none of these
+    at all (review item 11) - tokens_used stayed null on every outcome."""
+    source = make_single_turn_source(store, target)
+
+    canary_hit = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                            judge=StubJudge(tokens=999), sender=sender_returning(ok("leak "
+                                            "KESTREL-CANARY-X")), **REPLAY_CAPS))
+    assert canary_hit.hard_evidence is True and canary_hit.tokens_used == 0
+
+    no_judge = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                          judge=StubJudge(configured=False), sender=sender_returning(ok("a "
+                                          "harmless reply")), **REPLAY_CAPS))
+    assert no_judge.verdict == "unclear" and no_judge.tokens_used == 0
+
+    judge_error = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED,
+                                             mode="local", judge=StubJudge(error=JudgeError("boom"), tokens=999),
+                                             sender=sender_returning(ok("a harmless reply")), **REPLAY_CAPS))
+    assert judge_error.verdict == "unclear" and judge_error.tokens_used == 0
+
+    judged = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
+                                        judge=StubJudge(verdict="failed", tokens=137),
+                                        sender=sender_returning(ok("a harmless reply")), **REPLAY_CAPS))
+    assert judged.verdict == "failed" and judged.tokens_used == 137
+
+    send_failed = asyncio.run(execute_replay(
+        store, source=source, source_turns=[], resolved=RESOLVED, mode="local", judge=StubJudge(tokens=999),
+        sender=sender_returning(Outcome(ok=False, step="unreachable", message="Unreachable.")), **REPLAY_CAPS))
+    assert send_failed.failure_step == "unreachable" and send_failed.tokens_used == 0
+
+
 def test_no_attacker_exists_and_the_judge_sees_no_conversation_argument(store, target):
     """execute_replay accepts no attacker parameter at all - zero attacker-model calls is a structural guarantee,
     not something to assert per call (FR-002). The judge call itself is shaped like execute_run's (FR-008)."""
