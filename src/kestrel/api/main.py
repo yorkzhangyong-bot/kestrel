@@ -378,9 +378,13 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         except TargetNotFound:
             return not_found(target_id)
         in_progress_id = next((r.id for r in runs if r.status == "in_progress"), None)
+        # One query for the whole target (review round 2, R2), never a per-run check: agrees with the detail
+        # and the batch on an adaptive run's real eligibility instead of falling back to turns_used.
+        with_turns = store.run_ids_with_recorded_turns(target_id)
         return [run_summary(run, target=target, terms_version=terms.version,
                             adaptive_max_turns=settings.adaptive_max_turns,
-                            other_run_in_progress=in_progress_id is not None and in_progress_id != run.id)
+                            other_run_in_progress=in_progress_id is not None and in_progress_id != run.id,
+                            recorded_turns=1 if run.id in with_turns else 0)
                 for run in runs]
 
     @app.get("/api/targets/{target_id}/profile", response_model=ProfileOut)
@@ -740,14 +744,14 @@ def _experience_counts(experience: Any, target_id: int) -> dict | None:
 
 
 def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
-                other_run_in_progress: bool, turns: list[Turn] | None = None) -> RunSummary:
+                other_run_in_progress: bool, recorded_turns: int | None = None) -> RunSummary:
     """`target`/`terms_version`/`adaptive_max_turns`/`other_run_in_progress` feed `compute_replay_status`
     (feature 012, research D10): `replayable`/`replay_blocked_reason`/`replay_advisory` depend on the run's
-    target, never the run's own fields alone. `turns`, when the caller already has them (every `run_detail`
-    caller does), gives `compute_replay_status` the run's actual recorded-turn count instead of its `turns_used`
-    counter (defensive, review item 3) - `None` falls back to the counter, for a plain run-listing row that has
-    not loaded them."""
-    recorded_turns = len(turns) if turns is not None else None
+    target, never the run's own fields alone. `recorded_turns`, when the caller already knows it (every
+    `run_detail` caller does, from its own loaded `turns`; `list_runs` does too, from one query for the whole
+    target - review round 2, R2), gives `compute_replay_status` the run's actual recorded-turn count instead of
+    its `turns_used` counter (defensive, review round 1 item 3) - `None` falls back to the counter, for a caller
+    that genuinely has not checked."""
     status = compute_replay_status(run, target, terms_version, adaptive_max_turns, other_run_in_progress,
                                    recorded_turns=recorded_turns)
     return RunSummary(id=run.id, target_id=run.target_id, mode=run.mode, prompt_id=run.prompt_id,
@@ -787,9 +791,11 @@ def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> R
 
 def run_detail(store: TargetStore, run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
                other_run_in_progress: bool, turns: list[Turn] | None = None) -> RunDetail:
+    recorded_turns = len(turns) if turns is not None else None
     return RunDetail(**run_summary(run, target=target, terms_version=terms_version,
                                    adaptive_max_turns=adaptive_max_turns,
-                                   other_run_in_progress=other_run_in_progress, turns=turns).model_dump(),
+                                   other_run_in_progress=other_run_in_progress,
+                                   recorded_turns=recorded_turns).model_dump(),
                      status=run.status, prompt_text=run.prompt_text,
                      reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
                      failure_message=STEP_MESSAGES.get(run.failure_step) if run.failure_step else None,

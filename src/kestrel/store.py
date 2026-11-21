@@ -996,6 +996,17 @@ class TargetStore:
                 " ORDER BY started_at ASC, id ASC", (target_id,)).fetchall()
         return [self._run(row) for row in rows]
 
+    def run_ids_with_recorded_turns(self, target_id: int) -> set[int]:
+        """Every run id of this target that has at least one `run_turns` row (feature 012, review round 2,
+        R2): one query for the whole target, so the run-list endpoint can agree with the detail and the batch
+        on an adaptive run's real eligibility instead of falling back to the untrusted `turns_used` counter per
+        row."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT run_turns.run_id FROM run_turns"
+                " JOIN runs ON runs.id = run_turns.run_id WHERE runs.target_id = ?", (target_id,)).fetchall()
+        return {row["run_id"] for row in rows}
+
     @staticmethod
     def _run(row: sqlite3.Row) -> Run:
         return Run(id=row["id"], target_id=row["target_id"], prompt_id=row["prompt_id"],

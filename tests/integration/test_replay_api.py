@@ -316,6 +316,24 @@ def test_an_adaptive_run_whose_turns_used_lies_about_recorded_rows_is_not_replay
     assert body["replay_blocked_reason"] == "This run has no recorded message to resend."
 
 
+def test_the_run_list_agrees_with_the_detail_on_replayability(make_client, model_transport):
+    """R2 (review round 2): the run-list endpoint must use the same real-turn-row check as the detail and the
+    batch, not fall back to the untrusted turns_used counter - a defensive adaptive run whose counter lies about
+    its recorded rows must read not-replayable in the list too, never just in the detail."""
+    client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
+    store = client.app.state.store
+    target = saved_target(store, url=TARGET_URL)
+    run_id = store.claim_run(target.id, mode="adaptive", **CLAIM)
+    store.finish_run(run_id, verdict="succeeded", turns_used=3)   # no add_turn call: zero actual run_turns rows
+
+    listed = next(r for r in client.get(f"/api/targets/{target.id}/runs").json() if r["id"] == run_id)
+    detail = client.get(f"/api/runs/{run_id}").json()
+
+    assert listed["replayable"] is False and detail["replayable"] is False
+    assert listed["replay_blocked_reason"] == detail["replay_blocked_reason"] == \
+        "This run has no recorded message to resend."
+
+
 def test_an_adaptive_source_over_the_current_turn_limit_is_replayable_with_an_advisory(make_client, settings,
                                                                                         model_transport):
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
