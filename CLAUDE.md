@@ -274,9 +274,12 @@ same commit. Before opening any implementation PR, review this file and add anyt
   which the catalogue already marks `| null` and are always present; `run_finished(run)` has to read
   `getattr(run, "replay_outcome", None)` into the stashed outcome dict itself, or `_run_end`'s own `_present(...)`
   filter has nothing to omit. `replay.batch.start`/`.end` are unscoped (no single `run_id` for a whole batch,
-  mirroring `events.connection_test`); a batch's own end line never carries an `error` field for either stop
-  reason — a collision is an expected stop, and one entry's own failure belongs to that entry's already-closed,
-  already-logged run, never to the batch request. **UI**: the Replay button, its disabled reason/advisory, the
+  mirroring `events.connection_test`); a batch's own end line carries no `error` field for a `run_in_progress`
+  collision (an expected stop, not a failure), but does carry one — the same root-cause class name its own
+  crashed entry's `run.end` already logged, never the internal `ReplayFailed` wrapper's name — whenever
+  `stop_reason` is `replay_failed`, including a crash entirely outside the per-entry handling (`store.list_turns`,
+  rebuilding a crashed entry's row), which a second, outer `try` around the whole batch loop now logs before
+  re-raising (code-review round 1, items 8–9). **UI**: the Replay button, its disabled reason/advisory, the
   outcome line and the comparison table must render ahead of `_render_finding`'s own failure-step early return
   (`app.py`, `if run.get("failure_step"): ... return`), or a run that failed to send would never show them at
   all, even disabled — placed-after-the-return is an easy, silent mistake since every *other* line in that

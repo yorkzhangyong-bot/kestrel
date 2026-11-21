@@ -153,9 +153,12 @@ the two endpoints above) gain:
 ```
 
 `comparison` is computed fresh on every request (research D8), by loading the source run (`source_run_id`) and
-both runs' turns; `null` for a non-replay run. `multi_turn_caption` is the pinned FR-041 string when the source
-has more than one recorded message, else `null` — a static function of the source's own message count, computed
-server-side so the UI only displays it (FR-042).
+both runs' turns; `null` for a non-replay run, while a replay is still `in_progress` (one entry of a batch still
+running, opened from another request), and for a finished replay row with no recorded outcome at all (defensive;
+unreachable through any real code path, but the API must not crash on it either — round-2 review R1/R3): a
+comparison is only ever built for a replay that already has one. `multi_turn_caption` is the pinned FR-041 string
+when the source has more than one recorded message, else `null` — a static function of the source's own message
+count, computed server-side so the UI only displays it (FR-042).
 
 ## `GET /api/config`
 
