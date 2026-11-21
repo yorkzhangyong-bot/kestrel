@@ -31,6 +31,8 @@ def claim_adaptive_source(store, target_id: int, *, turns: int = 2) -> int:
 
 
 def test_a_batch_processes_only_the_replayable_runs_oldest_first(make_client, model_transport):
+    # FR-030: exactly one entry per processed source, naming both runs, the family, both verdicts and evidence
+    # kinds, and the computed outcome; counts sum to the entry count.
     model_transport.verdict = "failed"
     client = make_client(transport=model_transport.transport, judge=real_judge(model_transport))
     store = client.app.state.store

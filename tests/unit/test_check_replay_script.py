@@ -71,7 +71,7 @@ def run_check(transport, *, target_id=1, timeout=None) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
-# ---- exit codes (contracts/ci-script.md's table) ----
+# ---- exit codes (contracts/ci-script.md's table; FR-036: 1 wins, then 2 for anything short of it, else 0) ----
 
 
 def test_a_complete_all_fixed_batch_exits_0():

@@ -220,3 +220,77 @@ same commit. Before opening any implementation PR, review this file and add anyt
   derived from it. Migration tests that pin "the current schema version" as a literal string needed only the digit
   bumped (`8` → `9`) wherever one already existed; the new `tests/unit/test_store_migration_v9.py` follows the
   `test_store_migration_v<N>.py` convention each version bump has used since v3.
+- 2026-11-19 — **Regression replay (012).** A replay re-sends a past, succeeded run's own recorded attacker
+  message(s) verbatim, in order, with **no attacker-model call**, scores each reply canary-then-judge exactly as
+  a live run does, and records one outcome against the source: `fixed` / `still_vulnerable` / `inconclusive`
+  (`replay.py::compute_outcome`). **Never read a replay's outcome off the run's own aggregate `verdict`** — a
+  later turn's clean `"failed"` can silently overwrite an earlier turn's unresolved `"unclear"` (a `JudgeError`
+  or "no judge configured" turn leaves `last_verdict` untouched and the graph keeps going), so `compute_outcome`
+  is fed the *sequence of per-turn results*, captured live inside the replay's own `record_node` as it runs, never
+  reconstructed from stored `run_turns` rows afterward. For a **multi-message** source, `fixed` additionally
+  requires the source's own **winning turn** (`runs.succeeded_turn`) to have itself been sent and judged
+  `"failed"` — gated on `recorded_total > 1`, never on `winning_turn is None`, since a single-turn-mode source's
+  `succeeded_turn` is always null by schema (not by omission); getting that gate backwards scores every
+  single-turn source `inconclusive` forever. **Replayability and its seven reason strings**
+  (`replay.check_replayable`/`compute_replay_status`) depend on the run *and its target's current*
+  permission/terms/other-run-in-progress state, never the run's own fields alone — computed once per run in
+  `api/main.py::run_summary` and reused verbatim by the single-replay endpoint's own 409s, so the two can never
+  disagree. **No experience-store access, structurally**: `replay.py` and the new `run_replay_adaptive` import
+  nothing from `kestrel.experience` at all (an AST-based test parses the source and checks for the actual import
+  node, not a text search — a docstring that itself says "never imports kestrel.experience" would false-positive
+  a substring check). The batch cap is `KESTREL_REPLAY_BATCH_MAX_RUNS` (default 20, `Settings.replay_batch_max_runs`,
+  reported on `GET /api/config` as `replay.max_batch_runs`); a batch that stops partway through (a `RunInProgress`
+  collision, or one entry's own `ReplayFailed`) is still a **200** with `complete: false` and a `stop_reason`,
+  never a 409 — the precondition checks (permission, terms, the cap, a target-wide in-progress check with
+  `excluding_run_id=-1`, since there is no "this run" for a batch request) only run *before* the first entry is
+  claimed. `scripts/check_replay.py` is a standalone `httpx` + stdlib client (no `kestrel`/`ui` import): exit `1`
+  ("still vulnerable") wins over everything regardless of completeness; exit `0` needs both a *completed* batch
+  and every entry fixed; `argparse`'s own exit-2-on-bad-args must be remapped to this feature's `3`, or a missing
+  `--target-id` would exit with the wrong code. **The graph lift** (`judge_node`/`send_node`/`evidence_node`/
+  `decide_node` lifted out of `run_adaptive` to module-level `_judge_turn`/`_send_turn`/`_check_evidence`/
+  `_decide_next`, shared with the new `run_replay_adaptive`) is mechanical and behaviour-preserving — proved by
+  running the full offline suite before and after and diffing the pass/fail set, not by re-reading the diff.
+  `attacker_node`/`record_node` are deliberately **not** shared (a model call vs. a list lookup); both the live
+  and replay versions index `source_turns`/conversation state at `turns_used + 1 - 1`, and a replay's own
+  `attacker_node` and `record_node` must use the *same* index for the message lookup and the provenance copy, or
+  turn *N*'s message ships with turn *N±1*'s attacker-prompt version. **Schema v10** (`mode` CHECK widened to
+  `'replay'`, plus `source_run_id`/`replay_outcome`) is a *second* rebuild of `runs`, by the same procedure v9
+  used — but `RUNS_COLUMNS_SQL` is the *one* shared definition behind the fresh `CREATE TABLE`, the v9 rebuild and
+  the v10 rebuild, so a database jumping straight from pre-v9 to v10 in one `_migrate` call gets the v10 shape
+  directly from the v9-rebuild step (since that step's `CREATE TABLE runs_new` already uses the current,
+  v10-shaped `RUNS_COLUMNS_SQL`) and the v10 rebuild step simply no-ops (its own guard checks for `source_run_id`
+  in `PRAGMA table_info(runs)`, already present) — verified empirically, not just reasoned about, since getting
+  this wrong would silently skip the `sqlite_sequence` fix below for that one migration path. **The
+  `sqlite_sequence` fix repeats, because the hazard repeats**: any rebuild that drops and renames `runs` again
+  loses its `sqlite_sequence` row the same way v9's first rebuild would have (if `runs` had never had one before);
+  the fix is the same shape every time — read the old watermark before the drop, restore
+  `max(old watermark, highest id actually copied)` in the same transaction as the rename — and `test_store_migration_v10.py`
+  proves it the same way v9's test did: seed a database, delete its highest-numbered runs so the sequence sits
+  above the highest surviving id, migrate, insert one more, assert the new id is above the old sequence. An
+  interrupted replay (`close_interrupted_runs`) must also close with `replay_outcome = 'inconclusive'`, never
+  left null — the fix is one `CASE WHEN mode = 'replay' THEN 'inconclusive' ELSE replay_outcome END`, a no-op for
+  every non-replay row. **Events**: `run.start` gains `source_run_id`, `run.end` gains `replay_outcome` — both
+  *omitted entirely* when not applicable (never `"replay_outcome": null`), unlike `verdict`/`succeeded_turn`,
+  which the catalogue already marks `| null` and are always present; `run_finished(run)` has to read
+  `getattr(run, "replay_outcome", None)` into the stashed outcome dict itself, or `_run_end`'s own `_present(...)`
+  filter has nothing to omit. `replay.batch.start`/`.end` are unscoped (no single `run_id` for a whole batch,
+  mirroring `events.connection_test`); a batch's own end line never carries an `error` field for either stop
+  reason — a collision is an expected stop, and one entry's own failure belongs to that entry's already-closed,
+  already-logged run, never to the batch request. **UI**: the Replay button, its disabled reason/advisory, the
+  outcome line and the comparison table must render ahead of `_render_finding`'s own failure-step early return
+  (`app.py`, `if run.get("failure_step"): ... return`), or a run that failed to send would never show them at
+  all, even disabled — placed-after-the-return is an easy, silent mistake since every *other* line in that
+  function already assumes it survived the return. A Streamlit button rendered from both the "just-ran" result
+  card and an "opened" run list entry in the same script pass needs a key namespaced by which card it is
+  (`f"replay_button_{key_prefix}_{run['id']}"`), or a `DuplicateWidgetID` fires the moment both render at once.
+  A pandas column that mixes `bool` and `str` values (a comparison table's "Hard evidence" row next to its
+  "Verdict" row, built as one dict-of-rows-to-dataframe) fails Arrow serialisation inside `st.dataframe` with an
+  opaque `ArrowTypeError`; every cell must be stringified first. **Test-building gotcha**: building an adaptive
+  *source* run through the real API with real model doubles (to get authentic token/cost fields on its own log
+  lines) makes it impractical to control exactly which turn it succeeds on (`ModelTransport`'s judge verdict is
+  one flat attribute shared by every call in a test, not sequenceable per call without replacing the whole
+  transport) — building the source directly via `store.claim_run`/`add_turn`/`finish_run` and reserving the real
+  API/model doubles for the *replay* side (which does need authentic log lines) sidesteps this entirely. A test
+  fixture that claims a second `in_progress` row on a target whose first one is still open hits the same
+  `uq_runs_active` constraint `RunInProgress` is built on — a seed fixture needs every prior claim finished before
+  claiming the next.

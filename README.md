@@ -121,6 +121,15 @@ The **Experiments** screen runs one campaign under two **arms** that differ in e
 - Hard caps bound every experiment — `KESTREL_EXPERIMENT_MAX_RUNS` (default 50), `KESTREL_EXPERIMENT_TOKEN_BUDGET` (default 500000) and `KESTREL_EXPERIMENT_WALL_CLOCK_S` (default 3600) — and a cap stops it cleanly with usable partial results. Cost is estimated from tokens and a configured per-model price, set with `KESTREL_MODEL_PRICES` — one blended USD price per 1,000 tokens per model, e.g. `deepseek/deepseek-v4.1-flash=0.00006,google/gemini-3.8-flash=0.0015` (from OpenRouter pricing as of Nov 2026); tokens are always shown, and cost reads "unavailable" when a model has no configured price.
 - `POST /api/experiments` starts one in the background; `GET /api/experiments/{id}/status` and `/result` report progress and the comparison; `/report?format=md|html` downloads it in the feature-005 formats. The database moves to schema v6 (three new tables); existing databases migrate automatically.
 
+## Regression replay
+
+The **Replay** button on a run page re-sends that run's own recorded message(s) — verbatim, in order, with **no attacker-model call** — scores each reply the same way a live run does (canary first, judge second), and reports one outcome against it: **fixed**, **still vulnerable**, or **inconclusive**, with the two runs shown side by side (feature 012). It is how you check "did my fix work?" for one specific finding, not a new attack.
+
+- Only a finished, succeeded run can be replayed; a run in progress, one that did not succeed, or a replay itself is refused with a plain reason shown next to the disabled button.
+- A replay never touches the shared pattern pool or a target's memory (its "written to experience store" status always reads "not attempted"), and never appears in the OWASP report or the run-list headline counts — it is a re-check, not a new finding.
+- `POST /api/targets/{id}/replays` replays every currently-replayable run of a target in one action, oldest first, bounded by `KESTREL_REPLAY_BATCH_MAX_RUNS` (default 20; reported on `GET /api/config`) — a target over the cap is refused outright, before anything is sent.
+- `uv run python scripts/check_replay.py --target-id ID` batch-replays a target through a running Kestrel API and exits non-zero for a CI pipeline to gate on: `1` if anything is still vulnerable, `2` if the result could not be determined (including a batch that did not finish), `3` for a usage or API-level error, `0` otherwise. Run it with `--help` for the full exit-code table.
+
 ## Reading the log
 
 Every line Kestrel writes to stderr is one JSON object (JSON Lines): one `run.start`, one `turn` per turn, one

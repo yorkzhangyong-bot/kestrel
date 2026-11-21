@@ -172,6 +172,7 @@ def test_no_attacker_exists_and_the_judge_sees_no_conversation_argument(store, t
 
 
 def test_judge_provenance_reflects_the_currently_configured_judge_not_the_sources(store, target):
+    # FR-022: a replay records no attacker model, and the judge/judge-prompt provenance active at replay time.
     source = make_single_turn_source(store, target)
     assert source.judge_model is None   # the source succeeded by canary: no judge was ever consulted
     run = asyncio.run(execute_replay(store, source=source, source_turns=[], resolved=RESOLVED, mode="local",
@@ -218,6 +219,7 @@ def test_a_replay_that_succeeds_early_sends_no_further_recorded_messages(store, 
 
 
 def test_a_lower_current_turn_limit_stops_the_replay_short_and_is_inconclusive_never_fixed(store, target):
+    # FR-011: a replay's turn count never exceeds the currently configured adaptive turn limit.
     source, source_turns = make_adaptive_source(store, target, turns=3)
 
     replay = asyncio.run(execute_replay(
@@ -230,6 +232,8 @@ def test_a_lower_current_turn_limit_stops_the_replay_short_and_is_inconclusive_n
 
 
 def test_each_resent_turns_provenance_is_copied_from_its_own_source_turn_not_its_neighbours(store, target):
+    # FR-023: each sent message is recorded as its own turn, with attacker-prompt provenance copied from the
+    # source's matching turn.
     source, _ = make_adaptive_source(store, target, turns=3)
     # Turn 2 and turn 3 get distinct attacker-prompt versions by hand, so an off-by-one between the message
     # lookup (attacker_node) and the provenance copy (record_node) would be caught.

@@ -791,7 +791,7 @@ printed.
       prompt version recorded, zero attacker-model calls, zero experience-store writes (`SpyExperienceStore`), and
       the 010 lines present with no secret (`hs_target.key`) anywhere on the stream; a second replay of the new
       replay run itself is refused with `replay_of_replay` naming the original source (012/SC-010).
-- [ ] T035 [P] Documentation: `docs/technical-design.md` (a Regression replay section: schema v10 and the rebuild
+- [X] T035 [P] Documentation: `docs/technical-design.md` (a Regression replay section: schema v10 and the rebuild
       procedure including the `sqlite_sequence` fix, `replay.py`, the shared-node refactor of `attack/graph.py`
       (research D14), `run_replay_adaptive`, the `compute_outcome` rule and why it reads every turn rather than
       the run's final verdict, the interrupted/crashed-replay guarantee, the batch cap, the incomplete-batch
@@ -813,7 +813,7 @@ printed.
       `tests/integration/test_provenance_migration.py` (line 39) — each asserts `SCHEMA_VERSION == "9"` or
       `version(...) == "9"` as "the current version"; change the literal and its inline comment (e.g. "bumped to
       10 for feature 012") in each, leaving every other assertion in those files untouched (012/FR-020).
-- [ ] T037 Write `specs/012-regression-replay/traceability.md` (the id → tests table in the feature-010/011
+- [X] T037 Write `specs/012-regression-replay/traceability.md` (the id → tests table in the feature-010/011
       shape). FR-046 (no attack text anywhere in this feature's own code/tests/fixtures/commits), FR-048 (no new
       dependency), FR-050 (the roadmap edit, an implementation-PR process step) and SC-009 (dependencies
       unchanged) are justified there rather than given a dedicated 012-scoped test, naming all three explicitly:
