@@ -126,6 +126,13 @@ def check(target_id: int, *, timeout: float | None = None, client: httpx.Client 
             print(_entry_line(entry, is_crashed=index == crashed_index), file=out)
         print(_summary_line(result), file=out)
         return _exit_code(result)
+    except Exception as error:
+        # Anything unexpected - a pre-012 API with no "replay" config key, a non-JSON or malformed 2xx body, an
+        # invalid KESTREL_API_URL (httpx.InvalidURL is not an httpx.HTTPError, so it would otherwise slip past
+        # every catch above) - must exit 3, never Python's default 1, which this script reserves for "still
+        # vulnerable" (FR-036). The class name only: never the response body or the URL.
+        print(f"Unexpected error: {type(error).__name__}.", file=err)
+        return 3
     finally:
         if owns_client:
             client.close()

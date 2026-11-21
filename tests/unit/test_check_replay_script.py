@@ -133,6 +133,40 @@ def test_a_transport_failure_exits_3():
     assert code == 3 and err.strip()
 
 
+# ---- unexpected errors exit 3, never Python's default 1 ("still vulnerable", review item 4) ----
+
+
+def test_a_pre_012_api_with_no_replay_config_key_exits_3():
+    config = {}   # a pre-012 API's GET /api/config has no "replay" key at all
+    code, _, err = run_check(transport_for(config=config))
+    assert code == 3 and err.strip()
+    assert "KeyError" in err
+
+
+def test_a_non_json_batch_body_exits_3():
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/config":
+            return httpx.Response(200, json=CONFIG)
+        return httpx.Response(200, content=b"not json")
+    code, _, err = run_check(httpx.MockTransport(handle))
+    assert code == 3 and err.strip()
+
+
+def test_a_malformed_2xx_batch_body_exits_3():
+    code, _, err = run_check(transport_for(batch_response=[]))   # valid JSON, but not the expected shape
+    assert code == 3 and err.strip()
+    assert "TypeError" in err
+
+
+def test_a_bad_kestrel_api_url_exits_3(monkeypatch):
+    """httpx.InvalidURL (an invalid port) is not an httpx.HTTPError, so it would otherwise fall through every
+    existing catch and exit with Python's default 1 - the "still vulnerable" code."""
+    monkeypatch.setenv("KESTREL_API_URL", "http://host:notaport")
+    code, _, err = run_check(httpx.MockTransport(lambda request: httpx.Response(200, json=CONFIG)))
+    assert code == 3 and err.strip()
+    assert "InvalidURL" in err
+
+
 @pytest.mark.parametrize("argv", [[], ["--target-id", "abc"]])
 def test_a_missing_or_non_integer_target_id_exits_3(argv):
     assert check_replay.main(argv) == 3
