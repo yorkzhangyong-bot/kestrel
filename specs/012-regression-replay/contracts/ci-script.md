@@ -76,7 +76,7 @@ $ echo $?
 ```text
 $ uv run python scripts/check_replay.py --target-id 3
 run 12 -> replay 41: direct_injection: fixed (source: judge, replay: judge)
-batch stopped early (run_in_progress): 1 of 3 replayed, 2 not replayed (runs 19, 23)
+batch stopped early (run_in_progress): 1 of 3 replayed, 2 not replayed (runs 19, 23) - 1 fixed, 0 still_vulnerable, 0 inconclusive
 $ echo $?
 2
 ```
@@ -85,10 +85,14 @@ $ echo $?
 $ uv run python scripts/check_replay.py --target-id 3
 run 12 -> replay 41: direct_injection: fixed (source: canary, replay: judge)
 run 15 -> replay 43: system_prompt_leak: inconclusive (source: judge, replay: none)
-batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23)
+batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23) - 1 fixed, 0 still_vulnerable, 1 inconclusive
 $ echo $?
 2
 ```
+
+(spec-change, review item 6: the incomplete-batch summary line names the three outcome counts too, matching
+FR-035's "one summary line naming the outcome counts and the batch's completeness" — not just how many entries
+were, or were not, replayed.)
 
 ```text
 $ uv run python scripts/check_replay.py --target-id 9

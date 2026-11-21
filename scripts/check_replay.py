@@ -75,8 +75,11 @@ def _summary_line(result: dict[str, Any]) -> str:
                f"still_vulnerable, {counts['inconclusive']} inconclusive")
     total = len(entries) + len(not_replayed)
     runs = ", ".join(str(i) for i in not_replayed)
+    # FR-035: a summary line names the outcome counts and the completeness, even when stopped early - not just
+    # how many were (not) replayed (review item 6).
     return (f"batch stopped early ({result['stop_reason']}): {len(entries)} of {total} replayed, "
-           f"{len(not_replayed)} not replayed (runs {runs})")
+           f"{len(not_replayed)} not replayed (runs {runs}) - {counts['fixed']} fixed, "
+           f"{counts['still_vulnerable']} still_vulnerable, {counts['inconclusive']} inconclusive")
 
 
 def _exit_code(result: dict[str, Any]) -> int:

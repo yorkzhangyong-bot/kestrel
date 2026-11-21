@@ -236,7 +236,17 @@ def test_the_crashed_entrys_own_replay_evidence_prints_none():
     assert code == 2
     assert "replay: none" in out
     assert "run 15 -> replay 43: system_prompt_leak: inconclusive (source: judge, replay: none)" in out
-    assert "batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23)" in out
+    assert ("batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23) - "
+           "1 fixed, 0 still_vulnerable, 1 inconclusive") in out
+
+
+def test_an_incomplete_batch_summary_names_the_outcome_counts_too():  # FR-035 (review item 6)
+    result = batch_result(entries=[entry(12, 41, "direct_injection", "fixed"),
+                                   entry(15, 42, "system_prompt_leak", "still_vulnerable")],
+                          complete=False, stop_reason="run_in_progress", not_replayed=[19])
+    _, out, _ = run_check(transport_for(batch_response=result))
+    assert ("batch stopped early (run_in_progress): 2 of 3 replayed, 1 not replayed (runs 19) - "
+           "1 fixed, 1 still_vulnerable, 0 inconclusive") in out
 
 
 def test_a_before_claim_failure_never_marks_the_prior_clean_entry_as_crashed():
