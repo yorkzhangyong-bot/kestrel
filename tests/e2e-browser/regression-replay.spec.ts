@@ -262,7 +262,7 @@ test('4. resends the recorded messages verbatim with no attacker call or memory 
   }
 
   const logged = JSON.stringify(log.lines);
-  for (const text of [recorded[0], SAFE_REPLY, source.reply_text ?? '', CANARY, secret, target.url]) {
+  for (const text of [recorded[0], SAFE_REPLY, source.turns[0].reply_text ?? '', CANARY, secret, target.url]) {
     expect(text.length, 'the forbidden text must be non-empty to prove anything').toBeGreaterThan(0);
     expect(logged).not.toContain(text);
   }
