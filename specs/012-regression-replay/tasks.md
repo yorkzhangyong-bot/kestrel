@@ -51,7 +51,7 @@ FR-048 already is.
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Document the new setting in `.env.example` beside the other `KESTREL_EXPERIENCE_*`/`KESTREL_EXPERIMENT_*`
+- [X] T001 [P] Document the new setting in `.env.example` beside the other `KESTREL_EXPERIENCE_*`/`KESTREL_EXPERIMENT_*`
       variables: `KESTREL_REPLAY_BATCH_MAX_RUNS=20` ("the most replayable runs a single batch replay will process
       for one target; a target with more than this many refuses the whole batch before sending anything"), noting
       it is reported on `GET /api/config` (012/FR-031).
@@ -63,7 +63,7 @@ FR-048 already is.
 **⚠️ Blocks every user story**: schema v10, the settings/catalogue fields every later line and endpoint needs, and
 the two pure functions (`check_replayable`, `compute_outcome`) every story's eligibility and outcome logic shares.
 
-- [ ] T002 [P] Unit test `tests/unit/test_store_migration_v10.py` (`FEATURE = "012"`), following the
+- [X] T002 [P] Unit test `tests/unit/test_store_migration_v10.py` (`FEATURE = "012"`), following the
       `test_store_migration_v9.py` convention: build a hand-written schema-9-shaped database (as that file already
       does for schema 8→9), run `TargetStore.__init__`/`_migrate` against it, and assert: the `meta.schema_version`
       row reads `"10"`; `PRAGMA foreign_key_check` returns empty immediately after; a pre-existing run row has
@@ -84,7 +84,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       `store.close_interrupted_runs()`, and assert the finished row has `replay_outcome == 'inconclusive'`
       (never `NULL`); a same-shaped `in_progress` **non-replay** row's `replay_outcome` stays `NULL` after the
       same sweep (012/FR-012, FR-015, FR-020).
-- [ ] T003 [P] Unit test `tests/unit/test_replay_eligibility.py` (`FEATURE = "012"`): `check_replayable` over
+- [X] T003 [P] Unit test `tests/unit/test_replay_eligibility.py` (`FEATURE = "012"`): `check_replayable` over
       hand-built `Run` objects — a `mode="replay"` run raises `ReplayOfReplay` carrying its own `source_run_id`; an
       `in_progress` run raises `NotReplayable("in_progress")`; a finished run with `verdict` `"failed"`,
       `"unclear"` or `None` (including one with `failure_step` set — the send-failed shape) raises
@@ -113,7 +113,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       "This source recorded more turns than the current adaptive limit; the replay can end at best still
       vulnerable or inconclusive.")` — the exact advisory, independent of `blocked_reason` (012/FR-004, FR-005,
       FR-006, FR-040, FR-042).
-- [ ] T004 [P] Unit test `tests/unit/test_replay_outcome.py` (`FEATURE = "012"`):
+- [X] T004 [P] Unit test `tests/unit/test_replay_outcome.py` (`FEATURE = "012"`):
       `compute_outcome(turn_results: list[str | None], recorded_total: int, winning_turn: int | None)` —
       `turn_results` containing a `"succeeded"` anywhere is always `"still_vulnerable"`, even with
       `len(turn_results) < recorded_total` (proving "stop at first success" is not misread as "cut short");
@@ -146,7 +146,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       `"failed"` → `"fixed"`, exercising `compute_outcome`'s position-indexing logic on an input a real source
       cannot actually have (012/FR-012, FR-013, FR-014, FR-015, FR-016,
       012/SC-002).
-- [ ] T005 [P] Extend `tests/unit/test_settings_*.py` (or a new `tests/unit/test_settings_replay.py`,
+- [X] T005 [P] Extend `tests/unit/test_settings_*.py` (or a new `tests/unit/test_settings_replay.py`,
       `FEATURE = "012"`): with `KESTREL_REPLAY_BATCH_MAX_RUNS` unset, `Settings.replay_batch_max_runs == 20`; `0`,
       `-1` and `abc` each raise `SettingsError` naming the variable; `5` parses to `5`. Extend
       `tests/integration/test_api_base.py`: `GET /api/config` reports `replay.max_batch_runs == 20` by default and
@@ -157,7 +157,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       adaptive limit alone**: a further case with `KESTREL_ADAPTIVE_TIME_LIMIT_S` set *below* 90 (the single-turn
       deadline) asserts `replay.per_replay_time_limit_s` stays `90`, never dropping to the lowered adaptive value
       (012/FR-031).
-- [ ] T006 [P] Extend `tests/unit/test_events.py` (`FEATURE = "012"` on the new cases, or scoped tokens): emitting
+- [X] T006 [P] Extend `tests/unit/test_events.py` (`FEATURE = "012"` on the new cases, or scoped tokens): emitting
       `"run.start"` with `source_run_id=12` renders that field with no `log.unknown_field` warning, and **omits
       the key entirely** when not given (never `"source_run_id": null`); emitting `"run.end"` with
       `replay_outcome="fixed"` renders it, and **omits the key entirely** when not given — **not
@@ -170,7 +170,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       `stop_reason`/`error` fields; `complete=False, stop_reason="run_in_progress"` adds `stop_reason` and keeps
       `complete` false; `error="RunInProgress"` adds it and raises the record to ERROR level (012/FR-043, FR-044,
       FR-045).
-- [ ] T007 Implement schema v10 in `src/kestrel/store.py` per `data-model.md`: `SCHEMA_VERSION = "10"`;
+- [X] T007 Implement schema v10 in `src/kestrel/store.py` per `data-model.md`: `SCHEMA_VERSION = "10"`;
       `RUNS_COLUMNS_SQL`'s `mode` CHECK widens to `('single_turn', 'adaptive', 'replay')`, plus
       `source_run_id INTEGER REFERENCES runs(id) ON DELETE CASCADE` and
       `replay_outcome TEXT CHECK (replay_outcome IS NULL OR replay_outcome IN ('fixed', 'still_vulnerable',
@@ -192,7 +192,7 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       with an outcome**: its `UPDATE` gains `replay_outcome = CASE WHEN mode = 'replay' THEN 'inconclusive' ELSE
       replay_outcome END` (a no-op for a non-replay row, whose `replay_outcome` is already `NULL`) (012/FR-020,
       FR-012, FR-015).
-- [ ] T008 Implement `src/kestrel/replay.py` (new module): `NotReplayable(reason: str)`,
+- [X] T008 Implement `src/kestrel/replay.py` (new module): `NotReplayable(reason: str)`,
       `ReplayOfReplay(source_run_id: int)`, `check_replayable(run: Run) -> None` per the truth table in
       `data-model.md`; `TargetStore.list_replayable_runs(target_id: int) -> list[Run]` in `store.py` per the SQL in
       `data-model.md`. `REPLAY_BLOCKED_REASONS`, `REPLAY_ADVISORY_OVER_TURN_LIMIT`,
@@ -205,18 +205,18 @@ the two pure functions (`check_replayable`, `compute_outcome`) every story's eli
       "replay"`, per `data-model.md`) here, in the foundational phase, since T022 (US1, API schemas) already
       depends on it existing before T027 (US2) is reached; T027 only wires the UI to it (012/FR-004, FR-005,
       FR-006, FR-027, FR-040, FR-042).
-- [ ] T009 Implement `compute_outcome(turn_results: list[str | None], recorded_total: int,
+- [X] T009 Implement `compute_outcome(turn_results: list[str | None], recorded_total: int,
       winning_turn: int | None) -> str` in `src/kestrel/replay.py` per `data-model.md`'s truth table: per-turn
       results, never a run's aggregate `verdict`, and — for `recorded_total > 1` — the source's own winning turn
       (`winning_turn`, 1-based, `source.succeeded_turn`) must itself have been sent and judged `"failed"` for the
       outcome to be `"fixed"` (012/FR-012, FR-013, FR-014, FR-015, FR-016).
-- [ ] T010 [P] Implement the setting and its surface: `DEFAULT_REPLAY_BATCH_MAX_RUNS = 20` and
+- [X] T010 [P] Implement the setting and its surface: `DEFAULT_REPLAY_BATCH_MAX_RUNS = 20` and
       `Settings.replay_batch_max_runs: int` (parsed by the existing `positive_int` helper) in `src/kestrel/settings.py`;
       `ReplayOut(max_batch_runs: int, per_replay_time_limit_s: int)` and `ConfigOut.replay: ReplayOut` in
       `src/kestrel/api/schemas.py`; filled in `get_config` in `src/kestrel/api/main.py`, with
       `per_replay_time_limit_s = max(settings.adaptive_time_limit_s, TOTAL_DEADLINE_S)` (imported from
       `kestrel.runs`) (012/FR-031).
-- [ ] T011 Implement the catalogue and helpers in `src/kestrel/events.py` per `contracts/log-records-delta.md`:
+- [X] T011 Implement the catalogue and helpers in `src/kestrel/events.py` per `contracts/log-records-delta.md`:
       `CATALOGUE["run.start"]` gains `source_run_id` (wired through the existing `_present(...)` filtering
       `run_started` already uses for every other optional field, so it is omitted, never `null`, when absent);
       `CATALOGUE["run.end"]` gains `replay_outcome`, included in `_run_end`'s `fields` dict **only when present**
@@ -256,7 +256,7 @@ and the comparison is readable afterward.
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Unit test `tests/unit/test_replay_comparison.py` (`FEATURE = "012"`): `build_comparison` for
+- [X] T012 [P] [US1] Unit test `tests/unit/test_replay_comparison.py` (`FEATURE = "012"`): `build_comparison` for
       a single-turn pair (exactly one synthetic `TurnComparison` per run, built from the runs' own top-level
       fields, no `run_turns` involved); for an adaptive pair where the source recorded more turns than the replay
       sent, the unsent positions are `sent=False, replay_verdict=None`; for a pair whose **last** sent turn ended
@@ -268,7 +268,7 @@ and the comparison is readable afterward.
       `judge_verdict`; `multi_turn_caption` is exactly the pinned FR-041 string
       (**"A multi-turn replay re-tests the recorded messages, not an adaptive attack."**) for a pair built from
       more than one recorded message, and `None` for a single-turn pair (012/FR-017, FR-018, FR-019, FR-041).
-- [ ] T013 [P] [US1] Integration test `tests/integration/test_replay_run.py`, the single-turn part: over
+- [X] T013 [P] [US1] Integration test `tests/integration/test_replay_run.py`, the single-turn part: over
       `make_client` with a `ModelTransport` and a stub target, run one single-turn attack to a succeeded verdict,
       then replay it under four target behaviours (now failing the attack, now still falling for it, now failing
       to answer, and the sender raising an unexpected exception mid-send)
@@ -290,7 +290,7 @@ and the comparison is readable afterward.
       `reply_text` has it masked, not the raw value — a lift that silently dropped `_send_turn`'s own masking
       would fail only this assertion, never one that goes through `run_test` (012/FR-001, FR-002, FR-003,
       FR-007, FR-008, FR-009, FR-012, FR-015, FR-020, FR-021, FR-022, FR-024, 012/SC-001, SC-002).
-- [ ] T014 [US1] Integration test `tests/integration/test_replay_run.py`, the adaptive part: run one adaptive
+- [X] T014 [US1] Integration test `tests/integration/test_replay_run.py`, the adaptive part: run one adaptive
       attack to a succeeded verdict with at least 3 recorded turns, then replay it and assert: each resent message
       equals the source's `run_turns[i].attacker_message` verbatim, in order; zero attacker-model calls across
       every turn; each turn's judge call carries the **replay's own** conversation so far — change the stub
@@ -337,7 +337,7 @@ and the comparison is readable afterward.
       `None`) and carries no caption (012/FR-001, FR-002, FR-003, FR-007, FR-008,
       FR-009, FR-010, FR-011, FR-012, FR-014, FR-015, FR-020, FR-021, FR-022, FR-023, FR-024, FR-041, 012/SC-001,
       SC-002).
-- [ ] T015 [P] [US1] Integration test `tests/integration/test_replay_api.py`: `POST /api/runs/{id}/replay` on an
+- [X] T015 [P] [US1] Integration test `tests/integration/test_replay_api.py`: `POST /api/runs/{id}/replay` on an
       eligible run → **201** `RunDetail` with `comparison` present; on an `in_progress` run → **409**
       `not_replayable` with message `"A run still in progress can't be replayed."`; on a `failed`/`unclear` run,
       and separately on one whose send failed (`failure_step` set, `verdict` `None`) → **409** `not_replayable`
@@ -364,7 +364,7 @@ and the comparison is readable afterward.
       multi-message source carries `comparison.multi_turn_caption` equal to the pinned FR-041 string, and `null`
       for a replay of a single-message source (012/FR-004, FR-005, FR-006, FR-017, FR-027, FR-038, FR-039,
       FR-040, FR-041, FR-042, 012/SC-005).
-- [ ] T016 [P] [US1] Integration test `tests/integration/test_events_replay.py` (`FEATURE = "012"`), the
+- [X] T016 [P] [US1] Integration test `tests/integration/test_events_replay.py` (`FEATURE = "012"`), the
       single-replay part: through the `json_log` fixture, replay a run and assert: `run.start` carries
       `source_run_id` and `mode: "replay"`; every `turn` line omits `attacker_model`/`attacker_prompt` (no
       `attacker_generated` turn at all, including turn 1 — different from a normal adaptive run); zero
@@ -382,7 +382,7 @@ and the comparison is readable afterward.
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] **Restructure `attack/graph.py`'s per-turn nodes so a second graph can share them
+- [X] T017 [US1] **Restructure `attack/graph.py`'s per-turn nodes so a second graph can share them
       (`judge_node`/`send_node`/`evidence_node`/`decide_node` are closures defined inside
       `run_adaptive` today, not separately callable by a sibling function without either duplicating the body or
       lifting it out).** Lift all four to module-level
@@ -400,7 +400,7 @@ and the comparison is readable afterward.
       **full offline suite** (`uv run pytest tests/unit tests/integration`) before the lift (baseline) and after
       it, and confirm the two runs report the same pass/fail set — the regression gate for this extraction
       (012/FR-049; research D14).
-- [ ] T018 [US1] Implement `run_replay_adaptive(...)` in `src/kestrel/attack/graph.py`, wired to T017's shared
+- [X] T018 [US1] Implement `run_replay_adaptive(...)` in `src/kestrel/attack/graph.py`, wired to T017's shared
       functions, with its **own** `attacker_node`/`record_node` (not shared — a model call vs. a list lookup;
       run-wide-constant provenance vs. per-turn copied provenance): both compute `turn = state["turns_used"] + 1`
       exactly as the live `attacker_node` already does, and index `source_turns[turn - 1]` **consistently** for
@@ -429,7 +429,7 @@ and the comparison is readable afterward.
       otherwise create — research D14) passed to `store.finish_run(..., replay_outcome=replay_outcome,
       judge_prompt_id=..., judge_prompt_version=...)` (012/FR-001, FR-002, FR-007, FR-008, FR-009, FR-010, FR-011,
       FR-012, FR-014, FR-015, FR-020, FR-022, FR-023).
-- [ ] T019 [US1] Implement `execute_replay(store, *, source, source_turns, resolved, mode, judge, ...)` in
+- [X] T019 [US1] Implement `execute_replay(store, *, source, source_turns, resolved, mode, judge, ...)` in
       `src/kestrel/replay.py`: for `source.mode == "single_turn"`, a body shaped like `runs.py::execute_run` (one
       send of `source.prompt_text`, `match_canary`, then `judge.judge(attack=.., reply=..)` with **no**
       `conversation` argument, only when no canary matched and a judge is configured, FR-008), building its own
@@ -457,17 +457,17 @@ and the comparison is readable afterward.
       attacker_model=None, use_prior_experience=False, ...)` and emits `events.run_started(..., mode="replay",
       source_run_id=source.id, ...)` (012/FR-001, FR-002, FR-003, FR-007, FR-008, FR-009, FR-012, FR-015, FR-020,
       FR-021, FR-022, FR-023, FR-024).
-- [ ] T020 [US1] Implement `build_comparison(source, source_turns, replay, replay_turns) -> Comparison` in
+- [X] T020 [US1] Implement `build_comparison(source, source_turns, replay, replay_turns) -> Comparison` in
       `src/kestrel/replay.py` per `data-model.md`'s per-turn walk and the terminal-turn derivation of research D7;
       the single-turn synthetic-`TurnComparison` case; `multi_turn_caption` set to the pinned FR-041 string
       (**"A multi-turn replay re-tests the recorded messages, not an adaptive attack."**) when
       `len(source_turns) > 1`, else `None` (012/FR-017, FR-018, FR-019, FR-041).
-- [ ] T021 [US1] Wire `events.run_started`/`run_finished` (or `_run_end`) in `src/kestrel/events.py` to accept and
+- [X] T021 [US1] Wire `events.run_started`/`run_finished` (or `_run_end`) in `src/kestrel/events.py` to accept and
       pass through `source_run_id` (on start, via the existing `_present(...)` filter) and `replay_outcome` (on
       finish, read off `_run_end`'s local `outcome = ctx.outcome or {}` and included only when present — T011;
       never `ctx.outcome.get(...)` directly, since `ctx.outcome` is `None` when a
       run raises before finishing) per `contracts/log-records-delta.md` (012/FR-043).
-- [ ] T022 [US1] Implement the API in `src/kestrel/api/main.py`: `POST /api/runs/{run_id}/replay` (**201** on
+- [X] T022 [US1] Implement the API in `src/kestrel/api/main.py`: `POST /api/runs/{run_id}/replay` (**201** on
       success; load the run, `replay.check_replayable`, the existing permission/terms/`run_in_progress`
       precondition checks against the run's target, `events.run_scope()`, `execute_replay` — **no** `write_back`
       call; its own refusal reuses the exact `compute_replay_status`/`REPLAY_BLOCKED_REASONS` strings, T008, so
@@ -486,7 +486,7 @@ and the comparison is readable afterward.
       experiment-significance shape used at `api/schemas.py:348` and `api/main.py:716` — reusing it would
       collide; the `not_replayable`/`replay_of_replay` **409** responses per `contracts/api.md` (012/FR-004,
       FR-005, FR-006, FR-017, FR-027, FR-038, FR-039, FR-040, FR-041, FR-042).
-- [ ] T023 [P] [US1] Implement the UI: `ui/api_client.py::replay_run(run_id)` (`POST /api/runs/{id}/replay`, a
+- [X] T023 [P] [US1] Implement the UI: `ui/api_client.py::replay_run(run_id)` (`POST /api/runs/{id}/replay`, a
       timeout covering one replay — the adaptive time limit plus a margin, the same shape `run_attack`'s own
       timeout already uses; **no** `batch_replay` client — the UI has no batch action, since the spec asks only
       for a single-run button). `ui/app.py`:
@@ -553,7 +553,7 @@ assert both are unchanged.
 
 ### Tests for User Story 2
 
-- [ ] T024 [P] [US2] Integration test `tests/integration/test_replay_memory_isolation.py` (`FEATURE = "012"`): over
+- [X] T024 [P] [US2] Integration test `tests/integration/test_replay_memory_isolation.py` (`FEATURE = "012"`): over
       `SpyExperienceStore`, replay a single-turn source and an adaptive source under each of the three outcomes
       (six replays total) **and a batch replay of several such sources** and assert `spy.queries == []` and
       `spy.pattern_writes == []` after every one, and that `write_memory` is never called either (extend
@@ -562,7 +562,7 @@ assert both are unchanged.
       structural guard (defence in depth, research "Experience isolation" code-fact), assert neither
       `kestrel.replay` nor the new `run_replay_adaptive` function imports anything from `kestrel.experience`
       (012/FR-025, FR-026, 012/SC-003).
-- [ ] T025 [P] [US2] Integration test `tests/integration/test_replay_report_exclusion.py` (`FEATURE = "012"`):
+- [X] T025 [P] [US2] Integration test `tests/integration/test_replay_report_exclusion.py` (`FEATURE = "012"`):
       generate a target's report (`GET /api/targets/{id}/report`) before and after replaying one of its existing,
       already-reported findings, and assert the finding count, the coverage rows, and the number of recommender
       judge calls are byte-for-byte identical; a target whose *only* succeeded run is itself a replay (seed it
@@ -581,11 +581,11 @@ assert both are unchanged.
 
 ### Implementation for User Story 2
 
-- [ ] T026 [US2] Implement the filter in `src/kestrel/api/main.py::target_report`: pass
+- [X] T026 [US2] Implement the filter in `src/kestrel/api/main.py::target_report`: pass
       `[r for r in store.list_runs(target_id) if r.mode != "replay"]` into `build_report` and
       `recommendations_for`, instead of the unfiltered list — `report/model.py` and `report/recommend.py` stay
       untouched (research D9) (012/FR-027).
-- [ ] T027 [US2] **`is_finding` itself is implemented in the foundational T008** (T022
+- [X] T027 [US2] **`is_finding` itself is implemented in the foundational T008** (T022
       already depends on it existing); this task only wires the UI to it. Fill `RunSummary.finding` with
       `is_finding(run)` wherever a summary is built (api/main.py). **One boolean cannot produce two cards**: in
       `ui/app.py::render_metrics` (`app.py:909-911`), drive the Confirmed card from `r.get("finding") and
@@ -613,7 +613,7 @@ collision named and the unreached source ids listed, and is never scored as fini
 
 ### Tests for User Story 3
 
-- [ ] T028 [P] [US3] Integration test `tests/integration/test_replay_batch.py` (`FEATURE = "012"`): seed a target
+- [X] T028 [P] [US3] Integration test `tests/integration/test_replay_batch.py` (`FEATURE = "012"`): seed a target
       with several replayable runs (mixing single-turn and adaptive, and mixing eventual fixed/still-vulnerable/
       inconclusive outcomes) plus one `in_progress` run, one `failed` run, and one `replay`-mode run, and assert
       `POST /api/targets/{id}/replays` processes **only** the replayable ones, oldest `started_at` first (assert
@@ -649,7 +649,7 @@ collision named and the unreached source ids listed, and is never scored as fini
       "replay_failed"`, but that source produces **no** entry at all — it is named only in
       `"not_replayed_source_ids"`, exactly like a source the batch never reached (012/FR-028, FR-029, FR-030,
       FR-031, FR-032, FR-033, 012/SC-006).
-- [ ] T029 [P] [US3] Integration test `tests/integration/test_events_replay.py`, the batch part: through
+- [X] T029 [P] [US3] Integration test `tests/integration/test_events_replay.py`, the batch part: through
       `json_log`, a successful, complete batch emits one `replay.batch.start` (naming `target_id`,
       `replayable_count`, `cap`) and one `replay.batch.end` (the three outcome counts, `duration_ms`,
       `complete: true`, no `stop_reason`, no `error`); a batch refused before it starts (`batch_too_large`, or an
@@ -668,7 +668,7 @@ collision named and the unreached source ids listed, and is never scored as fini
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Implement `BatchEntry` (with `source_hard_evidence`/`replay_hard_evidence`), `BatchResult` (with
+- [X] T030 [US3] Implement `BatchEntry` (with `source_hard_evidence`/`replay_hard_evidence`), `BatchResult` (with
       `complete`, `stop_reason`, `not_replayed_source_ids`), `BatchTooLarge`, and
       `execute_batch_replay(store, *, target_id, cap, ...)` in
       `src/kestrel/replay.py` per `data-model.md`: `store.list_replayable_runs(target_id)` (unaffected by any
@@ -695,7 +695,7 @@ collision named and the unreached source ids listed, and is never scored as fini
       normally, never raises. Wire `events.replay_batch_started`/`_ended` around the whole loop (outside every
       entry's own scope), passing `complete`/`stop_reason` through either way (012/FR-028, FR-029, FR-030,
       FR-031, FR-032, FR-033).
-- [ ] T031 [US3] Implement the API: `POST /api/targets/{target_id}/replays` in `src/kestrel/api/main.py`
+- [X] T031 [US3] Implement the API: `POST /api/targets/{target_id}/replays` in `src/kestrel/api/main.py`
       (preconditions checked once before the first entry, `execute_batch_replay`, the `batch_too_large`/
       `run_in_progress`/`permission_missing`/`terms_outdated` **409**s for a refusal *before* the batch starts and
       the **404**, but **always 200** — never 201, never 409 — for any `BatchResult`, complete or not, per
@@ -718,7 +718,7 @@ printed.
 
 ### Tests for User Story 4
 
-- [ ] T032 [P] [US4] Unit test `tests/unit/test_check_replay_script.py` (`FEATURE = "012"`), over an
+- [X] T032 [P] [US4] Unit test `tests/unit/test_check_replay_script.py` (`FEATURE = "012"`), over an
       `httpx.MockTransport` standing in for the Kestrel API (no real server, and no real `GET /api/config` either
       — stub it too): a complete batch response with every entry `fixed`, and separately an empty-entries
       response, each exit `0`; a complete response with at least one `still_vulnerable` entry (even alongside an
@@ -746,7 +746,7 @@ printed.
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Implement `scripts/check_replay.py` per `contracts/ci-script.md`: `argparse` with `--target-id`
+- [X] T033 [US4] Implement `scripts/check_replay.py` per `contracts/ci-script.md`: `argparse` with `--target-id`
       (required, `int`) and `--timeout SECONDS` (optional float, overrides the computed default);
       `KESTREL_API_URL`/`KESTREL_API_TOKEN` read directly from the environment (a small, local `httpx` request
       helper — no import of `ui.api_client`, research D13); `GET /api/config` first, to compute the default batch
@@ -767,7 +767,7 @@ printed.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T034 [P] End-to-end test `tests/e2e/test_us012_replay.py` (marker `e2e`, `FEATURE = "012"`), modelled on
+- [X] T034 [P] End-to-end test `tests/e2e/test_us012_replay.py` (marker `e2e`, `FEATURE = "012"`), modelled on
       `tests/e2e/test_us011_retrieval.py` — **that pattern runs the
       Kestrel API *in-process* via `fastapi.testclient.TestClient(create_app(settings, ...))` over a `tmp_path`
       `Settings`, against the real HS-code target started as its own subprocess via the `hs_target` fixture; it is
@@ -791,7 +791,7 @@ printed.
       prompt version recorded, zero attacker-model calls, zero experience-store writes (`SpyExperienceStore`), and
       the 010 lines present with no secret (`hs_target.key`) anywhere on the stream; a second replay of the new
       replay run itself is refused with `replay_of_replay` naming the original source (012/SC-010).
-- [ ] T035 [P] Documentation: `docs/technical-design.md` (a Regression replay section: schema v10 and the rebuild
+- [X] T035 [P] Documentation: `docs/technical-design.md` (a Regression replay section: schema v10 and the rebuild
       procedure including the `sqlite_sequence` fix, `replay.py`, the shared-node refactor of `attack/graph.py`
       (research D14), `run_replay_adaptive`, the `compute_outcome` rule and why it reads every turn rather than
       the run's final verdict, the interrupted/crashed-replay guarantee, the batch cap, the incomplete-batch
@@ -805,7 +805,7 @@ printed.
       shared-node extraction (research D14) and the lazy import it needed; and that Principle V's "a run that
       does not write back is a bug" does not apply to a replay, by design, recorded in Complexity Tracking
       (012/FR-020, FR-049; research D1, D2, D5, D7, D14, D15).
-- [ ] T036 [P] **Bump the five tests that pin the current schema version as a
+- [X] T036 [P] **Bump the five tests that pin the current schema version as a
       literal `"9"`** to `"10"`, following the convention every prior version bump has used (CLAUDE.md "Learned
       notes"): `tests/unit/test_store_migration_v5.py` (lines 103, 110, 129), `tests/unit/test_store_migration_v6.py`
       (lines 82, 89, 97), `tests/unit/test_store_migration_v8.py` (lines 58, 65, 95),
@@ -813,7 +813,7 @@ printed.
       `tests/integration/test_provenance_migration.py` (line 39) — each asserts `SCHEMA_VERSION == "9"` or
       `version(...) == "9"` as "the current version"; change the literal and its inline comment (e.g. "bumped to
       10 for feature 012") in each, leaving every other assertion in those files untouched (012/FR-020).
-- [ ] T037 Write `specs/012-regression-replay/traceability.md` (the id → tests table in the feature-010/011
+- [X] T037 Write `specs/012-regression-replay/traceability.md` (the id → tests table in the feature-010/011
       shape). FR-046 (no attack text anywhere in this feature's own code/tests/fixtures/commits), FR-048 (no new
       dependency), FR-050 (the roadmap edit, an implementation-PR process step) and SC-009 (dependencies
       unchanged) are justified there rather than given a dedicated 012-scoped test, naming all three explicitly:
@@ -826,13 +826,13 @@ printed.
       existing offline suite passing unmodified (T038) — so it needs no justification here, only a note of which
       five files were touched on purpose (T036) despite "unmodified" being the general rule. Run
       `uv run python scripts/check_traceability.py` until every `012/FR-###` and `012/SC-###` is traced.
-- [ ] T038 Gates: `uv run pytest tests/unit tests/integration` (coverage ≥ 85% on `src`; every pre-existing test
+- [X] T038 Gates: `uv run pytest tests/unit tests/integration` (coverage ≥ 85% on `src`; every pre-existing test
       passes **unmodified**, with the five schema-version literals of T036 as the one named, on-purpose
       exception — not a silent regression), `uvx ruff check src ui tests scripts` clean, `uv run mypy src`
       advisory, `git diff --stat -- pyproject.toml uv.lock` empty (FR-048), the offline sections of
       `specs/012-regression-replay/quickstart.md` reproduced; fix anything that fails (012/FR-048, FR-049,
       012/SC-009).
-- [ ] T039 LAST — Roadmap and status lines (implementation pull request only, never the spec-only one): in
+- [X] T039 LAST — Roadmap and status lines (implementation pull request only, never the spec-only one): in
       `docs/roadmap.md`, move the "Regression replay" bullet out of "Next features" into "Done" as **012 —
       Regression replay** (one bullet in the Done style: verbatim resend with no attacker call, canary-then-judge
       scoring read from every turn, the fixed/still-vulnerable/inconclusive outcome and side-by-side, no memory or

@@ -309,6 +309,35 @@ def run_pending_run() -> None:
     st.rerun()
 
 
+def start_replay(run_id: int) -> None:
+    """Replay-button callback (feature 012): capture now; it runs on the next pass with the button disabled,
+    mirroring start_run."""
+    st.session_state["pending_replay"] = run_id
+    st.session_state["replay_notice"] = None
+
+
+def open_source_run(run_id: int) -> None:
+    """Navigate the Runs tab's own "Open a run" selectbox to `run_id` (feature 012, FR-041, T023): a plain
+    session-state assignment before the next rerun renders render_runs, which reads "open_run" as that
+    selectbox's own key."""
+    st.session_state["open_run"] = run_id
+
+
+def run_pending_replay() -> None:
+    run_id = st.session_state.get("pending_replay")
+    if run_id is None:
+        return
+    st.session_state["pending_replay"] = None
+    try:
+        with st.spinner("Replaying…"):
+            st.session_state["replay_result"] = api_client.replay_run(run_id)
+        st.session_state["runs"] = None  # reload the runs list for this target
+    except api_client.ApiError as error:
+        st.session_state["replay_result"] = None
+        st.session_state["replay_notice"] = api_message(error)
+    st.rerun()
+
+
 def save() -> None:
     """Save-button callback: a new target, or an edit of the loaded one (FR-011, FR-012, FR-029)."""
     sync_header_rows()
@@ -509,14 +538,83 @@ STOPPED = {"turn_cap": "stopped at the turn limit", "token_budget": "stopped at 
            "time_limit": "stopped at the time limit"}
 
 
-def render_run_result(run: dict | None, judge: dict) -> None:
+def render_run_result(run: dict | None, judge: dict, key_prefix: str = "result") -> None:
     if not run:
         return
     with st.container(border=True):   # item 3: each finding sits in its own bordered card
-        _render_finding(run, judge)
+        _render_finding(run, judge, key_prefix)
 
 
-def _render_finding(run: dict, judge: dict) -> None:
+OUTCOME_LABELS = {"fixed": "fixed", "still_vulnerable": "still vulnerable", "inconclusive": "inconclusive"}
+
+
+def _comparison_cell(value) -> str:
+    """One comparison-table cell as plain text (never a mix of bool/str/None in one pandas column, feature 012)."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
+def _render_replay_comparison(replay_run: dict, key_prefix: str) -> None:
+    """The outcome line, the multi-turn caption (when present) and the side-by-side comparison (feature 012,
+    FR-017, FR-041) - exact strings and row labels; every value is API-computed, never re-derived here (FR-042)."""
+    outcome = replay_run.get("replay_outcome")
+    if outcome is None:   # the replay is still in progress (for example one entry of a running batch): nothing
+        return            # to show yet - never a KeyError on an outcome that has not been decided
+    st.write("Outcome: " + OUTCOME_LABELS[outcome])
+    comparison = replay_run.get("comparison")
+    if not comparison:
+        return
+    if comparison.get("multi_turn_caption"):
+        st.write(comparison["multi_turn_caption"])
+    source_id = comparison["source_run_id"]
+    # A button, not plain caption text, so the label opens the source run (feature 012, FR-041, T023) - the
+    # exact same visible label a caption would have shown.
+    st.button(f"Replay of run #{source_id}", key=f"open_source_{key_prefix}_{replay_run['id']}",
+             on_click=open_source_run, args=(source_id,))
+    source_col = f"Source (run #{comparison['source_run_id']})"
+    replay_col = f"Replay (run #{comparison['replay_run_id']})"
+    rows = [("Verdict", comparison["source_verdict"], comparison["replay_verdict"]),
+           ("Hard evidence", comparison["source_hard_evidence"], comparison["replay_hard_evidence"]),
+           ("Judge model", comparison["source_judge_model"], comparison["replay_judge_model"]),
+           ("Judge prompt", comparison["source_judge_prompt"], comparison["replay_judge_prompt"])]
+    for turn in comparison["turns"]:
+        replay_cell = "not sent" if not turn["sent"] else turn["replay_verdict"]
+        rows.append((f"Turn {turn['position']}", turn["source_verdict"], replay_cell))
+    frame = pd.DataFrame([{"": label, source_col: _comparison_cell(source_value),
+                          replay_col: _comparison_cell(replay_value)}
+                          for label, source_value, replay_value in rows])
+    st.dataframe(frame, hide_index=True, alt="This replay compared with its source, side by side")
+
+
+def _render_replay_action(run: dict, key_prefix: str) -> None:
+    """The Replay button, its disabled reason or advisory, and (once finished) the outcome and comparison -
+    rendered ahead of any early return in _render_finding, so a run that failed to send still shows it (feature
+    012, FR-040 to FR-042)."""
+    pending = st.session_state.get("pending_replay") is not None
+    st.button("Replay", key=f"replay_button_{key_prefix}_{run['id']}", on_click=start_replay, args=(run["id"],),
+             disabled=pending or not run.get("replayable", False))
+    if not run.get("replayable", False) and run.get("replay_blocked_reason"):
+        st.caption(run["replay_blocked_reason"])
+    if run.get("replay_advisory"):
+        st.caption(run["replay_advisory"])
+    if st.session_state.get("replay_notice"):
+        st.error(st.session_state["replay_notice"])
+        st.session_state["replay_notice"] = None
+
+    shown = run if run.get("mode") == "replay" else None
+    if shown is None:
+        result = st.session_state.get("replay_result")
+        if result is not None and result.get("source_run_id") == run["id"]:
+            shown = result
+    if shown is not None:
+        _render_replay_comparison(shown, key_prefix)
+
+
+def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:
+    _render_replay_action(run, key_prefix)
     if run.get("failure_step"):
         # Prefer Kestrel's own wording for the step (feature 001); fall back for any unmapped step.
         fallback = f"The attack could not be sent: {run.get('reason') or run['failure_step']}."
@@ -619,6 +717,16 @@ def _render_conversation(run: dict) -> None:
         st.caption(" · ".join(bits))
 
 
+def _mode_label(run: dict) -> str:
+    """The run-listing's exact Mode label (feature 012, FR-039): "replay" is never folded into "single-turn"."""
+    mode = run.get("mode")
+    if mode == "adaptive":
+        return "adaptive"
+    if mode == "replay":
+        return "replay"
+    return "single-turn"
+
+
 def _evidence(run: dict) -> str:
     if run.get("failure_step"):
         return "—"
@@ -645,8 +753,8 @@ def render_runs(config: dict) -> None:
     if not runs:
         st.caption("No runs yet for this target.")
         return
-    frame = pd.DataFrame([{"When": pd.to_datetime(r["started_at"]),
-                           "Mode": "adaptive" if r.get("mode") == "adaptive" else "single-turn",
+    frame = pd.DataFrame([{"When": pd.to_datetime(r["started_at"]), "Mode": _mode_label(r),
+                           "Source": str(r["source_run_id"]) if r.get("source_run_id") else "",
                            "Family": r["family"], "Prompt": r["prompt_title"],
                            "Verdict": r["verdict"] or r["failure_step"] or "—", "Evidence": _evidence(r)}
                           for r in runs])
@@ -661,7 +769,7 @@ def render_runs(config: dict) -> None:
                           else labels[rid])
     if chosen is not None:
         try:
-            render_run_result(api_client.get_run(chosen), config.get("judge") or {})
+            render_run_result(api_client.get_run(chosen), config.get("judge") or {}, key_prefix="opened")
         except api_client.ApiError as error:
             st.error(api_message(error))
 
@@ -907,8 +1015,10 @@ def render_metrics(target_id: int | None) -> None:
             col.metric(label, "—")
         return
     runs = load_runs(target_id)
-    confirmed = sum(1 for r in runs if r.get("verdict") == "succeeded" and r.get("hard_evidence"))
-    suspected = sum(1 for r in runs if r.get("verdict") == "succeeded" and not r.get("hard_evidence"))
+    # feature 012: `finding` (server-computed: succeeded and not a replay) together with hard_evidence, never a
+    # mode check of the UI's own - one boolean alone cannot drive two cards (FR-027, FR-042).
+    confirmed = sum(1 for r in runs if r.get("finding") and r.get("hard_evidence"))
+    suspected = sum(1 for r in runs if r.get("finding") and not r.get("hard_evidence"))
     last = runs[0]["started_at"][:16].replace("T", " ") if runs else "—"
     for col, label, value in zip(cols, labels, [len(runs), confirmed, suspected, last]):
         col.metric(label, value)
@@ -950,6 +1060,7 @@ def main() -> None:
     # (FR-010).
     render_attack(config, families)
     run_pending_run()
+    run_pending_replay()
     render_metrics(loaded_id())
     tab_runs, tab_profile, tab_report, tab_experiments = st.tabs(["Runs", "Profile", "Report", "Experiments"])
     with tab_runs:

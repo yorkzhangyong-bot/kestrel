@@ -78,3 +78,38 @@ def test_config_reports_a_control_switched_off_as_null(make_client, settings):  
     one_off = dataclasses.replace(settings, experience_dedupe_threshold=None)
     experience = make_client(one_off).get("/api/config").json()["experience"]
     assert experience["distance_floor"] == 1.8 and experience["dedupe_threshold"] is None
+
+
+# ---- feature 012: the config reports the batch-replay cap and the per-replay time limit (012/FR-031) ----
+
+
+def test_config_reports_the_batch_cap_default(client):  # 012/FR-031
+    replay = client.get("/api/config").json()["replay"]
+    assert replay["max_batch_runs"] == 20
+
+
+def test_config_reports_an_overridden_batch_cap(make_client, settings):  # 012/FR-031
+    import dataclasses
+    overridden = dataclasses.replace(settings, replay_batch_max_runs=7)
+    replay = make_client(overridden).get("/api/config").json()["replay"]
+    assert replay["max_batch_runs"] == 7
+
+
+def test_per_replay_time_limit_is_the_longer_of_the_two_per_run_deadlines(make_client, settings):  # 012/FR-031
+    import dataclasses
+
+    from kestrel.runs import TOTAL_DEADLINE_S
+
+    # Shipped defaults: adaptive is 300s, the single-turn deadline is 90s - the longer one, 300, is reported.
+    replay = make_client(settings).get("/api/config").json()["replay"]
+    assert replay["per_replay_time_limit_s"] == 300 == max(settings.adaptive_time_limit_s, TOTAL_DEADLINE_S)
+
+    # Raised above 300: the limit tracks the adaptive setting.
+    raised = dataclasses.replace(settings, adaptive_time_limit_s=600)
+    replay = make_client(raised).get("/api/config").json()["replay"]
+    assert replay["per_replay_time_limit_s"] == 600
+
+    # Lowered below 90 (the single-turn deadline): genuinely max(...), never the adaptive value alone.
+    lowered = dataclasses.replace(settings, adaptive_time_limit_s=10)
+    replay = make_client(lowered).get("/api/config").json()["replay"]
+    assert replay["per_replay_time_limit_s"] == 90 == TOTAL_DEADLINE_S

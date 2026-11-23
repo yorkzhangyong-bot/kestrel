@@ -41,10 +41,13 @@ computed default outright.
    one entry whose own replay crashed (`outcome: "inconclusive"` with
    `stop_reason: "replay_failed"` on the batch), whose replay evidence kind prints `none` instead of `judge`**:
    `replay_verdict` there is `"unclear"` with no judge call that actually concluded it, so labelling it `judge`
-   would claim a verdict no judge gave — and one summary line with the three counts and whether the batch was
-   complete; **never** attack text, reply text, the target's URL, or a header value (FR-035; the response body
-   itself never contains any of those either, per `contracts/api.md`, so this is a belt-and-braces rule on the
-   script's own formatting, not a redaction step it must perform).
+   would claim a verdict no judge gave. The crashed entry is identified by matching each entry's own
+   `source_run_id` against the batch result's `failed_source_run_id` (spec-change, review item 5, `contracts/
+   api.md`) — never by assuming it is the last entry in the list, which a before-claim failure (no entry of its
+   own) would misattribute to the *previous*, cleanly judged source — and one summary line with the three counts
+   and whether the batch was complete; **never** attack text, reply text, the target's URL, or a header value
+   (FR-035; the response body itself never contains any of those either, per `contracts/api.md`, so this is a
+   belt-and-braces rule on the script's own formatting, not a redaction step it must perform).
 5. Exit:
 
 | Condition | Exit status |
@@ -73,7 +76,7 @@ $ echo $?
 ```text
 $ uv run python scripts/check_replay.py --target-id 3
 run 12 -> replay 41: direct_injection: fixed (source: judge, replay: judge)
-batch stopped early (run_in_progress): 1 of 3 replayed, 2 not replayed (runs 19, 23)
+batch stopped early (run_in_progress): 1 of 3 replayed, 2 not replayed (runs 19, 23) - 1 fixed, 0 still_vulnerable, 0 inconclusive
 $ echo $?
 2
 ```
@@ -82,10 +85,14 @@ $ echo $?
 $ uv run python scripts/check_replay.py --target-id 3
 run 12 -> replay 41: direct_injection: fixed (source: canary, replay: judge)
 run 15 -> replay 43: system_prompt_leak: inconclusive (source: judge, replay: none)
-batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23)
+batch stopped early (replay_failed): 2 of 4 replayed, 2 not replayed (runs 19, 23) - 1 fixed, 0 still_vulnerable, 1 inconclusive
 $ echo $?
 2
 ```
+
+(spec-change, review item 6: the incomplete-batch summary line names the three outcome counts too, matching
+FR-035's "one summary line naming the outcome counts and the batch's completeness" — not just how many entries
+were, or were not, replayed.)
 
 ```text
 $ uv run python scripts/check_replay.py --target-id 9

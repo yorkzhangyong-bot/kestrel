@@ -37,7 +37,7 @@ ANY_EVENT_FIELDS = ("message", "exc_type", "stack")
 # The event catalogue: the allow-list of each event's own fields, in their rendering order (contracts/log-records.md).
 CATALOGUE: dict[str, tuple[str, ...]] = {
     "run.start": ("prompt_id", "attacker_source", "attacker_model", "judge_model", "attacker_prompt", "judge_prompt",
-                  "turn_budget", "token_budget", "time_limit_s", "use_prior_experience"),
+                  "turn_budget", "token_budget", "time_limit_s", "use_prior_experience", "source_run_id"),
     "turn": ("source", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "cost_note",
              "attacker_model", "attacker_prompt", "judge_model", "judge_prompt", "message_chars", "reply_chars",
              "reply_truncated", "canary_hit", "hard_evidence", "judged", "verdict"),
@@ -56,10 +56,14 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
                          "pattern_distance"),
     "memory.flag_failed": (),
     "run.end": ("verdict", "hard_evidence", "stopping_condition", "failure_step", "judge_used", "turns_used",
-                "tokens_used", "succeeded_turn", "memory_written", "duration_ms", "cost_usd", "cost_note", "error"),
+                "tokens_used", "succeeded_turn", "memory_written", "duration_ms", "cost_usd", "cost_note", "error",
+                "replay_outcome"),
     "experiment.start": ("families", "reps", "max_runs", "token_budget_total", "wall_clock_s", "arms"),
     "experiment.cap": ("cap", "completed_runs", "tokens_used", "elapsed_s"),
     "experiment.end": ("status", "stopped_reason", "completed_runs", "tokens_used", "duration_ms", "error"),
+    "replay.batch.start": ("target_id", "replayable_count", "cap"),
+    "replay.batch.end": ("target_id", "fixed_count", "still_vulnerable_count", "inconclusive_count", "duration_ms",
+                         "complete", "stop_reason", "error"),
     "library.unavailable": (),
     "experience.unavailable": ("reason_kind", "stored_model", "expected_model", "stored_space", "expected_space"),
     "experience.seed_failed": ("reason_kind",),
@@ -339,15 +343,16 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
                 attacker_source: str | None = None, attacker_model: str | None = None, judge_model: str | None = None,
                 attacker_prompt: str | None = None, judge_prompt: str | None = None, turn_budget: int | None = None,
                 token_budget: int | None = None, time_limit_s: int | None = None,
-                use_prior_experience: bool | None = None) -> None:
+                use_prior_experience: bool | None = None, source_run_id: int | None = None) -> None:
     """Emit `run.start` right after the run row is claimed and bind the run on its scope. With no scope open (a
-    direct call) the line still goes to the stream, with no run identifiers, and is not kept (SC-005)."""
+    direct call) the line still goes to the stream, with no run identifiers, and is not kept (SC-005).
+    `source_run_id` (feature 012) names the run a replay re-tests; omitted entirely for a non-replay run."""
     try:
         fields = _present({"prompt_id": prompt_id, "attacker_source": attacker_source,
                            "attacker_model": attacker_model, "judge_model": judge_model,
                            "attacker_prompt": attacker_prompt, "judge_prompt": judge_prompt,
                            "turn_budget": turn_budget, "token_budget": token_budget, "time_limit_s": time_limit_s,
-                           "use_prior_experience": use_prior_experience})
+                           "use_prior_experience": use_prior_experience, "source_run_id": source_run_id})
         ctx = _RUN.get()
         if ctx is None or not ctx.keep or ctx.started:
             emit("run.start", **fields)
@@ -368,7 +373,8 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
 
 
 def run_finished(run: Any) -> None:
-    """Stash the finished run's outcome for `run.end` (emitted at the scope's exit, after the write-back)."""
+    """Stash the finished run's outcome for `run.end` (emitted at the scope's exit, after the write-back).
+    `replay_outcome` (feature 012) is None for every non-replay run, so `_run_end` omits it there entirely."""
     try:
         ctx = _live()
         if ctx is None:
@@ -376,11 +382,24 @@ def run_finished(run: Any) -> None:
         ctx.outcome = {"verdict": run.verdict, "hard_evidence": bool(run.hard_evidence),
                        "stopping_condition": run.stopping_condition, "failure_step": run.failure_step,
                        "turns_used": run.turns_used if run.turns_used is not None else ctx.turn_lines,
-                       "tokens_used": run.tokens_used, "succeeded_turn": run.succeeded_turn}
+                       "tokens_used": run.tokens_used, "succeeded_turn": run.succeeded_turn,
+                       "replay_outcome": getattr(run, "replay_outcome", None)}
         ctx.turn = None
         _end_turn_span(ctx)
     except Exception as error:
         _backstop("run.end", error)
+
+
+def _root_cause(error: BaseException) -> BaseException:
+    """`error`'s own class, unless it is a `kestrel.replay.ReplayFailed` wrapper (feature 012, review item 8):
+    `execute_replay`/`run_replay_adaptive` always raise `ReplayFailed(run_id) from error`, so logging the
+    wrapper's own class would always say "ReplayFailed" and never the real fault. Lazy import: avoids a
+    module-load cycle (replay.py imports this module), the same convention replay.py and graph.py already use
+    for each other (research D14)."""
+    from kestrel.replay import ReplayFailed
+    if isinstance(error, ReplayFailed) and error.__cause__ is not None:
+        return error.__cause__
+    return error
 
 
 def _run_end(ctx: RunContext, error: BaseException | None) -> None:
@@ -396,7 +415,10 @@ def _run_end(ctx: RunContext, error: BaseException | None) -> None:
         if cost is None:
             fields["cost_note"] = note
         if error is not None:
-            fields["error"] = type(error).__name__
+            fields["error"] = type(_root_cause(error)).__name__
+        # Feature 012: present only for a replay (never "replay_outcome": null for a normal run), unlike
+        # verdict/succeeded_turn above, which are always present.
+        fields.update(_present({"replay_outcome": outcome.get("replay_outcome")}))
         ctx.turn = None
         _end_turn_span(ctx)
         emit("run.end", logging.ERROR if error is not None else logging.INFO, **fields)
@@ -589,3 +611,20 @@ def experiment_ended(*, experiment_id: int, status: str, stopped_reason: str, co
     emit("experiment.end", logging.ERROR if error is not None else logging.INFO, exc_info=exc_info,
          experiment_id=experiment_id, status=status, stopped_reason=stopped_reason, completed_runs=completed_runs,
          tokens_used=tokens_used, duration_ms=duration_ms, **_present({"error": error}))
+
+
+def replay_batch_started(*, target_id: int, replayable_count: int, cap: int) -> None:
+    """A batch replay (feature 012) is about to claim its first entry: unscoped, like `connection_test` - there is
+    no one `run_id` for a whole batch (FR-043, FR-044)."""
+    emit("replay.batch.start", scoped=False, target_id=target_id, replayable_count=replayable_count, cap=cap)
+
+
+def replay_batch_ended(*, target_id: int, fixed: int, still_vulnerable: int, inconclusive: int, duration_ms: int,
+                       complete: bool, stop_reason: str | None = None, error: str | None = None) -> None:
+    """A batch replay (feature 012) has finished, or stopped early: unscoped, outside every entry's own run scope
+    (FR-044). `stop_reason` ("run_in_progress" | "replay_failed") is present only when `complete` is False;
+    `error` only on an unexpected failure, which also raises the line to ERROR."""
+    emit("replay.batch.end", logging.ERROR if error is not None else logging.INFO, scoped=False,
+         target_id=target_id, fixed_count=fixed, still_vulnerable_count=still_vulnerable,
+         inconclusive_count=inconclusive, duration_ms=duration_ms, complete=complete,
+         **_present({"stop_reason": stop_reason, "error": error}))

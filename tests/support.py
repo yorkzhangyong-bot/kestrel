@@ -130,13 +130,15 @@ class StubEmbeddingFunction(EmbeddingFunction):
 
 
 class SpyExperienceStore(ExperienceStore):
-    """A real stub-backed store that records every pattern query and every pattern write (feature 011, D9), so a
-    test can prove what text the store received and what each write-back did. Everything is delegated."""
+    """A real stub-backed store that records every pattern query, every pattern write, and every memory write
+    (feature 011, D9; feature 012, FR-025/FR-026), so a test can prove what text the store received and what
+    each write-back did. Everything is delegated."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.queries: list[dict] = []
         self.pattern_writes: list = []
+        self.memory_writes: list[dict] = []
 
     def query_patterns(self, *, family: str, query_text: str, n: int):
         self.queries.append({"family": family, "query_text": query_text, "n": n})
@@ -146,6 +148,10 @@ class SpyExperienceStore(ExperienceStore):
         result = super().write_pattern(**kwargs)
         self.pattern_writes.append(result)
         return result
+
+    def write_memory(self, **kwargs):
+        self.memory_writes.append(kwargs)
+        return super().write_memory(**kwargs)
 
 
 # ---- feature 010: known strings, and one offline transport for the target and the real model clients ----

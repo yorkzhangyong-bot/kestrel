@@ -59,6 +59,37 @@ class PromptVersionOut(BaseModel):
     version: str  # the active version ("1", "2", …); never the prompt text (FR-007, FR-012)
 
 
+class BatchReplayEntryOut(BaseModel):
+    """One source run a batch replay (feature 012) processed: both verdicts and both evidence kinds, since the
+    judge configured today need not be the one that decided the source (FR-030)."""
+    source_run_id: int
+    replay_run_id: int
+    family: str
+    source_verdict: str | None
+    source_hard_evidence: bool
+    replay_verdict: str | None
+    replay_hard_evidence: bool
+    outcome: str
+
+
+class BatchReplayResultOut(BaseModel):
+    """A batch replay's result (feature 012, FR-028 to FR-033): always 200, complete or not."""
+    target_id: int
+    entries: list[BatchReplayEntryOut]
+    counts: dict[str, int]
+    complete: bool
+    stop_reason: str | None = None
+    not_replayed_source_ids: list[int] = Field(default_factory=list)
+    failed_source_run_id: int | None = None
+
+
+class ReplayOut(BaseModel):
+    """Regression replay (feature 012): the batch cap in effect, and the longer of the two per-run deadlines the
+    server actually enforces - what scripts/check_replay.py sizes its own batch timeout from (FR-031)."""
+    max_batch_runs: int
+    per_replay_time_limit_s: int
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -67,6 +98,7 @@ class ConfigOut(BaseModel):
     attacker: AttackerOut
     adaptive: AdaptiveCapsOut
     experience: ExperienceOut
+    replay: ReplayOut
     prompts: list[PromptVersionOut] = []   # active prompt versions, id + version only (feature 009, FR-007)
 
 
@@ -148,6 +180,44 @@ class RunSummary(BaseModel):
     finished_at: str | None
     memory_written: bool | None = None  # feature 004: null not attempted, false failed (warning), true written
     use_prior_experience: bool = True   # feature 004: warm or cold, recorded on the run (FR-014)
+    # Feature 012 (regression replay).
+    source_run_id: int | None = None    # null unless mode == "replay"
+    replay_outcome: str | None = None   # "fixed" | "still_vulnerable" | "inconclusive"; null unless a replay
+    finding: bool = False               # true only for a succeeded, non-replay run (FR-027); drives the UI's
+                                         #   Confirmed/Suspected headline cards together with hard_evidence
+    replayable: bool = False            # computed from this run AND its target's current permission/terms/
+                                         #   other-run-in-progress state (research D10) - never the run alone
+    replay_blocked_reason: str | None = None   # present only when replayable is false; one of the seven exact
+                                                #   strings FR-004 to FR-006 define
+    replay_advisory: str | None = None  # independent of replay_blocked_reason - a replayable run can still carry
+                                         #   one (FR-040)
+
+
+class TurnComparisonOut(BaseModel):
+    """One recorded message's own verdict on each side of a replay comparison (feature 012, FR-017)."""
+    position: int
+    sent: bool
+    source_verdict: str | None
+    replay_verdict: str | None
+
+
+class ReplayComparisonOut(BaseModel):
+    """The source run and its replay, side by side (feature 012, FR-017 to FR-019, FR-041). Named
+    `ReplayComparisonOut`, not `ComparisonOut`: that name already exists above for the unrelated feature-007
+    experiment-significance shape."""
+    source_run_id: int
+    replay_run_id: int
+    outcome: str
+    source_verdict: str | None
+    source_hard_evidence: bool
+    source_judge_model: str | None
+    source_judge_prompt: str | None
+    replay_verdict: str | None
+    replay_hard_evidence: bool
+    replay_judge_model: str | None
+    replay_judge_prompt: str | None
+    turns: list[TurnComparisonOut]
+    multi_turn_caption: str | None
 
 
 class RunDetail(RunSummary):
@@ -170,6 +240,7 @@ class RunDetail(RunSummary):
     # message instead of the raw step key; null when the run did not fail to send.
     failure_message: str | None = None
     turns: list[TurnOut] = Field(default_factory=list)
+    comparison: ReplayComparisonOut | None = None   # feature 012: present only when mode == "replay"
 
 
 class RunLogOut(BaseModel):

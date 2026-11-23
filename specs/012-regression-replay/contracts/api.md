@@ -46,7 +46,7 @@ zero entries), a **complete** batch (every replayable run at the moment it start
      "replay_verdict": "failed", "replay_hard_evidence": false, "outcome": "fixed"}
   ],
   "counts": {"fixed": 1, "still_vulnerable": 0, "inconclusive": 0},
-  "complete": true, "stop_reason": null, "not_replayed_source_ids": []
+  "complete": true, "stop_reason": null, "not_replayed_source_ids": [], "failed_source_run_id": null
 }
 ```
 
@@ -67,7 +67,7 @@ both still answer **200**:
     "entries": [ /* every entry completed before the collision */ ],
     "counts": { /* counts over the completed entries only */ },
     "complete": false, "stop_reason": "run_in_progress",
-    "not_replayed_source_ids": [19, 23]
+    "not_replayed_source_ids": [19, 23], "failed_source_run_id": null
   }
   ```
 - **One entry's own replay fails with an unexpected error** (research
@@ -80,9 +80,16 @@ both still answer **200**:
                     "inconclusive" */ ],
     "counts": { /* includes the failed entry's "inconclusive" */ },
     "complete": false, "stop_reason": "replay_failed",
-    "not_replayed_source_ids": [23]
+    "not_replayed_source_ids": [23], "failed_source_run_id": 19
   }
   ```
+  `failed_source_run_id` (spec-change, review item 5) always names the one source whose replay crashed, whenever
+  `stop_reason` is `"replay_failed"` — `19` above, the entry just added, in this after-the-claim example. A
+  failure that strikes *before* that source's own row is even claimed adds no entry for it at all (the example
+  above instead shows the shape where it does); in that case `failed_source_run_id` still names it, as the first
+  id in `not_replayed_source_ids`, while `entries` ends with the *previous*, cleanly judged source's own result —
+  a reader must use this field, never "the last entry", to find the crashed one. `null` for every other
+  `stop_reason` (including `null` itself, on a complete batch).
 
 `not_replayed_source_ids` names every replayable source, in the planned oldest-first order, that the batch never
 reached. A caller that must not treat an incomplete batch as "nothing to worry about" checks `complete` — the CI
@@ -146,9 +153,12 @@ the two endpoints above) gain:
 ```
 
 `comparison` is computed fresh on every request (research D8), by loading the source run (`source_run_id`) and
-both runs' turns; `null` for a non-replay run. `multi_turn_caption` is the pinned FR-041 string when the source
-has more than one recorded message, else `null` — a static function of the source's own message count, computed
-server-side so the UI only displays it (FR-042).
+both runs' turns; `null` for a non-replay run, while a replay is still `in_progress` (one entry of a batch still
+running, opened from another request), and for a finished replay row with no recorded outcome at all (defensive;
+unreachable through any real code path, but the API must not crash on it either — round-2 review R1/R3): a
+comparison is only ever built for a replay that already has one. `multi_turn_caption` is the pinned FR-041 string
+when the source has more than one recorded message, else `null` — a static function of the source's own message
+count, computed server-side so the UI only displays it (FR-042).
 
 ## `GET /api/config`
 

@@ -3,7 +3,7 @@
 Skips until the attack library is assembled (T013b) and without OPENROUTER_API_KEY.
 
 A note on determinism: whether a real model actually leaks its system prompt is the model's behaviour, not
-Kestrel's — current models (the target runs openai/gpt-4o-mini) resist extraction fairly robustly, so a positive
+Kestrel's — current models (the target runs openai/gpt-oss-120b) resist extraction fairly robustly, so a positive
 leak cannot be forced here without gaming the target. What this test proves end to end is the rule that matters
 (Principle II): the attack chain runs against the live target, and *whenever* the canary surfaces it is treated
 as hard evidence — verdict "succeeded", no judge. The positive detection itself is proven deterministically in

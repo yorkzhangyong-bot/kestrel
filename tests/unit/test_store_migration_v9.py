@@ -163,7 +163,7 @@ def runs_indexes(path) -> dict[str, tuple[int, int, list[str]]]:
 def test_a_fresh_database_is_created_at_version_9_with_autoincrement(tmp_path, vault):  # 011/FR-006
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "9"
+    assert version(path) == SCHEMA_VERSION == "10"   # bumped to 10 for feature 012
     assert "AUTOINCREMENT" in runs_table_sql(path).upper()
 
 
@@ -173,7 +173,7 @@ def test_a_v8_database_is_rebuilt_with_autoincrement_and_keeps_every_row(v8_db, 
 
     store = TargetStore(v8_db, vault)
 
-    assert version(v8_db) == SCHEMA_VERSION == "9"
+    assert version(v8_db) == SCHEMA_VERSION == "10"   # bumped to 10 for feature 012
     assert "AUTOINCREMENT" in runs_table_sql(v8_db).upper()
     assert foreign_key_violations(v8_db) == []
 
@@ -258,7 +258,7 @@ def test_a_fresh_v9_database_never_reuses_a_deleted_runs_id(tmp_path, vault):  #
 def test_opening_twice_is_harmless(v8_db, vault):
     TargetStore(v8_db, vault)
     TargetStore(v8_db, vault)
-    assert version(v8_db) == "9"
+    assert version(v8_db) == "10"   # bumped to 10 for feature 012
 
 
 def test_an_unknown_future_version_is_still_refused(tmp_path, vault):  # R11 guard preserved

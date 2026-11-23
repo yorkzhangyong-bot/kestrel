@@ -22,6 +22,10 @@ export default defineConfig({
       env: {
         HS_TARGET_API_KEY: "test-key-123",
         HS_TARGET_CANARY: "KESTREL-CANARY-demo",
+        // Pinned explicitly (not just the code default) so CI never silently drifts back to a ZDR-blocked
+        // model: openai/gpt-4o-mini's only tool-capable endpoint is excluded by this account's OpenRouter
+        // guardrail (a 404 "ZDR violation"); openai/gpt-oss-120b is a ZDR, tool-capable endpoint.
+        CARGOLINT_CHAT_MODEL: "openai/gpt-oss-120b",
       },
       reuseExistingServer: !isCI,
       timeout: 180_000,

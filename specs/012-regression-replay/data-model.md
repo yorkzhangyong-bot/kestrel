@@ -403,6 +403,13 @@ class BatchResult:
     stop_reason: str | None  # "run_in_progress" (a collision) | "replay_failed" (one entry's own unexpected
                              #   error); None when complete is True
     not_replayed_source_ids: tuple[int, ...]   # every planned source never reached; empty when complete is True
+    failed_source_run_id: int | None = None   # spec-change (review item 5): the source whose replay crashed,
+    # only when stop_reason == "replay_failed" - it has an entry of its own (store.get_run(error.run_id)) when
+    # the failure came after its claim, or is the first of not_replayed_source_ids when it came before the
+    # claim; None for every other stop_reason. A reader must never infer the crashed source from its position in
+    # `entries` - a before-claim failure adds no entry for it at all, leaving the *previous*, cleanly judged
+    # source as the list's last entry, which a naive "the last entry is always the crashed one" reading would
+    # misattribute.
 ```
 
 ```python
@@ -564,7 +571,8 @@ as every other `positive_int` setting already does.
   comparison is new and distinct.
 - `TurnComparisonOut`, `ReplayComparisonOut`: mirror `TurnComparison`/`Comparison` field for field.
 - `BatchReplayEntryOut`, `BatchReplayResultOut`: mirror `BatchEntry`/`BatchResult`, including the two
-  `*_hard_evidence` fields and (on the result) `complete`/`stop_reason`/`not_replayed_source_ids`.
+  `*_hard_evidence` fields and (on the result) `complete`/`stop_reason`/`not_replayed_source_ids`/
+  `failed_source_run_id` (spec-change, review item 5).
 - `ConfigOut.replay: ReplayOut` where `ReplayOut(max_batch_runs: int, per_replay_time_limit_s: int)` (research
   D12; `per_replay_time_limit_s = max(settings.adaptive_time_limit_s, runs.TOTAL_DEADLINE_S)`, research D13 — the
   CI script's own batch timeout needs the longer of the two per-run deadlines the server actually enforces, since

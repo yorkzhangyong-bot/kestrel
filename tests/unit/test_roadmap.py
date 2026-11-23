@@ -27,11 +27,18 @@ def test_retrieval_controls_is_listed_under_done_as_011():  # FR-019, SC-011
 
 
 def test_the_planned_items_are_renumbered_with_no_stale_numbers():  # FR-019, SC-011
+    # Feature 012 (Regression replay) has since shipped and moved to Done per its own FR-050
+    # (test_012_is_listed_under_done_below); only 013 and 014 are still planned here.
     planned = _sections()["Next features"]
-    assert "**Feature 012 — Regression replay.**" in planned
     assert "**Feature 013 — Behavioural evidence expansion.**" in planned
     assert "**Feature 014 — Community prompt feed.**" in planned
-    assert "Regression replay (012) is unaffected" in planned
+    assert "Regression replay (012) is unaffected" in planned   # a cross-reference inside 014's own bullet
     assert "Feature 011" not in planned and "(011)" not in planned   # 0 stale references to the former numbers
     numbers = re.findall(r"\*\*Feature (\d{3}) — ", planned)
-    assert sorted(numbers) == ["012", "013", "014"]
+    assert sorted(numbers) == ["013", "014"]
+
+
+def test_012_is_listed_under_done_and_no_longer_planned():  # 012/FR-050
+    sections = _sections()
+    assert "**012 — Regression replay**" in sections["Done"]
+    assert "Feature 012 — Regression replay." not in sections["Next features"]
