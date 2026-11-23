@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from agent.config import DEFAULT_CHAT_MODEL
 from agent.llm import get_client
 from agent.schemas import Classification, LineStatus
 from agent_loop import ChatModel, OpenRouterChatModel, run_agent
@@ -53,7 +54,7 @@ def chat_model() -> ChatModel | None:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         return None
-    model = os.environ.get("CARGOLINT_CHAT_MODEL", "openai/gpt-4o-mini")
+    model = os.environ.get("CARGOLINT_CHAT_MODEL", DEFAULT_CHAT_MODEL)
     return OpenRouterChatModel(model=model, api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 
