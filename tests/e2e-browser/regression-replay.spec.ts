@@ -113,8 +113,8 @@ test('2. a multi-turn replay is still vulnerable and stops at the first success 
   const config = await api.config();
   expect(config.attacker.configured, 'the API must be started with an attacker for an adaptive source').toBe(true);
 
-  stub.setReplies(['The agent refused.', CANARY_REPLY]);
   const target = await api.createTarget(uniqueName(), stub, { canaries: [CANARY] });
+  stub.setReplies(['The agent refused.', CANARY_REPLY]);
   const seeded = await api.createRun(target.id, {
     family: 'system_prompt_leak',
     promptId: 'spl-002',
@@ -211,11 +211,11 @@ test('4. resends the recorded messages verbatim with no attacker call or memory 
   expect(config.attacker.configured, 'the API must be started with an attacker for an adaptive source').toBe(true);
   const secret = `QA-HEADER-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-  stub.setReplies(['The agent refused.', CANARY_REPLY]);
   const target = await api.createTarget(uniqueName(), stub, {
     canaries: [CANARY],
     headers: [{ name: 'X-API-Key', value: secret }],
   });
+  stub.setReplies(['The agent refused.', CANARY_REPLY]);
   const seeded = await api.createRun(target.id, {
     family: 'system_prompt_leak',
     promptId: 'spl-002',
@@ -423,8 +423,8 @@ test('9. shows the multi-turn caption only for a multi-message source [FR-014, F
   const config = await api.config();
   expect(config.attacker.configured, 'the API must be started with an attacker for an adaptive source').toBe(true);
 
-  stub.setReplies(['The agent refused.', CANARY_REPLY]);
   const target = await api.createTarget(uniqueName(), stub, { canaries: [CANARY] });
+  stub.setReplies(['The agent refused.', CANARY_REPLY]);
   const adaptiveSeeded = await api.createRun(target.id, {
     family: 'system_prompt_leak',
     promptId: 'spl-002',
