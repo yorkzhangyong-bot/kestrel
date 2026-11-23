@@ -62,6 +62,9 @@ default `google/gemini-3.8-flash`.
 - Commit/push only when asked.
 
 ## HS-code target (local demo / e2e)
+Its conversational agent's default chat model is `openai/gpt-oss-120b` (`CARGOLINT_CHAT_MODEL`, one shared
+`DEFAULT_CHAT_MODEL` constant in `targets/hs_code/agent/config.py`, read by both it and `app.py`) — a Zero Data
+Retention (ZDR), tool-capable OpenRouter endpoint; see the Gotchas entry below for why.
 Start from the repo root (needs `OPENROUTER_API_KEY` for its conversational agent):
 ```
 # PowerShell: $env:HS_TARGET_API_KEY="test-key-123"; $env:HS_TARGET_CANARY="KESTREL-CANARY-..."
@@ -314,3 +317,13 @@ same commit. Before opening any implementation PR, review this file and add anyt
   (`tests/e2e/test_us1_connection.py`) and seeing the same failure. Fix is account-side (relax the guardrail, or
   point `CARGOLINT_CHAT_MODEL` at a ZDR-compliant model) — don't chase this as a code regression; the offline
   suite (`tests/unit`, `tests/integration`) exercises everything the e2e layer does except the live model call.
+  **Resolved 2026-11-23** (the owner could not relax the guardrail itself): the target's chat model default is
+  now `openai/gpt-oss-120b` (`DEFAULT_CHAT_MODEL`, `targets/hs_code/agent/config.py`, read by both it and
+  `app.py`), a ZDR, tool-capable endpoint that passed a tool call, a tool round trip and the `json_schema`
+  structured output 4/4 times against real providers (Crusoe, AkashML, Google, BaseTen); `playwright.config.ts`
+  pins it explicitly in the HS-code target's `webServer.env`, next to `HS_TARGET_API_KEY`/`HS_TARGET_CANARY`, so
+  CI never silently drifts back. Gotcha confirmed probing candidates: **a model check for a tool-using agent
+  must include a `tools` array** — `openai/gpt-4o-mini` still answers a plain, tool-less chat completion with a
+  `200`, so that alone proves nothing; the guardrail specifically excludes its *tool-capable* endpoint
+  (`'failed_routing_step': 'Filter by Guardrails'` only after `'Filter by Tool Compatibility'` has already
+  narrowed the candidate pool to the one that then fails ZDR).
