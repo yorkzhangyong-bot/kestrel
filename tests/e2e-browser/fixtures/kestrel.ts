@@ -58,6 +58,31 @@ export interface TurnDetail {
   judge_progress: string | null;
 }
 
+/** One recorded message's own verdict on each side of a replay comparison (feature 012, FR-017). */
+export interface TurnComparison {
+  position: number;
+  sent: boolean;
+  source_verdict: string | null;
+  replay_verdict: string | null;
+}
+
+/** The source run and its replay, side by side (feature 012, FR-017 to FR-019, FR-041). */
+export interface ReplayComparison {
+  source_run_id: number;
+  replay_run_id: number;
+  outcome: string;
+  source_verdict: string | null;
+  source_hard_evidence: boolean;
+  source_judge_model: string | null;
+  source_judge_prompt: string | null;
+  replay_verdict: string | null;
+  replay_hard_evidence: boolean;
+  replay_judge_model: string | null;
+  replay_judge_prompt: string | null;
+  turns: TurnComparison[];
+  multi_turn_caption: string | null;
+}
+
 export interface TargetDetail {
   id: number;
   name: string;
@@ -105,6 +130,14 @@ export interface RunDetail {
   stopping_condition: string | null;
   succeeded_turn: number | null;
   turns: TurnDetail[];
+  // Regression replay (feature 012).
+  source_run_id: number | null;
+  replay_outcome: string | null;
+  finding: boolean;
+  replayable: boolean;
+  replay_blocked_reason: string | null;
+  replay_advisory: string | null;
+  comparison: ReplayComparison | null;
 }
 
 export interface AttackPrompt {
@@ -228,6 +261,22 @@ export class KestrelApi {
   async getRunStatus(runId: number): Promise<number> {
     const response = await this.request.get(`${API_URL}/api/runs/${runId}`);
     return response.status();
+  }
+
+  /** Replay one run through the API (feature 012); synchronous, so the body is the finished replay run. */
+  async replayRun(sourceRunId: number): Promise<RunDetail> {
+    const response = await this.request.post(`${API_URL}/api/runs/${sourceRunId}/replay`, { timeout: 60_000 });
+    expect(
+      response.status(),
+      `POST /api/runs/${sourceRunId}/replay returned ${response.status()}: ${await response.text()}`,
+    ).toBe(201);
+    return (await response.json()) as RunDetail;
+  }
+
+  /** Status and body without asserting: a refused replay answers 409 with the documented error. */
+  async replayRunResponse(sourceRunId: number): Promise<{ status: number; body: unknown }> {
+    const response = await this.request.post(`${API_URL}/api/runs/${sourceRunId}/replay`, { timeout: 60_000 });
+    return { status: response.status(), body: await response.json() };
   }
 
   async getRunLog(runId: number): Promise<RunLog> {
