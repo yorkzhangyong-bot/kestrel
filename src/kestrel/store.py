@@ -923,11 +923,12 @@ class TargetStore:
                              created_at=r["created_at"]) for r in rows]
 
     def disarm_planted_token(self, run_id: int, kind: str, turn: int) -> None:
-        """Set `disarmed_turn` once (013/FR-012): a token already disarmed keeps its earlier turn — a later call is
-        a no-op — so a replay's copy can only ever move toward disarmed, never back."""
+        """Record the turn a token was disarmed from (013/FR-012, FR-035): a value only ever moves toward an
+        earlier turn — a later call for a later turn is a no-op — so a replay's copy, inherited disarmed from its
+        source's turn k, can be disarmed earlier by its own re-sent message but never re-armed or pushed back."""
         with self.connect() as db:
             db.execute("UPDATE run_planted_tokens SET disarmed_turn = ? WHERE run_id = ? AND kind = ?"
-                       " AND disarmed_turn IS NULL", (turn, run_id, kind))
+                       " AND (disarmed_turn IS NULL OR disarmed_turn > ?)", (turn, run_id, kind, turn))
 
     def copy_planted_tokens(self, source_run_id: int, replay_run_id: int) -> int:
         """Copy every planted-token row of the source to the replay, `disarmed_turn` carried across unchanged

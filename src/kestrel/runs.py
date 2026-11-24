@@ -92,17 +92,19 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
     run_id = store.claim_run(target_id, prompt_id=prompt.id, prompt_title=prompt.title, prompt_text=message,
                              family=prompt.family, owasp_category=prompt.owasp_category,
                              attacker_source=attacker_source, use_prior_experience=use_prior_experience)
-    checker.bind_run(run_id)   # records what the run planted, right after the claim (013/FR-008)
-    # The judge reference this run would send — the one source of its lines and its provenance (FR-007, D15).
-    judge_prompt = judge_ref(judge) if judge.configured else None
-    events.run_started(store, run_id=run_id, target_id=target_id, mode="single_turn", family=prompt.family,
-                       prompt_id=prompt.id, attacker_source=attacker_source,
-                       judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
-                       turn_budget=1, time_limit_s=int(total_s), use_prior_experience=use_prior_experience,
-                       **checker.run_start_fields())
-    events.turn_started(1)
     deadline = clock() + total_s
     try:
+        # Everything after the claim is one protected region: a failure anywhere below - recording the planted
+        # token included - must still close the row, never leave it in_progress until the start-up sweep.
+        checker.bind_run(run_id)   # records what the run planted, right after the claim (013/FR-008)
+        # The judge reference this run would send — the one source of its lines and its provenance (FR-007, D15).
+        judge_prompt = judge_ref(judge) if judge.configured else None
+        events.run_started(store, run_id=run_id, target_id=target_id, mode="single_turn", family=prompt.family,
+                           prompt_id=prompt.id, attacker_source=attacker_source,
+                           judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
+                           turn_budget=1, time_limit_s=int(total_s), use_prior_experience=use_prior_experience,
+                           **checker.run_start_fields())
+        events.turn_started(1)
         send_budget = max(0.1, min(send_s, deadline - clock()))
         checker.note_sent(message, 1)   # every sent message is inspected before it goes out (013/FR-012)
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,

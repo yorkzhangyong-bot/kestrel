@@ -251,9 +251,10 @@ def build_comparison(source: Run, source_turns: list[Turn], replay: Run, replay_
 
 def _finish_single_turn(store: TargetStore, run_id: int, source: Run, *, turn_results: list[str | None],
                         canary_hit: bool = False, judged: bool = False, evidence_kinds: list[str] | None = None,
-                        **fields: Any) -> Run:
+                        evidence_count: int = 0, **fields: Any) -> Run:
     """Emit the replay's one `turn` line, finish the row with its computed outcome, and stash it for `run.end`
-    (mirrors `runs.py::_finish`, plus `replay_outcome`)."""
+    (mirrors `runs.py::_finish`, plus `replay_outcome`). `evidence_count` is the item count, as on every other
+    turn line — never the number of distinct kinds."""
     reply = fields.get("reply_text")
     kinds = list(evidence_kinds or [])
     events.turn_ended(turn=1, source=f"library:{source.prompt_id}", message_chars=len(source.prompt_text),
@@ -261,7 +262,7 @@ def _finish_single_turn(store: TargetStore, run_id: int, source: Run, *, turn_re
                       reply_truncated=bool(fields.get("reply_truncated", False)), canary_hit=canary_hit,
                       hard_evidence=bool(kinds), judged=judged,
                       verdict=fields.get("verdict"), attacker_generated=False, evidence_kinds=kinds,
-                      evidence_count=len(kinds))
+                      evidence_count=evidence_count)
     replay_outcome = compute_outcome(turn_results, 1, source.succeeded_turn)
     run = store.finish_run(run_id, replay_outcome=replay_outcome, **fields)
     events.run_finished(run)
@@ -313,7 +314,8 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
         store.copy_planted_tokens(source.id, run_id)
         checker = evidence if evidence is not None else build_checker(
             store=store, family=source.family, canaries=canaries, mode=mode, transport=transport,
-            resolver=resolver, planted=store.list_planted_tokens(run_id))
+            resolver=resolver, planted=store.list_planted_tokens(run_id),
+            mask=[value for _, value in resolved.headers] + [resolved.url])
         checker.bind_run(run_id)
         judge_prompt = judge_ref(judge) if judge.configured else None
         events.run_started(store, run_id=run_id, target_id=source.target_id, mode="replay", family=source.family,
@@ -347,8 +349,9 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
             store.add_evidence(run_id, found.items)
             return _finish_single_turn(store, run_id, source, turn_results=["succeeded"],
                                        canary_hit=found.canary_hit, evidence_kinds=found.kinds,
-                                       verdict="succeeded", hard_evidence=True, reason=found.reason,
-                                       reply_text=reply, reply_truncated=truncated, tokens_used=0)
+                                       evidence_count=len(found.items), verdict="succeeded", hard_evidence=True,
+                                       reason=found.reason, reply_text=reply, reply_truncated=truncated,
+                                       tokens_used=0)
 
         if not judge.configured:
             return _finish_single_turn(store, run_id, source, turn_results=[None], verdict="unclear",

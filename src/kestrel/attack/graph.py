@@ -377,7 +377,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
         store.copy_planted_tokens(source.id, run_id)
         checker = evidence if evidence is not None else build_checker(
             store=store, family=source.family, canaries=canaries, mode=mode, transport=transport,
-            resolver=resolver, planted=store.list_planted_tokens(run_id))
+            resolver=resolver, planted=store.list_planted_tokens(run_id),
+            mask=[value for _, value in resolved.headers] + [resolved.url])
         checker.bind_run(run_id)
         judge_prompt = judge_ref(judge) if judge.configured else None
         judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)

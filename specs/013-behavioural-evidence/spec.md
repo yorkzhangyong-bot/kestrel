@@ -942,7 +942,9 @@ one attack, asserting the structure of the result.
   shipped file, all three of which this feature changes by construction; the one assertion in
   `tests/unit/test_attacker_client.py` that pins a bumped family's active reference as `@1` while reading it from
   the live registry (it becomes a comparison against `prompt_registry.active_ref`, so no version literal can go
-  stale again); the report coverage/finding tests for the
+  stale again); the one assertion in `tests/unit/test_experience_summary.py` that expects the fallback memory
+  summary to say "canary" for a hard-evidence run (hard evidence is now any deterministic proof, so the summary
+  says "hard evidence" and names no kind, FR-004); the report coverage/finding tests for the
   new LLM05 row and the per-item lines; the
   user-interface tests whose stubbed run shapes predate the evidence fields; `tests/unit/test_bump_prompt.py` (the
   bump-preserves-`framing` case, T015); `tests/e2e/conftest.py` (the

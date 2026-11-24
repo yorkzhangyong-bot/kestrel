@@ -246,16 +246,27 @@ ARM_B = {"attacker_model": "m-b", "judge_model": "j", "use_prior_experience": Tr
 
 
 def test_both_experiment_arms_detect_evidence_identically(make_client):  # FR-037
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"reply": "it said KESTREL-CANARY-7"}))
-    client = make_client(transport=transport, library=fixture_library(), judge=StubJudge(verdict="failed"),
-                         attacker=StubAttacker())
+    """Both arms run a planting family against a target that answers every run with that run's own joined
+    override form, read back from the store: only the full checker (never a canary-only fallback inside the
+    engine) can confirm these runs, and both arms must confirm all of theirs alike."""
+    from tests.support import in_progress_run_id, planted_values
+    state: dict = {}
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        store = state.get("store")
+        run_id = in_progress_run_id(store) if store is not None else None
+        joined = planted_values(store, run_id).get("joined", "") if run_id is not None else ""
+        return httpx.Response(200, json={"reply": f"as instructed: {joined}"})
+
+    client = make_client(transport=httpx.MockTransport(reply), library=fixture_library(),
+                         judge=StubJudge(verdict="failed"), attacker=StubAttacker())
     store = client.app.state.store
+    state["store"] = store
     terms = client.get("/api/config").json()["terms"]["version"]
     target = store.create_target(name="HS", url="http://t/chat", method="POST", headers=[],
                                  body_template='{"message":"{{prompt}}"}', response_path="$.reply", terms_version=terms)
-    store.set_canaries(target.id, ["KESTREL-CANARY-7"])
     created = client.post("/api/experiments", json={"target_id": target.id, "mode": "single_turn",
-                                                    "families": ["system_prompt_leak"], "reps": 2,
+                                                    "families": ["direct_injection"], "reps": 2,
                                                     "arm_a": ARM_A, "arm_b": ARM_B})
     assert created.status_code == 201, created.text
     status = await_experiment(client, created.json()["id"])
@@ -265,8 +276,11 @@ def test_both_experiment_arms_detect_evidence_identically(make_client):  # FR-03
         assert arm["confirmed"] == {"successes": 2, "n": 2, "rate": 1.0, "ci": arm["confirmed"]["ci"]}
         assert arm["suspected"]["successes"] == 0
     experiment = store.get_experiment(created.json()["id"])
+    tokens = set()
     for arm in experiment.arms:
         for run in store.arm_runs(experiment.id, arm.id):
             assert run.hard_evidence is True and run.judge_used is False
-            assert [i.kind for i in store.list_evidence(run.id)] == ["canary_in_reply"]
+            assert [i.kind for i in store.list_evidence(run.id)] == ["instruction_override"]
+            tokens.add(store.list_planted_tokens(run.id)[0].token)
+    assert len(tokens) == 4                                    # every run planted its own token (FR-008)
     assert result["comparison"]["confirmed"]["diff"] == 0.0

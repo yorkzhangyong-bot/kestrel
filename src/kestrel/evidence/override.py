@@ -213,8 +213,9 @@ def strip_planted_tasks(text: str, task_texts: Sequence[str]) -> str:
 
 def scrub_planted_values(text: str, values: Sequence[str]) -> str:
     """Replace each of the run's own planted values — a token part, the joined form, a callback URL — wherever
-    else it appears (FR-063). Longest first, so the joined form is replaced before either of its parts can split
-    it. A text containing none of them comes back unchanged."""
+    else it appears (FR-063), in any letter case: the override match is case-insensitive (FR-009), so a part an
+    attacker or a judge re-typed in another case is scrubbed all the same. Longest first, so the joined form is
+    replaced before either of its parts can split it. A text containing none of them comes back unchanged."""
     for value in sorted({v for v in values if v}, key=len, reverse=True):
-        text = text.replace(value, SCRUB_PLACEHOLDER)
+        text = re.sub(re.escape(value), SCRUB_PLACEHOLDER, text, flags=re.IGNORECASE)
     return text
