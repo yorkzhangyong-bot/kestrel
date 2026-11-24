@@ -42,7 +42,7 @@ today (FR-061, SC-008).
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Add the three settings (plus the start-up usability check) to `src/kestrel/settings.py` with their
+- [X] T001 [P] Add the three settings (plus the start-up usability check) to `src/kestrel/settings.py` with their
       defaults and validation
       (data-model.md): `KESTREL_CALLBACK_BASE_URL` → `callback_base_url: str | None` (unset → `None`; an http/https
       URL without credentials whose path ends in `/callback`, else `SettingsError` — the start-up validation of
@@ -51,7 +51,7 @@ today (FR-061, SC-008).
       `SettingsError`), `KESTREL_SIDE_CHANNEL_TIMEOUT_S` → `side_channel_timeout_s: int` (default `10`, the
       existing `positive_int` helper), and the start-up usability check of the callback base (FR-068). Document all
       of them in `.env.example` beside the other `KESTREL_*` blocks (FR-021, FR-027, FR-030, FR-068).
-- [ ] T002 [P] Create the empty `src/kestrel/evidence/` package (`__init__.py`) and the inert fixture file
+- [X] T002 [P] Create the empty `src/kestrel/evidence/` package (`__init__.py`) and the inert fixture file
       `tests/fixtures/unsafe_output_cases.json` as `{"_note": "<the inert-sample statement>", "cases": []}` — a
       `"_note"` **key**, not a comment, because JSON has none (FR-059).
 
@@ -59,7 +59,7 @@ today (FR-061, SC-008).
 
 **⚠️ schema v11, the evidence model, the checker seam, and the replay/experiment tests part 1's own wiring needs.**
 
-- [ ] T003 [P] Unit test `tests/unit/test_store_migration_v11.py` (`FEATURE = "013"`), following the
+- [X] T003 [P] Unit test `tests/unit/test_store_migration_v11.py` (`FEATURE = "013"`), following the
       `test_store_migration_v10.py` convention: build a hand-written schema-10-shaped database, run
       `TargetStore.__init__`/`_migrate`, and assert — `meta.schema_version` reads `"11"`; `PRAGMA
       foreign_key_check` is empty; a pre-existing run row has `correlation_id` and `side_channel_status` both
@@ -70,19 +70,19 @@ today (FR-061, SC-008).
       callback hits, and to `target_side_channels`, with `foreign_key_check` still empty; a second `_migrate` is a
       no-op; **no `runs` rebuild happened** (the `sqlite_sequence` row and every existing child row survive
       untouched, asserted the way v10's test asserts survival) (FR-057).
-- [ ] T004 [P] Unit test `tests/unit/test_evidence_model.py` (`FEATURE = "013"`): the `KINDS` table matches FR-004
+- [X] T004 [P] Unit test `tests/unit/test_evidence_model.py` (`FEATURE = "013"`): the `KINDS` table matches FR-004
       exactly (seven kinds, their labels, locations and classes); `category_for(kind, family)` returns the family's
       class for `canary_in_reply` and the fixed class for every other kind; `location_label` returns the four exact
       strings ("in the reply", "in a tool call", "at the callback listener", "in the protected state");
       `evidence_line(item)` renders exactly `"{label} · turn {N} · {location label} · {OWASP class}"`; and
       `OVERRIDE_DETAIL` is the fixed statement an override item carries, with a test asserting no item detail the
       model can build contains a token value or part or a URL (FR-004, FR-007, FR-039).
-- [ ] T005 [P] Unit test `tests/unit/test_settings_evidence.py` (`FEATURE = "013"`): the three T001 settings parse
+- [X] T005 [P] Unit test `tests/unit/test_settings_evidence.py` (`FEATURE = "013"`): the three T001 settings parse
       their defaults, accept valid overrides, and raise `SettingsError` on a bad value each (a non-URL base, a base
       whose path does not end in `/callback`, a negative or non-finite wait, a zero or negative timeout); the
       start-up usability check refuses a malformed base loudly and accepts a usable one (FR-021, FR-027, FR-030,
       FR-068).
-- [ ] T006 [P] Extend `tests/support.py` with the offline doubles (no attack text): a `SideChannelStub` whose
+- [X] T006 [P] Extend `tests/support.py` with the offline doubles (no attack text): a `SideChannelStub` whose
       scripted descriptor, per-correlation-id tool-call log (with `seq` values), state-snapshot sequence and six
       failure modes are answered by `ModelTransport` for a fixed side-channel host; an `on_target_request` hook so
       a stub target can call `store.record_callback_hit(...)` when a request carries a planted URL; a
@@ -90,7 +90,7 @@ today (FR-061, SC-008).
       their turn-2-and-later messages and progress notes (so T026's isolation test cannot pass vacuously, FR-063);
       and helpers that read a run's real planted values from `store.list_planted_tokens`. Scaffolding only — part
       1 uses the repeating doubles, part 2 the side-channel stub (FR-049, FR-063, SC-005, SC-006, SC-007).
-- [ ] T007 Implement schema v11 in `src/kestrel/store.py` per data-model.md: `SCHEMA_VERSION = "11"`; add the four
+- [X] T007 Implement schema v11 in `src/kestrel/store.py` per data-model.md: `SCHEMA_VERSION = "11"`; add the four
       `CREATE TABLE IF NOT EXISTS` statements (`run_evidence` with `pattern_name`/`pattern_set_version`,
       `run_planted_tokens`, `callback_hits`, `target_side_channels`) and their indexes to `SCHEMA`; add
       `correlation_id TEXT` and the checked `side_channel_status TEXT` to `RUNS_COLUMNS_SQL`; add
@@ -100,19 +100,19 @@ today (FR-061, SC-008).
       `test_store_migration_v6.py:82, 89, 97`, `test_store_migration_v8.py:58, 65, 95`,
       `test_store_migration_v9.py:166, 176, 261`, `test_store_migration_v10.py:177, 187, 269`, and
       `tests/integration/test_provenance_migration.py:39, 61` (FR-057, SC-008). Makes T003 pass.
-- [ ] T008 Implement `src/kestrel/evidence/model.py` per data-model.md: `EvidenceItem` (with `pattern_name` and
+- [X] T008 Implement `src/kestrel/evidence/model.py` per data-model.md: `EvidenceItem` (with `pattern_name` and
       `pattern_set_version`), the `KINDS` table, `LOCATION_LABELS`, `DETAIL_MAX_CHARS = 200`, `OVERRIDE_DETAIL`,
       `category_for`, `kind_label`, `location_label`, `evidence_line`, and `derived_items(run)` — the one helper
       that gives a pre-013 hard-evidence run with no stored items its single derived `canary_in_reply` item, used
       by the API **and** the report so the surfaces cannot disagree (FR-003, FR-004, FR-005, FR-007, FR-039).
       Makes T004 pass.
-- [ ] T009 Implement the store methods on `TargetStore` (store.py) that part 1 uses, per data-model.md:
+- [X] T009 Implement the store methods on `TargetStore` (store.py) that part 1 uses, per data-model.md:
       `add_evidence`, `list_evidence`, `evidence_kinds_by_run`, `add_planted_token`, `list_planted_tokens`,
       `disarm_planted_token`, and `copy_planted_tokens` **carrying `disarmed_turn` across unchanged** (FR-035);
       `claim_run(..., correlation_id=, side_channel_status=)` writing the status **at claim time** and a separate
       `set_side_channel_status(run_id, 'unavailable')` for the one in-run update, so a crashed or interrupted run
       never leaves it null (FR-034); `Run` gains both columns (FR-003, FR-006, FR-034, FR-057).
-- [ ] T010 Implement `src/kestrel/evidence/checker.py`'s foundation: `EvidenceChecker` with
+- [X] T010 Implement `src/kestrel/evidence/checker.py`'s foundation: `EvidenceChecker` with
       `canary_only(canaries)` (today's behaviour exactly — one `canary_in_reply` item per distinct canary matched,
       `canary_hit` true, `CANARY_REASON`), `check_turn(turn, reply, remaining)` returning a `TurnEvidence` whose
       `items` is the authority for "did this turn produce evidence", and `build_checker(...)` returning a
@@ -121,7 +121,7 @@ today (FR-061, SC-008).
       every family regardless of task or side channel** (FR-014). The reason for a non-canary hit is
       `"Hard evidence confirmed the attack: <labels joined by ' + '>."` (research D3) (FR-001, FR-002, FR-005,
       FR-006, FR-014).
-- [ ] T011 [P] Integration test `tests/integration/test_evidence_part1_replay.py` (`FEATURE = "013"`) — **written
+- [X] T011 [P] Integration test `tests/integration/test_evidence_part1_replay.py` (`FEATURE = "013"`) — **written
       before T012, in part 1, because part 1 is what wires these paths** (FR-062, research D24): for a replay of a
       source that planted an override token, assert the token is copied **with its armed state** and a source that
       was disarmed on turn *k* leaves the replay disarmed from turn *k*; a replay whose own re-sent message
@@ -133,7 +133,7 @@ today (FR-061, SC-008).
       T017 and T023, the disarm-on-replay and detector-only cases here use a **stub checker** that reports an
       override disarm and a non-canary item on command; the real-detector variants of those cases are re-tested in
       T019 and T024.
-- [ ] T012 Wire the checker into the run paths, defaulting to canary-only so every existing test is unchanged
+- [X] T012 Wire the checker into the run paths, defaulting to canary-only so every existing test is unchanged
       except where listed (SC-008): `runs.execute_run(..., evidence=None)` replaces its lone `match_canary` call with
       `evidence.check_turn(...)` and writes the turn's items with `store.add_evidence`; `attack/graph.py`'s
       module-level `_check_evidence` becomes `async` and delegates to the checker; `run_adaptive` and

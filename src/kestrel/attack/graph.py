@@ -1,11 +1,13 @@
 """The adaptive attacker/judge loop as a LangGraph graph (contracts/adaptive-loop.md, Principle X).
 
 LangGraph orchestrates; the attacker and judge model calls are plain httpx (their own clients). The loop claims a
-run row, drives the conversation turn by turn under three caps, and finishes the row. Canary first, judge only if
-nothing matched (Principle II); hard_evidence comes from a canary alone. Every message and reply is masked before
-it is stored, judged or handed to the attacker (Principle IV, FR-021). No attack text lives here. Feature 010: the
-loop emits `run.start` once the row is claimed and one `turn` line per recorded turn (lengths, categories, totals);
-the turn number and the turn span ride on the shared run context, which every graph node sees.
+run row, drives the conversation turn by turn under three caps, and finishes the row. The deterministic checks
+first, the judge only if none found evidence (Principle II; feature 013: the evidence checker runs the canary and
+the two reply detectors in the fixed order of 013/FR-001, and `evidence_node` delegates to it); hard_evidence comes
+from a deterministic check alone. Every message and reply is masked before it is stored, judged or handed to the
+attacker (Principle IV, FR-021). No attack text lives here. Feature 010: the loop emits `run.start` once the row is
+claimed and one `turn` line per recorded turn (lengths, categories, totals); the turn number and the turn span
+ride on the shared run context, which every graph node sees.
 """
 from __future__ import annotations
 
@@ -21,8 +23,9 @@ from kestrel.attack.attacker import AttackerError
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
+from kestrel.evidence.checker import EvidenceChecker, TurnEvidence, build_checker
 from kestrel.judge.client import JudgeError
-from kestrel.runs import attacker_ref, judge_ref, match_canary
+from kestrel.runs import attacker_ref, judge_ref
 from kestrel.secrets import mask_values
 from kestrel.store import Run, TargetStore, Turn
 
@@ -63,6 +66,7 @@ class _State(TypedDict, total=False):
     pending_reply: str | None
     pending_truncated: bool
     pending_canary: bool                  # a canary matched this turn's reply (feature 010: the turn line)
+    pending_evidence: TurnEvidence | None  # this turn's deterministic findings (feature 013); None before the check
     outcome: dict[str, Any] | None        # set exactly once, when the run ends
 
 
@@ -111,12 +115,16 @@ async def _judge_turn(state: _State, *, judge: _Judge, judge_prompt: str | None,
 
 
 async def _send_turn(state: _State, *, resolved: ResolvedSettings, mode: str, sender: Sender, transport: Any,
-                     resolver: Any, remaining: Callable[[], float], secrets: list[str]) -> _State:
+                     resolver: Any, remaining: Callable[[], float], secrets: list[str],
+                     evidence: EvidenceChecker) -> _State:
     """send_node's existing body, unchanged in substance (stated explicitly so the lift cannot silently drop it):
     still masks the reply with `mask_values(outcome.reply_text or "", secrets)` before returning it - a replay's
     own stored reply is masked exactly as a live run's is, never the attacker message (which arrives already
     masked, FR-001). `secrets` is a parameter, not something this function closes over - run_adaptive and
-    run_replay_adaptive each pass their own target's secret values."""
+    run_replay_adaptive each pass their own target's secret values. Feature 013: every message is handed to the
+    checker's `note_sent` before it goes out - the one place both a live run's and a replay's messages pass
+    through - so the override token is disarmed by the text actually sent (013/FR-012, FR-035)."""
+    evidence.note_sent(state["pending_message"], state["turns_used"] + 1)
     outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
                            deadline_s=max(0.1, min(SEND_LIMIT_S, remaining())), prompt=state["pending_message"])
     if not outcome.ok:
@@ -128,14 +136,17 @@ async def _send_turn(state: _State, *, resolved: ResolvedSettings, mode: str, se
     return {"pending_reply": reply, "pending_truncated": bool(outcome.reply_truncated)}
 
 
-def _check_evidence(state: _State, canaries: list[str]) -> _State:
-    """evidence_node's existing body, unchanged in substance."""
-    if match_canary(state["pending_reply"] or "", canaries) is not None:
-        return {"pending_canary": True,
-                "outcome": {"verdict": "succeeded", "hard_evidence": True, "reason": CANARY_REASON,
-                            "judge_used": state["judge_used"], "stopping_condition": "succeeded",
-                            "succeeded_turn": state["turns_used"] + 1}}
-    return {}
+async def _check_evidence(state: _State, evidence: EvidenceChecker, remaining: Callable[[], float]) -> _State:
+    """evidence_node's body: the checker's deterministic checks over this turn's reply, in the fixed order
+    (013/FR-001). Any item ends the run as succeeded with hard evidence and no judge call (013/FR-002);
+    `pending_canary` keeps its narrower meaning (a canary matched) for the turn line's `canary_hit`."""
+    found = await evidence.check_turn(state["turns_used"] + 1, state["pending_reply"] or "", remaining)
+    update: _State = {"pending_canary": found.canary_hit, "pending_evidence": found}
+    if found.items:
+        update["outcome"] = {"verdict": "succeeded", "hard_evidence": True, "reason": found.reason,
+                             "judge_used": state["judge_used"], "stopping_condition": "succeeded",
+                             "succeeded_turn": state["turns_used"] + 1}
+    return update
 
 
 def _decide_next(state: _State, *, max_turns: int, token_budget: int, remaining: Callable[[], float]) -> _State:
@@ -165,16 +176,25 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                        sender: Sender = run_test, mode: str = "local", transport=None, resolver=default_resolver,
                        max_turns: int, token_budget: int, time_limit_s: float,
                        use_prior_experience: bool = True, hint_provider: Callable[[list], str | None] | None = None,
-                       clock: Callable[[], float] = time.monotonic) -> Run:
+                       clock: Callable[[], float] = time.monotonic,
+                       evidence: EvidenceChecker | None = None) -> Run:
     """Claim an adaptive run, drive the loop to an outcome, finish and return it. May raise RunInProgress (409).
 
-    `hint_provider(conversation)` (feature 004) returns the attacker's background block each turn, or None."""
+    `hint_provider(conversation)` (feature 004) returns the attacker's background block each turn, or None.
+    `evidence` (feature 013) is the run's deterministic checker; None is the canary-only checker - today's
+    behaviour exactly (013/FR-002, research D2)."""
+    checker = evidence if evidence is not None else EvidenceChecker.canary_only(canaries, family=seed_prompt.family,
+                                                                                 store=store)
+    # Turn 1 sends the seed with any planted task placed at its insertion point (013/FR-011); the stored
+    # prompt_text is that same text, so a replay re-sends exactly what went out (013/FR-035).
+    opening = checker.opening_message(seed_prompt)
     run_id = store.claim_run(target_id, prompt_id=seed_prompt.id, prompt_title=seed_prompt.title,
-                             prompt_text=seed_prompt.text, family=seed_prompt.family,
+                             prompt_text=opening, family=seed_prompt.family,
                              owasp_category=seed_prompt.owasp_category, attacker_source=attacker_source,
                              mode="adaptive", attacker_model=attacker.model, turn_budget=max_turns,
                              token_budget=token_budget, time_limit_s=int(time_limit_s),
                              use_prior_experience=use_prior_experience)
+    checker.bind_run(run_id)   # records what the run planted, right after the claim (013/FR-008)
     deadline = clock() + time_limit_s
     secrets = [value for _, value in resolved.headers]
     # Prompt-version provenance (feature 009, FR-003): the attacker (per family) and judge prompt versions are
@@ -199,7 +219,8 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
         turn = state["turns_used"] + 1
         events.turn_started(turn)   # every line of this turn carries its number, through all the nodes
         if turn == 1:
-            return {"pending_message": mask_values(seed_prompt.text, secrets), "pending_canary": False}
+            return {"pending_message": mask_values(opening, secrets), "pending_canary": False,
+                    "pending_evidence": None}
         hints = None
         if hint_provider is not None:
             try:
@@ -215,14 +236,14 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                                 "judge_used": state["judge_used"], "stopping_condition": "attacker_failed",
                                 "succeeded_turn": None}}
         return {"pending_message": mask_values(reply.message, secrets), "pending_canary": False,
-                "tokens_used": state["tokens_used"] + reply.tokens}
+                "pending_evidence": None, "tokens_used": state["tokens_used"] + reply.tokens}
 
     async def send_node(state: _State) -> _State:
         return await _send_turn(state, resolved=resolved, mode=mode, sender=sender, transport=transport,
-                                resolver=resolver, remaining=remaining, secrets=secrets)
+                                resolver=resolver, remaining=remaining, secrets=secrets, evidence=checker)
 
-    def evidence_node(state: _State) -> _State:
-        return _check_evidence(state, canaries)
+    async def evidence_node(state: _State) -> _State:
+        return await _check_evidence(state, checker, remaining)
 
     async def judge_node(state: _State) -> _State:
         return await _judge_turn(state, judge=judge, judge_prompt=judge_prompt, remaining=remaining,
@@ -239,6 +260,10 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                        attacker_prompt_version=attacker_prompt_version if turn >= 2 else None,
                        judge_prompt_id=judge_prompt_id if judged else None,
                        judge_prompt_version=judge_prompt_version if judged else None)
+        found = state.get("pending_evidence")
+        items = found.items if found is not None else []
+        if items:   # the turn's evidence items, right after its turn row (013/FR-003)
+            store.add_evidence(run_id, items)
         reply = state.get("pending_reply")
         canary = bool(state.get("pending_canary", False))
         events.turn_ended(turn=turn, source=f"library:{seed_prompt.id}" if turn == 1 else
@@ -246,8 +271,8 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                           message_chars=len(state["pending_message"]),
                           reply_chars=None if reply is None else len(reply),
                           reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
-                          hard_evidence=canary, judged=judged, verdict=state.get("last_verdict") if judged else None,
-                          attacker_generated=turn >= 2)
+                          hard_evidence=bool(items), judged=judged,
+                          verdict=state.get("last_verdict") if judged else None, attacker_generated=turn >= 2)
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]
         if state.get("pending_reply") is not None:
             conversation.append(("agent", state["pending_reply"]))
@@ -310,7 +335,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                               canaries: list[str], resolved: ResolvedSettings, judge: _Judge, sender: Sender = run_test,
                               mode: str = "local", transport: Any = None, resolver: Any = default_resolver,
                               max_turns: int, token_budget: int, time_limit_s: float,
-                              clock: Callable[[], float] = time.monotonic) -> Run:
+                              clock: Callable[[], float] = time.monotonic,
+                              evidence: EvidenceChecker | None = None) -> Run:
     """Replay an adaptive source, turn by turn, with no attacker-model call (feature 012, FR-001, FR-002,
     FR-007 to FR-011). `run_adaptive`'s six-node shape, minus `hint_provider` (a replay never calls the
     experience store, FR-025), sharing `_judge_turn`/`_send_turn`/`_check_evidence`/`_decide_next` (above) and
@@ -321,7 +347,13 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
 
     On an unexpected failure, closes the row inconclusive and raises `kestrel.replay.ReplayFailed(run_id)`,
     chained from the original error - a deliberate *addition* over `run_adaptive`, which has no such handler and
-    is not given one (FR-049; research D15)."""
+    is not given one (FR-049; research D15).
+
+    Feature 013: the replay copies the source's planted tokens to its own row, armed state included, and builds
+    its checker from those copies (`evidence=None`), so the override check verifies against the source's token
+    and a message that disarmed the source disarms the replay at the same turn (013/FR-035); a source that
+    planted nothing gives it no tokens (013/FR-036). Each turn's `turn_results` entry is derived from whether
+    that turn produced any evidence item, never from the canary flag alone (013/FR-035, research D23)."""
     from kestrel.replay import ReplayFailed, compute_outcome   # lazy: avoids a module-level cycle (research D14)
 
     run_id = store.claim_run(target_id, prompt_id=source.prompt_id, prompt_title=source.prompt_title,
@@ -336,6 +368,11 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
     try:
         deadline = clock() + time_limit_s
         secrets = [value for _, value in resolved.headers]
+        store.copy_planted_tokens(source.id, run_id)
+        checker = evidence if evidence is not None else build_checker(
+            store=store, family=source.family, canaries=canaries, mode=mode, transport=transport,
+            resolver=resolver, planted=store.list_planted_tokens(run_id))
+        checker.bind_run(run_id)
         judge_prompt = judge_ref(judge) if judge.configured else None
         judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
         judge_requests_box = [0]
@@ -354,7 +391,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
             turn = state["turns_used"] + 1
             events.turn_started(turn)
             if turn <= len(source_turns):
-                return {"pending_message": source_turns[turn - 1].attacker_message, "pending_canary": False}
+                return {"pending_message": source_turns[turn - 1].attacker_message, "pending_canary": False,
+                        "pending_evidence": None}
             # Defensive: unreachable while max_turns <= len(source_turns), the same decide_node turn-cap shape
             # (research D2) in case this is ever called with a looser max_turns.
             return {"outcome": {"verdict": state["last_verdict"] or "unclear", "hard_evidence": False,
@@ -364,10 +402,10 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
 
         async def send_node(state: _State) -> _State:
             return await _send_turn(state, resolved=resolved, mode=mode, sender=sender, transport=transport,
-                                    resolver=resolver, remaining=remaining, secrets=secrets)
+                                    resolver=resolver, remaining=remaining, secrets=secrets, evidence=checker)
 
-        def evidence_node(state: _State) -> _State:
-            return _check_evidence(state, canaries)
+        async def evidence_node(state: _State) -> _State:
+            return await _check_evidence(state, checker, remaining)
 
         async def judge_node(state: _State) -> _State:
             return await _judge_turn(state, judge=judge, judge_prompt=judge_prompt, remaining=remaining,
@@ -386,6 +424,10 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                            attacker_prompt_version=source_turn.attacker_prompt_version,
                            judge_prompt_id=judge_prompt_id if judged else None,
                            judge_prompt_version=judge_prompt_version if judged else None)
+            found = state.get("pending_evidence")
+            items = found.items if found is not None else []
+            if items:   # the turn's evidence items, right after its turn row (013/FR-003)
+                store.add_evidence(run_id, items)
             reply = state.get("pending_reply")
             canary = bool(state.get("pending_canary", False))
             source_label = (f"library:{source.prompt_id}" if turn == 1
@@ -393,9 +435,10 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
             events.turn_ended(turn=turn, source=source_label, message_chars=len(state["pending_message"]),
                               reply_chars=None if reply is None else len(reply),
                               reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
-                              hard_evidence=canary, judged=judged,
+                              hard_evidence=bool(items), judged=judged,
                               verdict=state.get("last_verdict") if judged else None, attacker_generated=False)
-            turn_results.append("succeeded" if canary else (state.get("last_verdict") if judged else None))
+            # Any evidence item of any kind decides this turn (013/FR-035, research D23) - never the canary alone.
+            turn_results.append("succeeded" if items else (state.get("last_verdict") if judged else None))
             conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]
             if reply is not None:   # the already-bound local narrows to str for mypy, not a fresh state.get() (item 16)
                 conversation.append(("agent", reply))

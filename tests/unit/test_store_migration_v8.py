@@ -55,14 +55,14 @@ def v7_db(tmp_path, vault):
 def test_a_fresh_database_is_created_at_version_8_with_the_run_log(tmp_path, vault):  # FR-010
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "10"   # bumped to 9 for feature 011, to 10 for feature 012
+    assert version(path) == SCHEMA_VERSION == "11"   # bumped to 9 for feature 011, to 10 for feature 012
     assert "run_log" in tables(path)
 
 
 def test_a_v7_database_gains_the_run_log_and_keeps_its_runs(v7_db, vault):  # FR-010
     assert version(v7_db) == "7" and "run_log" not in tables(v7_db)
     store = TargetStore(v7_db, vault)
-    assert version(v7_db) == "10" and "run_log" in tables(v7_db)
+    assert version(v7_db) == "11" and "run_log" in tables(v7_db)
     assert store.get_run(1).verdict == "failed"      # the existing run survived
     assert store.list_log_lines(1) == []             # a pre-feature run simply has no kept lines
 
@@ -92,7 +92,7 @@ def test_deleting_the_target_deletes_its_runs_lines(v7_db, vault):  # FR-010
 def test_opening_twice_is_harmless(v7_db, vault):
     TargetStore(v7_db, vault)
     TargetStore(v7_db, vault)
-    assert version(v7_db) == "10"
+    assert version(v7_db) == "11"
 
 
 def test_an_unknown_version_is_still_refused(tmp_path, vault):  # FR-010 (the R11 guard preserved)

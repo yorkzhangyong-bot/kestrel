@@ -36,7 +36,7 @@ def _schema_version(path):
 def test_a_fresh_database_is_version_7_with_the_prompt_columns(tmp_path):  # 009/FR-004
     path = tmp_path / "k.db"
     TargetStore(path, Vault(Fernet.generate_key()))
-    assert _schema_version(path) == SCHEMA_VERSION == "10"   # bumped to 9 for feature 011, to 10 for feature 012
+    assert _schema_version(path) == SCHEMA_VERSION == "11"   # bumped to 9 for feature 011, to 10 for feature 012
     for table, cols in NEW_COLUMNS.items():
         assert cols <= _columns(path, table)
 
@@ -58,7 +58,7 @@ def test_a_version_6_database_is_migrated_additively(tmp_path):  # 009/FR-004
     TargetStore(path, Vault(Fernet.generate_key()))                # re-open migrates v6 -> v7
     for table, cols in NEW_COLUMNS.items():
         assert cols <= _columns(path, table)                       # re-added
-    assert _schema_version(path) == "10"   # bumped to 10 for feature 012
+    assert _schema_version(path) == "11"   # bumped to 10 for feature 012
 
 
 def test_an_unknown_future_version_is_refused(tmp_path):  # 009/FR-004 (R11 guard preserved)

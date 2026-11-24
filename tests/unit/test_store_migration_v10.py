@@ -174,7 +174,7 @@ CLAIM = dict(prompt_title="t3", prompt_text="<seed3>", family="system_prompt_lea
 def test_a_fresh_database_is_created_at_version_10_with_the_widened_mode_check(tmp_path, vault):  # 012/FR-020
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "10"
+    assert version(path) == SCHEMA_VERSION == "11"
     assert "'REPLAY'" in runs_table_sql(path).upper()
 
 
@@ -184,7 +184,7 @@ def test_a_v9_database_is_rebuilt_and_keeps_every_row(v9_db, vault):  # 012/FR-0
 
     store = TargetStore(v9_db, vault)
 
-    assert version(v9_db) == SCHEMA_VERSION == "10"
+    assert version(v9_db) == SCHEMA_VERSION == "11"
     assert foreign_key_violations(v9_db) == []
 
     runs = {r.id: r for r in store.list_runs(1)}
@@ -266,7 +266,7 @@ def test_migrating_an_already_v10_database_a_second_time_is_a_no_op(v9_db, vault
     TargetStore(v9_db, vault)
     before = runs_table_sql(v9_db)
     TargetStore(v9_db, vault)
-    assert version(v9_db) == "10"
+    assert version(v9_db) == "11"
     assert runs_table_sql(v9_db) == before
 
 

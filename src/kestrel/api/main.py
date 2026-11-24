@@ -27,6 +27,7 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
 from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
+from kestrel.evidence.checker import build_checker
 from kestrel.experience.retrieval import background_provider
 from kestrel.experience.store import (EMBEDDING_MODEL_MISMATCH_MESSAGE, SPACE_MISMATCH_MESSAGE,
                                       EmbeddingModelMismatch, ExperienceStore, ExperienceStoreError, SpaceMismatch,
@@ -330,6 +331,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
+        canaries = store.list_canaries(target.id)
+        # The run's deterministic checker (feature 013): the one shared builder the experiment engine uses too.
+        checker = build_checker(store=store, family=prompt.family, canaries=canaries, mode=settings.mode,
+                                target=target, settings=settings, transport=request.app.state.transport,
+                                resolver=request.app.state.resolver)
         # The attacker's background each turn (feature 004 FR-021): the one shared retrieval path of feature 011 —
         # the attacker-only query, the floor and the de-duplication — identical for an experiment-executed run.
         hint_provider = background_provider(request.app.state.experience, target_id=target.id,
@@ -343,20 +349,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                 if body.mode == "adaptive":
                     run = await execute_adaptive_run(
                         store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
-                        canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
+                        canaries=canaries, resolved=resolved, mode=settings.mode,
                         attacker=request.app.state.attacker, judge=request.app.state.judge,
                         max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                         time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                         resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
-                        hint_provider=hint_provider)
+                        hint_provider=hint_provider, evidence=checker)
                 else:
                     run = await execute_run(store, target_id=target.id, prompt=prompt,
                                             attacker_source=library.attacker_source,
-                                            canaries=store.list_canaries(target.id), resolved=resolved,
+                                            canaries=canaries, resolved=resolved,
                                             mode=settings.mode, judge=request.app.state.judge,
                                             transport=request.app.state.transport,
                                             resolver=request.app.state.resolver,
-                                            use_prior_experience=body.use_prior_experience)
+                                            use_prior_experience=body.use_prior_experience, evidence=checker)
             except RunInProgress:
                 return api_error(409, "run_in_progress", "A run against this target is already in progress.")
             # Write back to the experience store after every run; a failure is loud, never discards the run

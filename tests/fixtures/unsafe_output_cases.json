@@ -1,0 +1,4 @@
+{
+  "_note": "Inert sample agent OUTPUT for the unsafe-executable-output detector (feature 013). Every text below is test data that is never executed, sourced or run by any test or tool; none is an attack prompt. Each case is tagged with the stable pattern name it exercises: a positive case must match exactly that pattern, a negative case must match no pattern at all.",
+  "cases": []
+}

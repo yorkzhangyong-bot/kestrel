@@ -2,7 +2,10 @@
 attacker message(s) verbatim, with no attacker-model call, score each reply exactly as a live run does, and report
 one outcome against the source - fixed, still vulnerable, or inconclusive. A replay never queries or writes the
 shared pattern pool or a target's memory (FR-025, FR-026); it never imports kestrel.experience (defence in depth,
-research "Experience isolation" code-fact).
+research "Experience isolation" code-fact). Feature 013: a replay is scored by the same deterministic checks in
+the same order as a live run - it copies its source's planted tokens (armed state included) and builds its
+evidence checker from them, applies the same echo check to every message it re-sends, and derives each turn's
+result from whether that turn produced any evidence item, never from the canary alone (013/FR-035, FR-036).
 """
 from __future__ import annotations
 
@@ -13,8 +16,9 @@ from typing import Any, Awaitable, Callable
 from kestrel import events, prompt_registry
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
+from kestrel.evidence.checker import EvidenceChecker, build_checker
 from kestrel.judge.client import JudgeError
-from kestrel.runs import JUDGE_LIMIT_S, SEND_LIMIT_S, TOTAL_DEADLINE_S, judge_ref, match_canary
+from kestrel.runs import JUDGE_LIMIT_S, SEND_LIMIT_S, TOTAL_DEADLINE_S, judge_ref
 from kestrel.secrets import mask_values
 from kestrel.store import Run, RunInProgress, Target, TargetStore, Turn
 
@@ -246,7 +250,8 @@ def build_comparison(source: Run, source_turns: list[Turn], replay: Run, replay_
 
 
 def _finish_single_turn(store: TargetStore, run_id: int, source: Run, *, turn_results: list[str | None],
-                        canary_hit: bool = False, judged: bool = False, **fields: Any) -> Run:
+                        canary_hit: bool = False, judged: bool = False, evidence_kinds: list[str] | None = None,
+                        **fields: Any) -> Run:
     """Emit the replay's one `turn` line, finish the row with its computed outcome, and stash it for `run.end`
     (mirrors `runs.py::_finish`, plus `replay_outcome`)."""
     reply = fields.get("reply_text")
@@ -264,9 +269,13 @@ def _finish_single_turn(store: TargetStore, run_id: int, source: Run, *, turn_re
 async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[Turn], resolved: ResolvedSettings,
                          mode: str, judge: Any, sender: Sender = run_test, transport: Any = None,
                          resolver: Any = default_resolver, adaptive_max_turns: int, adaptive_token_budget: int,
-                         adaptive_time_limit_s: int, clock: Callable[[], float] = time.monotonic) -> Run:
+                         adaptive_time_limit_s: int, clock: Callable[[], float] = time.monotonic,
+                         evidence: EvidenceChecker | None = None) -> Run:
     """Dispatch on `source.mode` (research D1). The caller runs `check_replayable(source)` first, before claiming
     anything (FR-004 to FR-006) - this function raises nothing eligibility-related of its own.
+
+    `evidence` (feature 013) replaces the checker the replay would build from its source's copied tokens - a
+    test seam; every real caller leaves it None (013/FR-035).
 
     Once a row is claimed, any exception from sending or judging closes it (`verdict="unclear",
     replay_outcome="inconclusive"`) and raises `ReplayFailed(run_id)`, chained from the original - mirroring
@@ -283,10 +292,11 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
             store, target_id=source.target_id, source=source, source_turns=source_turns, canaries=canaries,
             resolved=resolved, judge=judge, sender=sender, mode=mode, transport=transport, resolver=resolver,
             max_turns=max_turns, token_budget=adaptive_token_budget, time_limit_s=adaptive_time_limit_s,
-            clock=clock)
+            clock=clock, evidence=evidence)
 
-    # source.mode == "single_turn": a body shaped like runs.py::execute_run - one send, canary first, then the
-    # judge only when no canary matched and a judge is configured, with no `conversation` argument (FR-008).
+    # source.mode == "single_turn": a body shaped like runs.py::execute_run - one send, the deterministic checks
+    # first, then the judge only when none found evidence and a judge is configured, with no `conversation`
+    # argument (FR-008).
     run_id = store.claim_run(source.target_id, prompt_id=source.prompt_id, prompt_title=source.prompt_title,
                              prompt_text=source.prompt_text, family=source.family,
                              owasp_category=source.owasp_category, attacker_source=source.attacker_source,
@@ -296,6 +306,13 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
     # below - judge_ref included - must still close the row, never leave it in_progress (locking the target)
     # until the start-up sweep.
     try:
+        # The source's planted tokens, copied armed-state-and-all, are what the replay verifies against
+        # (013/FR-035); a source that planted nothing gives it no tokens (013/FR-036).
+        store.copy_planted_tokens(source.id, run_id)
+        checker = evidence if evidence is not None else build_checker(
+            store=store, family=source.family, canaries=canaries, mode=mode, transport=transport,
+            resolver=resolver, planted=store.list_planted_tokens(run_id))
+        checker.bind_run(run_id)
         judge_prompt = judge_ref(judge) if judge.configured else None
         events.run_started(store, run_id=run_id, target_id=source.target_id, mode="replay", family=source.family,
                            prompt_id=source.prompt_id, attacker_source=source.attacker_source,
@@ -306,6 +323,7 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
         deadline = clock() + TOTAL_DEADLINE_S
         secrets = [value for _, value in resolved.headers]
         send_budget = max(0.1, min(SEND_LIMIT_S, deadline - clock()))
+        checker.note_sent(source.prompt_text, 1)   # the same echo check a live run applies (013/FR-012, FR-035)
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
                                deadline_s=send_budget, prompt=source.prompt_text)
         if not outcome.ok:
@@ -318,10 +336,12 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
         reply = mask_values(outcome.reply_text or "", secrets)[:MAX_REPLY_CHARS]
         truncated = bool(outcome.reply_truncated)
 
-        hit = match_canary(reply, canaries)
-        if hit is not None:
-            return _finish_single_turn(store, run_id, source, turn_results=["succeeded"], canary_hit=True,
-                                       verdict="succeeded", hard_evidence=True, reason=CANARY_REASON,
+        found = await checker.check_turn(1, reply, lambda: deadline - clock())
+        if found.items:   # any evidence item of any kind decides the turn (013/FR-035, research D23)
+            store.add_evidence(run_id, found.items)
+            return _finish_single_turn(store, run_id, source, turn_results=["succeeded"],
+                                       canary_hit=found.canary_hit, evidence_kinds=found.kinds,
+                                       verdict="succeeded", hard_evidence=True, reason=found.reason,
                                        reply_text=reply, reply_truncated=truncated, tokens_used=0)
 
         if not judge.configured:
