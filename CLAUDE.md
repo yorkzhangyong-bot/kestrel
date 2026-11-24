@@ -360,9 +360,10 @@ same commit. Before opening any implementation PR, review this file and add anyt
   the inert samples (3 positive + 3 negative per pattern) only in `tests/fixtures/unsafe_output_cases.json`; a
   unit test parses `contracts/detectors.md`'s own table and set version so the contract, the module and the
   fixture cannot drift. Gotchas while writing them: Python refuses an inline `(?i)` that is not at the start of
-  the expression (use the `flags=` argument when the pattern is an alternation), and an attribute-value class of
-  `[^"']*` stops at the *other* quote, so an `onerror="fetch('…')"` never matched until each quoting style got
-  its own branch. **FR-063** strips the run's exact filled task text and scrubs its planted values at every
+  the expression (use the `flags=` argument when the pattern is an alternation), and an attribute-value class that
+  excludes *both* quote characters stops at the first inner quote of the other kind — the usual shape of an
+  event-handler value whose code contains a quoted string — so such a value never matched until each quoting
+  style got its own branch. **FR-063** strips the run's exact filled task text and scrubs its planted values at every
   experience-store and retrieval boundary (`writeback._winning_messages`, the judge progress notes the summary is
   built from, `retrieval.build_query`); the checker is built **before** the provider and the write-back so both
   receive this run's values, and `tests/support.py`'s `RepeatingStubAttacker`/`RepeatingStubJudge` (which echo the
