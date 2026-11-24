@@ -393,9 +393,13 @@ same commit. Before opening any implementation PR, review this file and add anyt
   from the live registry — now compared against `prompt_registry.active_ref`, so no version literal can go stale
   again — and `tests/unit/test_experience_summary.py`, whose fallback-summary assertion pinned the old
   "canary hard evidence" suffix (now "; hard evidence": any deterministic proof, review round 1 item 13). The
-  unsafe-output boundary after review round 2: a SQL statement must start its line (a *named* client prompt
-  such as `mysql>` allowed, a bare `#`/`>`/`$` not), so an embedded "run: DROP TABLE x;" after prose is a known
-  recall cost; `eval` counts only at a command position; a shell or runtime given its own program inline
-  (`-c`/`-e`) reads a piped download as data; a non-JavaScript `type` makes a script element a data block; a
+  unsafe-output boundary after review rounds 2 and 3: a SQL statement must start its line (a *named* client
+  prompt such as `mysql>` allowed, a bare `#`/`>`/`$` not) or be wrapped in inline-code backticks, so a
+  destructive statement embedded after prose on the same line without backticks is a known recall cost (no
+  upper-case-keywords rule, which would re-match a prose warning that quotes a statement); `eval` counts only when
+  applied directly to the download's substitution; a shell or runtime given its own program inline (`-c`/`-e`)
+  reads a piped download as data, judged within the piped command itself (never from a later command's flag on
+  the line); a non-JavaScript `type` makes a script element a data block, and `data-type` is not `type`; a
   no-op `javascript:` URI is not a sink; and the tag context is an attribute-list grammar on one line, never
-  a `<` comparison.
+  a `<` comparison (a tag split across lines is a declared recall cost). Any example of a dangerous statement
+  belongs in the fixture only — docs and commit messages describe the boundary behaviourally.
