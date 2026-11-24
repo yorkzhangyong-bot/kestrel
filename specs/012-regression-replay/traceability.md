@@ -46,9 +46,12 @@ remaining 5 are justified below (`uv run python scripts/check_traceability.py`).
 | SC-006 | `tests/integration/test_replay_batch.py` (N entries oldest-first, the cap refusal, the two incomplete-batch shapes) |
 | SC-007 | `tests/unit/test_check_replay_script.py` (every exit code, including the incomplete-batch and "still vulnerable wins" cases) |
 | SC-010 | `tests/e2e/test_us012_replay.py` |
-| FR-050 | `tests/unit/test_roadmap.py::test_012_is_listed_under_done_and_no_longer_planned` (listed under Done, no longer in Next features) |
 
 ## Untraced ids (justified)
+
+- 012/FR-050: documentation requirement (the implementation pull request, never the spec-only one, marked
+  regression replay done in the roadmap and removed it from the planned items), verified in the 012 PR review;
+  no test pins doc wording (CLAUDE.md rule, 2026-11-24 — `tests/unit/test_roadmap.py` was removed under it).
 
 - 012/FR-032: a batch replay's per-run turn and time limits are the same `adaptive_max_turns`/`adaptive_token_budget`/`adaptive_time_limit_s` values `execute_batch_replay` forwards unchanged to `execute_replay` for each entry (`src/kestrel/replay.py::execute_batch_replay`) — there is no batch-specific cap logic of its own to exercise beyond what FR-011 already proves at the single-replay level (`tests/integration/test_replay_run.py::test_a_lower_current_turn_limit_stops_the_replay_short_and_is_inconclusive_never_fixed`). A dedicated batch-level timing test would duplicate that assertion through an extra HTTP round trip without exercising any additional code path.
 - 012/FR-046: no attack-prompt text anywhere in this feature's own code, tests, fixtures, or commits — a process/authoring rule checked by inspection (every test in this feature uses neutral placeholder messages, e.g. `"<seed message>"`, `"<turn N>"`, `"a harmless reply"`), the same bar every other feature's tests already hold themselves to; not a single testable behaviour.
