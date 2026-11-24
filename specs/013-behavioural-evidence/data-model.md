@@ -300,8 +300,10 @@ class EvidenceChecker:
     @property
     def extra_headers(self) -> dict[str, str]                                 # {"X-Kestrel-Correlation-Id": ...} or {}
 
-def build_checker(*, store, target, settings, family, mode, canaries, transport=None, resolver=default_resolver,
-                  planted: Sequence[PlantedToken] | None = None) -> EvidenceChecker
+def build_checker(*, store, family, canaries, mode="local", target=None, settings=None, transport=None,
+                  resolver=default_resolver, planted: Sequence[PlantedToken] | None = None) -> EvidenceChecker
+#   target/settings default to None: a replay builds its checker inside execute_replay/run_replay_adaptive, whose
+#   pre-existing direct-call tests pass neither (SC-008); None means "no side channel" and "no listener" there
 #   planted=None  -> a live run: plant per family (FR-011, FR-028); planted=[...] -> a replay: verify against these,
 #   plant nothing (FR-035, FR-036). The side channel comes from target.side_channel (None -> not_configured).
 ```
@@ -310,7 +312,7 @@ def build_checker(*, store, target, settings, family, mode, canaries, transport=
 
 | Variable | Setting | Default | Rule |
 |----------|---------|---------|------|
-| `KESTREL_CALLBACK_BASE_URL` | `callback_base_url: str \| None` | unset → `None` (listener disabled, nothing planted) | an http/https URL without credentials; anything else refuses to start |
+| `KESTREL_CALLBACK_BASE_URL` | `callback_base_url: str \| None` | unset → `None` (listener disabled, nothing planted) | an http/https URL without credentials whose path ends in the listener's own `/callback` prefix (FR-027, `contracts/callback-listener.md`); anything else refuses to start |
 | `KESTREL_CALLBACK_WAIT_S` | `callback_wait_s: float` | `2` | a finite number ≥ 0 (`0` = check once, never sleep) |
 | `KESTREL_SIDE_CHANNEL_TIMEOUT_S` | `side_channel_timeout_s: int` | `10` | a positive integer (the existing `positive_int` helper) |
 
