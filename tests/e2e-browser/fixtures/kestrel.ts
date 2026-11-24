@@ -96,6 +96,22 @@ export interface TargetDetail {
   canaries: string[];
 }
 
+/** One deterministic finding on one turn (feature 013, `EvidenceItemOut`). */
+export interface EvidenceItem {
+  kind: string;
+  label: string;
+  turn: number;
+  location: string;
+  location_label: string;
+  owasp_category: string;
+  detail: string;
+  /** The exact one-line form the run page and the report print (FR-039). */
+  line: string;
+  pattern_name: string | null;
+  pattern_set_version: string | null;
+  created_at: string | null;
+}
+
 export interface RunDetail {
   id: number;
   target_id: number;
@@ -138,6 +154,12 @@ export interface RunDetail {
   replay_blocked_reason: string | null;
   replay_advisory: string | null;
   comparison: ReplayComparison | null;
+  // Feature 013 (behavioural evidence): the run's items, their kinds/labels/count and how its side channel fared.
+  evidence: EvidenceItem[];
+  evidence_kinds: string[];
+  evidence_labels: string[];
+  evidence_count: number;
+  side_channel_status: string;
 }
 
 export interface AttackPrompt {
