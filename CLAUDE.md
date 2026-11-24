@@ -42,6 +42,8 @@ default `google/gemini-3.8-flash`.
 - **No test pins wording or headings in docs** (roadmap, README, learned notes, design notes): a documentation
   requirement is justified in the feature's `traceability.md`, never asserted on prose. Owner rule, 2026-11-24,
   after `tests/unit/test_roadmap.py` broke master on a roadmap restructure that the docs-only CI path never ran.
+  The rule covers docs prose only, not specification contracts: a test that parses a `specs/*/contracts/*.md`
+  table to keep names or versions in step with the code (`tests/unit/test_unsafe_output.py`) is fine.
 - Quality gate: **ruff clean** (`E4,E7,E9,F`, line length 120, over `src ui tests`), **mypy** advisory on `src`,
   **coverage ≥ 85%** on `src` (`uv run pytest tests/unit tests/integration`), gitleaks, pip-audit.
 - **Conventional commit messages.**
