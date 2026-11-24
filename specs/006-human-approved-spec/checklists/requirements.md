@@ -69,3 +69,43 @@ reversed — the gate reads the raw description, exactly as today (FR-017, SC-00
 unchanged); the draft-PR live check restores `specs/` to master's version first, uses only non-existent numbers and
 must be mergeable; the optional verdict-only review is dropped; `pr_state`'s failure path is tested; the traceability
 job is limited to read permissions; the rollout order is stated once. Every checklist item above still passes.
+
+Owner review of spec PR #50 (2026-11-24), two changes applied in place: (1) the pipeline re-runs only on relevant
+events — a body change, or the `refactor`/`bugfix` label added or removed — and only its traceability job, through a
+separate recheck workflow (FR-019, SC-010, the Assumptions, research §11 with the documentation cited); (2) a
+`bugfix: #<issue>` number must be an existing issue of this repository, looked up live and fail-closed (new FR-024;
+FR-015, FR-018, SC-008, the Assumptions, research §12). Both recorded as owner decisions in the Clarifications session,
+superseding the earlier decisions without deleting them. Every checklist item above still passes.
+
+Review of the owner changes, round 1 (2026-11-24, FAIL: 1 severe, 1 medium, 6 minor) fixed in place: the recheck has
+no concurrency group (an irrelevant event can no longer cancel a relevant recheck; a refused-in-progress re-run is
+retried within the bound; a one-action label swap step added to the live check); the stale-result cases (fork,
+50-re-run cap, timeout, refusal) and their consequence are stated with a fixed-text comment and the owner's merge
+rule; the owner's words are kept verbatim with the design decisions marked for confirmation; 410 Gone for a deleted
+issue; a run awaiting approval counts as no run; `branches: [master]`, `timeout-minutes: 35` and the rollout note.
+Every checklist item above still passes.
+
+Review of the owner changes, round 2 (2026-11-24, FAIL: 0 severe, 1 medium, 5 minor) fixed in place: a re-run
+refusal is classified by re-reading the run, never by the POST's HTTP status code (GitHub's job re-run endpoint
+documents only `201` and `403`, and sends the same `403` for an in-progress attempt and a final refusal — a
+20,000-scenario simulation showed the old by-code classifier posting 6,285 false-alarm stale-result comments
+against 169, genuine, for the fixed one); the recheck's step machine ships as a tested script,
+`scripts/qa_recheck.py` (T034), with a pre-POST freshness skip (`already_fresh`, avoiding a wasted re-run when the
+latest attempt already postdates this recheck) and comment-hygiene safeguards (no `VERDICT:` substring, a per-call
+timeout, one comment retry); the owner's merge rule now covers a pull request from a fork directly and accepts any
+`traceability` attempt — the recheck's own automatic re-run included — that started after the stale-result comment
+and passed; the two-relevant-events edge case names an unambiguous example (`refactor` swapped for `bugfix`,
+distinct from the unrelated-label swap that demonstrates an irrelevant event cancelling nothing). Every checklist
+item above still passes.
+
+Review of the owner changes, round 3 (2026-11-24, FAIL: 0 severe, 1 medium, 4 minor) fixed in place: every
+`scripts/qa_recheck.py` client call now returns a value or raises `RecheckApiError` after its own timeout, so a
+transient failure is retried within the budget rather than read as "no run" or left to crash silently (a review
+simulation found 747/4,688 of 20,000 interleavings, at 1%/5% failure rates, ending stale with no comment under the
+naive reading; 0 at both rates once fixed); a run with no `traceability` job reaches the comment at once;
+`already_fresh` never raises on a missing or unparsable timestamp, returning `False` (send the re-run request, never
+skip it); the script's entry point catches any other exception and still attempts the comment before exit 1; T034
+moved under "Tests (write first, must fail)" ahead of T033, which now makes it pass; the plan's constitution
+re-check names both recheck permissions; the recheck job sets up Python before running the script, as the
+traceability job does; quickstart's overlap step no longer states the refusal as certain. Every checklist item
+above still passes.

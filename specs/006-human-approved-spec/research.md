@@ -147,25 +147,161 @@ line (`refactor` or `bugfix: #<issue>`) and a matching label; fail-closed otherw
 
 ## 11. Re-running the gate on description and label changes
 
-- **Decision**: `on.pull_request.types: [opened, synchronize, reopened, edited, labeled, unlabeled]`. The whole
-  pipeline runs on each event; no job is made conditional on the event.
-- **Rationale**: GitHub's default is `opened` / `synchronize` / `reopened` only, so a label added through the UI
-  after opening — the normal way a human labels a PR — would never count without a push; FR-019 closes that trap.
-  The whole pipeline must run because a job skipped by a job-level `if` reports *success* and does not block a
+- **Decision 2026-11-24 (owner, review of spec PR #50) — re-run only on relevant events, through a recheck workflow.**
+  The owner: "re-run the pipeline only when the PR body actually changed or when the refactor or bugfix label is added
+  or removed, not on every edit or label event." Design (recommended by the coordinator, taken as is):
+  - `qa.yml` goes back to the default trigger types (`opened`, `synchronize`, `reopened`); its jobs stay as specified,
+    live read included.
+  - A new small workflow, `.github/workflows/qa-recheck.yml`, on `pull_request` types `[edited, labeled, unlabeled]`,
+    `permissions: {actions: write, contents: read, pull-requests: write}` (the last for one fixed-text comment),
+    `branches: [master]` like `qa.yml`, `timeout-minutes: 35` on the job, and **no** concurrency group (below).
+    Its single job runs only for a relevant event — a job-level `if`: `github.event.action == 'edited'` with
+    `github.event.changes.body` present, or `labeled` / `unlabeled` with `github.event.label.name` equal to `refactor`
+    or `bugfix` (GitHub ignores case when comparing strings). A job-level `if` is safe **here** because this check is not
+    a required one: its skipped runs change nothing (the §2 hazard applies to required checks only).
+  - The job finds the newest `qa.yml` run for the pull request's current head SHA, waits for it to complete (poll,
+    bounded at 30 minutes), then re-runs that run's `traceability` job through the REST API — `POST
+    /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun`. With the live read of §10 the re-run judges the current body
+    and labels. Only `traceability` reads the body or the labels (`review` reads the verdict comments, `quality` reads
+    neither), so only it is re-run; its only dependent job is `notify`, which re-runs with it and emails only on
+    failure. The paid review is never re-run by a body or label change. No QA run for the SHA (a merge conflict), or
+    a run that has not started for lack of approval (`action_required` / `waiting`): the recheck reports it and exits
+    without re-running — there is no result to refresh.
+  - **Documentation the design rests on** (fetched 2026-11-24): the endpoint's description in GitHub's OpenAPI
+    description (`github/rest-api-description`, `api.github.com.json`): "Re-run a job and its dependent jobs in a
+    workflow run"; the REST reference page (REST → Actions → Workflow runs, "Re-run a job from a workflow run"): the
+    fine-grained token "must have the following permission set: 'Actions' repository permissions (write)" and the
+    endpoint works with GitHub App installation access tokens, which is what `GITHUB_TOKEN` is; the `GITHUB_TOKEN`
+    permissions table (`github/docs`, `data/reusables/actions/github-token-scope-descriptions.md`): `actions` —
+    "Work with GitHub Actions. For example, `actions: write` permits an action to cancel a workflow run"; the
+    no-recursion rule (`data/reusables/actions/actions-do-not-trigger-workflows.md`): "events triggered by the
+    `GITHUB_TOKEN` will not create a new workflow run" except `workflow_dispatch` / `repository_dispatch` and the
+    approval-required `pull_request` opened/synchronize/reopened runs — a job re-run creates no event and no new
+    workflow run, it adds an attempt to an existing run, so the rule does not reach it; re-running (`content/actions/
+    how-tos/manage-workflow-runs/re-run-workflows-and-jobs.md`): possible "up to 30 days after its initial run",
+    "Re-runs use the privileges of the actor who initially triggered the workflow", with "the same `GITHUB_SHA` and
+    `GITHUB_REF` of the original event"; the `pull_request` `edited` payload (`webhook-pull-request-edited` in the same
+    OpenAPI description): `changes` carries `base`, `body` and `title`, `body.from` being "The previous version of the
+    body if the action was `edited`", and `labeled` / `unlabeled` carry `label`; forks (`data/reusables/developer-site/
+    pull_request_forked_repos_link.md`): "The `GITHUB_TOKEN` has read-only permissions in pull requests from forked
+    repositories" — so the recheck cannot re-run for a fork pull request; it reports that and the author pushes.
+    The live draft-PR check (T031) proves the re-run with `GITHUB_TOKEN` before the merge, since a `pull_request`
+    workflow file comes from the pull request's merge commit.
+  - **Rejected options**: (a) adding `edited` / `labeled` / `unlabeled` to `qa.yml` and skipping jobs there on
+    irrelevant events — a skipped required job reports success and replaces an earlier failure (§2); (b) the first
+    design below, every such event re-running the whole pipeline — the owner rejected its cost and noise; (c) a
+    `workflow_dispatch` of `qa.yml` from the recheck — it creates a new run with no `pull_request` context (no
+    `github.event.pull_request.number`, no base ref for `classify`); (d) re-running the whole QA run instead of the
+    one job — it would re-run the paid review and the quality gate for a label toggle; (e) `concurrency` on `qa.yml`
+    itself — unchanged, not needed.
+- **Decision 2026-11-24 (review of the owner changes, round 1) — no concurrency group on the recheck.** The first
+  draft gave the recheck one group per pull request with `cancel-in-progress`, at the workflow level. The reviewer
+  showed the defect: every `edited` / `labeled` / `unlabeled` run joins the group before the job-level `if` is
+  evaluated, so a later *irrelevant* event — `gh pr edit --remove-label refactor --add-label documentation`, or the
+  web label picker changing two labels at once — cancels or replaces the relevant recheck and then skips its own job;
+  the removed label is never re-evaluated and the required check stays green with nothing red anywhere. **Fixed by
+  removing the group entirely**: an irrelevant event's run only skips its own job and can never cancel or replace a
+  relevant one, whatever order GitHub evaluates `if` and `concurrency` in. Two relevant events give two rechecks;
+  each waits for the QA run, requests the re-run, and on a refusal because another attempt of the same run is in
+  progress goes back to waiting and retries within the same 30-minute budget; every attempt reads the live state, so
+  the last attempt judges the latest change. **Rejected**: (a) the workflow-level group — the defect above; (b) a
+  job-level group — a job skipped by its `if` would not join it, but it relies on GitHub evaluating the `if` before
+  the group, which the documentation does not promise, and two relevant events would still cancel each other's wait;
+  (c) a conditional group expression (a unique group for irrelevant events) — the same undocumented ordering plus
+  an expression nobody can read at a glance. A quickstart / T031 step now swaps `refactor` for an unrelated label in
+  one action and requires `traceability` to turn red.
+- **Decision 2026-11-24 (review of the owner changes, round 1) — stale-result cases and the failure signal.** A
+  recheck that cannot re-run leaves `traceability` with its last attempt's result, possibly green after a change that
+  invalidated the declaration. The cases: a fork pull request (read-only token); GitHub's cap — "A workflow run can
+  be re-run a maximum of 50 times. This limit includes both full re-runs and re-runs of a subset of jobs"
+  (`content/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs.md`, the page that also states the 30
+  days); a QA run that does not complete within the bound; a re-run still refused when the bound runs out. The
+  non-required `recheck` check alone is no signal: the next irrelevant event's run replaces its red with "skipped".
+  So the recheck, on exit 1, posts **one fixed-text pull-request comment** (reason class only, no description or label
+  value) saying the result may be stale and how to refresh it — a push, or a manual re-run of `traceability` — and
+  its job gets `pull-requests: write` for that; a fork pull request cannot receive the comment either (stated with
+  the fork case). The owner's **merge rule**, stated in the spec's Assumptions and in the `docs/qa-pipeline.md` task:
+  after a failed recheck, do not merge until a `traceability` attempt that started after that comment has passed —
+  a push, a manual re-run, or a later automatic recheck re-run all count; on a fork pull request, which gets no
+  comment, the rule anchors to the last body or label change instead: refresh `traceability` with a push or a
+  manual re-run before merging, whatever the recheck shows. **Rejected**: `pull_request_target` for the recheck —
+  it would give fork pull requests a write token and
+  runs no pull-request code, but it runs `master`'s copy of the workflow, so the draft-PR check (T031) could not
+  prove the recheck before the merge; fork pull requests are not expected in this repository (one author, branches
+  in the repository), so `pull_request` stays.
+- **Decision 2026-11-24 (review of the owner changes, round 2) — classify a refusal by the run's own status, never
+  by the POST's HTTP code.** The job re-run endpoint documents exactly two responses, `201` (accepted) and `403`
+  (refused) (REST → Actions → Workflow runs, "Re-run a job from a workflow run"); GitHub returns the same `403` —
+  "This workflow is already running" — whether another attempt of the run is already in progress or the refusal is
+  final (`cli/cli#9221`, a debug log showing that message), so the code alone never tells the two apart. **Fixed**:
+  on any refusal, re-read the run (`GET /repos/{owner}/{repo}/actions/runs/{run_id}`); not `completed` means another
+  attempt is now running, so retry within the budget; still `completed` means a final refusal, so post the
+  stale-result comment and exit 1. A discrete-event simulation of interleaved rechecks (20,000 scenarios, 1–3 s
+  between a status read and the POST) found 0 unsafe outcomes either way, but the old by-code classifier produced
+  6,285 false-alarm stale-result comments against 169 for the status-based one (every one of those 169 a run that
+  genuinely ran longer than the recheck's budget) — a routine overlap of two relevant events (for example
+  `refactor` swapped for `bugfix` in one action) no longer posts a spurious comment. A quickstart / T031 step now
+  overlaps two *relevant* events in one action and requires both rechecks to exit 0 with no stale-result comment.
+  **Sources**: `https://github.com/cli/cli/issues/9221`; `https://docs.github.com/en/rest/actions/workflow-runs`.
+- **Decision 2026-11-24 (review of the owner changes, round 2) — the step machine ships as a tested script.** The
+  recheck's steps are `scripts/qa_recheck.py`, run by the workflow after `actions/checkout` (the PR's own copy; a
+  same-repository author could already run their own workflow code with the recheck job's token, and a fork pull
+  request's checkout still gets the read-only token, so nothing changes for it), with an injected API client so
+  the step machine — including the refusal re-read above — is unit-tested offline (T034). Before requesting a
+  re-run, `already_fresh(attempt_started_at, recheck_created_at)` skips the POST and exits 0 when the traceability
+  job's latest attempt already started after this recheck run's own `created_at` (read once,
+  `GET /repos/{owner}/{repo}/actions/runs/{github.run_id}` — no earlier than the triggering event, so the
+  comparison is conservative): that attempt's live read already includes the change, so spending one of GitHub's 50
+  re-runs on it would be wasted. A burst of relevant events on one commit can otherwise cost toward that cap (the
+  round-2 review's simulation found 49,528 accepted re-runs for 51,960 events in a burst scenario) or queue later
+  rechecks behind earlier ones until they time out; the skip check reduces both. Comment hygiene: the fixed text
+  never contains the literal substring `VERDICT: PASS` or `VERDICT: FAIL` (the `review` job's own
+  verdict-enforcement step matches the latest PR comment against that pattern); every API call carries its own
+  timeout (for example 30 s), so the comment step always has time to run inside the job's `timeout-minutes: 35`;
+  the comment POST is retried once.
+- **Decision 2026-11-24 (review of the owner changes, round 3) — API failures fail closed.** The round-2 design left
+  unspecified what a transient API failure means: the natural implementation reads a failed `get_latest_run` the
+  same as a genuinely empty one (`None` → "no run", exit 0) and lets a failed poll or job lookup crash the script
+  (no comment). A review simulation with each read failing independently at probability 1%/5% found 747/4,688 of
+  20,000 interleavings (respectively) ending stale with no comment under that reading; fail-closed handling gave 0
+  at both rates. **Fixed**: every client call returns its declared value or raises `RecheckApiError` after its own
+  timeout — `None` from `get_latest_run`/`get_job` means only a genuinely empty, successful result, never a
+  failure. A raised error in steps 1–3 or the post-refusal re-read is retried at the next poll within the same
+  budget; a budget spent this way still reaches the stale-result comment (a third reason class, `error`, alongside
+  `timeout` and `refused`), never a silent exit 0. A run found `completed` with no job named `traceability` is not
+  transient (polling cannot make one appear), so it reaches the comment at once rather than spending the rest of
+  the budget retrying. `already_fresh` itself never raises: a missing or unparsable `started_at`/`created_at` makes
+  it return `False` — not fresh, so the re-run request is sent rather than silently skipped on bad or absent data.
+  The script's own entry point wraps the whole step sequence in a catch-all, so even a bug the retry logic does not
+  already turn into `"error"` still posts the comment (with its one retry) before exit 1. **Rejected**: keeping
+  `None` ambiguous and documenting the risk — the whole point of rounds 1–2 was closing exactly this silent-green
+  class for the refusal and the concurrency design; leaving it open for every other read would undo that. The pure
+  mirror's `next_action` gains `run_status = "error"` (retried within budget, else the comment) and `run_status =
+  "no_job"` (the comment at once); a `request_rerun` failure is folded into `"error"` rather than a third
+  `rerun_status`, since an unanswered POST is exactly as uninformative as any other failed read — the next cycle's
+  re-read settles it either way.
+- *First decision, superseded by the owner's*: `on.pull_request.types: [opened, synchronize, reopened, edited,
+  labeled, unlabeled]` on `qa.yml`, the whole pipeline running on each event, no job conditional on the event.
+- *First design's rationale (superseded)*: GitHub's default is `opened` / `synchronize` / `reopened` only, so a label
+  added through the UI after opening — the normal way a human labels a PR — would never count without a push; FR-019
+  closes that trap (still true: the recheck now closes it). The whole pipeline had to run because a job skipped by a job-level `if` reports *success* and does not block a
   merge (GitHub docs, "Using conditions to control job execution"), so a `labeled` run that skipped `quality` /
   `review` would replace an earlier failure on the same commit with a green check.
-- **Alternatives considered**: keep the default triggers and document "push an empty commit or close and reopen"
-  (rejected: a trap, and it makes the label a decoration); `labeled` / `unlabeled` only (rejected: a reason line
+- *First design's alternatives (superseded)*: keep the default triggers and document "push an empty commit or close
+  and reopen" (rejected then: a trap, and it makes the label a decoration — the current design keeps the default
+  triggers on `qa.yml` but closes the trap with the recheck); `labeled` / `unlabeled` only (rejected: a reason line
   added by editing the description would still need a push — an asymmetry nobody would guess); a `concurrency`
   group with `cancel-in-progress` to cap the cost of rapid successive edits (not added — no need shown yet; it
   would also cancel a push's run mid-way, which is a behaviour change of its own).
 - **Re-run semantics** (after review round 1): with the live read of §10, a manual re-run of any earlier run judges
   the current description and labels, not the event that first triggered it.
-- **Cost and noise** (after review round 1): each event re-runs quality (tests, coverage, scans) and the review;
-  `gh pr create --label` yields two runs on one commit (`opened`, then `labeled`), and the `opened` run can read
-  before the label lands — then it fails and `notify` emails once, and the `labeled` run is the newer, passing
-  result. Once `SKIP_AI_REVIEW` is removed, every label or description event re-runs the paid AI review and a
-  label toggle re-rolls its verdict; that cost is accepted and stated in the spec's Assumptions.
+- **Cost and noise** (after review round 1; superseded by the owner's decision above): each event re-ran quality
+  (tests, coverage, scans) and the review; `gh pr create --label` yielded two runs on one commit (`opened`, then
+  `labeled`), and the `opened` run could read before the label landed — then it failed and `notify` emailed once,
+  and the `labeled` run was the newer, passing result. Once `SKIP_AI_REVIEW` was removed, every label or
+  description event would have re-run the paid AI review and a label toggle re-rolled its verdict. Now: only the
+  traceability job re-runs, only on a relevant event; the `opened` + `labeled` case becomes one pipeline run plus
+  one re-run of its traceability job; no review is re-run.
 - **Decision 2026-11-24 (review round 2) — no verdict-only review on those events.** Round 1 had recorded an
   optional mitigation: on `edited` / `labeled` / `unlabeled` the `review` job would skip its two Claude steps and
   run only the verdict-enforcement step over the latest verdict comment. **Rejected**, because it can mark an
@@ -174,17 +310,37 @@ line (`refactor` or `bugfix: #<issue>`) and a matching label; fail-closed otherw
   posts `FAIL` for X, but the newest-triggered run decides the required `review` check, so X shows a `PASS` it
   never earned. With `gh pr create --label` there is no earlier verdict at all, so the variant would fail every
   freshly labelled PR until something else re-triggered it. Binding verdicts to the head SHA would fix both, but
-  it is a change to the review job that this feature does not need. Every job runs in full on every event, the
-  quality job included (skipping it would report success without evidence).
+  it is a change to the review job that this feature does not need. Every job of a pipeline run runs in full; a
+  body or label event re-runs only `traceability`, via the recheck.
 
 ## 12. The issue number
 
-- **Decision**: `bugfix: #<issue>` is checked for form only (`#` followed by digits). No lookup.
+- **Decision 2026-11-24 (owner, review of spec PR #50) — the bugfix issue must exist in this repository.** The
+  owner: "the gate checks that the issue exists in this repository and fails closed if it does not." Design: once
+  every other condition of the honest path holds on the bugfix path (rows 1–9 of the contract), the job makes one
+  lookup — `gh api repos/$GITHUB_REPOSITORY/issues/<n>` with the job's token (`issues: read`) — and accepts only a
+  JSON object whose `number` is `<n>`, that carries no `pull_request` key (the issues endpoint returns pull requests
+  too), and whose `repository_url` ends with `/repos/<this repository>` (case-insensitive), so an issue transferred
+  elsewhere fails whether the redirect is followed or not. Any state, open or closed, is accepted: a fix for a closed
+  issue is legitimate. A non-existent number (404), a deleted issue (410 Gone — GitHub's "Get an issue": "If the issue
+  was deleted from a repository where the authenticated user has read access, the API returns a 410 Gone status"), a
+  transfer (301, or the other repository's `repository_url` when followed), a rate limit (403/429), a timeout, no `gh`
+  on the path, invalid JSON or any other failure fails closed with a notice naming only the number (digits). The pure rule takes an
+  injected `issue_exists(number) -> bool`, so offline tests stub it; the lookup lives beside `pr_state()` in the I/O
+  layer; at most one lookup per run. The row's message names the number and says it is not an issue of this
+  repository, then the accepted forms (FR-020).
+- **Rejected alternatives (owner review)**: accepting only open issues (a closed issue may be the one fixed; and
+  the owner asked for existence, not state); accepting a pull-request number (a "bug fix for a pull request" is not
+  what the reason claims); following a transfer (the reason must point at this repository's tracker); GraphQL
+  (`issue(number:)` rejects pull requests natively, but adds a second client surface for one field).
+- *First decision, superseded by the owner's*: `bugfix: #<issue>` checked for form only (`#` followed by digits),
+  no lookup.
 - **Rationale**: the gate has never verified `#<n>` either; the helper stays pure; an issue's existence says
   nothing about whether it describes the fix — that is the reviewer's judgment; the label makes the claim visible
   in the pull-request list, and the owner's approval is the control.
-- **Alternatives considered**: `gh api repos/…/issues/<n>` in the gate (rejected: a false sense of verification —
-  an issue's existence says nothing about the fix).
+- **Alternatives considered** (first decision): `gh api repos/…/issues/<n>` in the gate (then rejected as a false
+  sense of verification — an issue's existence says nothing about the fix; the owner's decision above accepts that
+  limit: the lookup proves the number is a real issue here, and the reviewer still judges the fix).
 
 ## 13. The labels
 
@@ -236,8 +392,19 @@ line (`refactor` or `bugfix: #<issue>`) and a matching label; fail-closed otherw
   with step 6 removing it — it works, but it muddles what each step proves. Two preconditions from the same
   round: the draft must be mergeable (GitHub runs no `pull_request` workflow on a PR with a merge conflict), and
   every issue or PR number it writes is one that does not exist (`#999999`), so the throwaway leaves no
-  cross-reference on a real issue or pull request. Rollout order, stated once: labels created (T024) → the
+  cross-reference on a real issue or pull request — relaxed at the owner's review of PR #50 (next bullet): the
+  bugfix pass step now cites the closed issue `#37`. Rollout order, stated once: labels created (T024) → the
   draft-PR live check (T031) → the implementation PR merged, carrying the roadmap item to Done (T028).
+- **Owner review of spec PR #50 (2026-11-24)**: the draft-PR check also proves the recheck workflow and the issue
+  lookup — a label change and a body edit re-run only the traceability job (the recheck appears as its own,
+  non-required check); a title edit and an unrelated label re-run nothing; the bugfix pass step now references a
+  real, closed issue of this repository (`#37`), which leaves a "mentioned this" cross-reference on that issue —
+  accepted, the only trace the throwaway leaves; `#999999` exercises the not-found failure and a pull-request number
+  (`#49`) the pull-request failure. After the review of the owner changes: the check also swaps `refactor` for an
+  unrelated label in one action and requires `traceability` to turn red (no concurrency group can cancel the
+  relevant recheck). Rollout note: a pull request already open across the merge has `qa.yml` runs from the old
+  workflow and script, so its recheck re-runs the old `traceability` job (event-payload body, no honest path), which
+  fails closed — such a pull request needs one push.
 
 ## 16. HTML comments, column 1 and digits (round 1; the comment part superseded in round 2)
 

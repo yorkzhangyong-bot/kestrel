@@ -59,54 +59,82 @@ Apply [docs/branch-protection.md](../../docs/branch-protection.md) to `master`, 
 without a code-owner approval and passing `traceability`, `quality`, `review`. See
 [contracts/governance.md](contracts/governance.md) for the exact settings and required-check names.
 
-## 6. Honest path for a refactor or bug-fix PR (GitHub, added 2026-11-24; revised after review rounds 1 and 2)
+## 6. Honest path for a refactor or bug-fix PR (GitHub, added 2026-11-24; revised after the reviews and the owner's review of PR #50)
 
 Prerequisites: the labels `refactor` and `bugfix` exist in the repository
-([docs/branch-protection.md](../../docs/branch-protection.md)); the feature branch carries the new `qa.yml` (the
-six pull-request events; `PR_NUMBER` and `GH_TOKEN` on a traceability job limited to `contents: read` and
-`pull-requests: read`) and the new `check_traceability.py` — merged or not: a `pull_request` run uses the workflow
-file from the PR's own merge commit, so a PR based on the feature branch runs the new gate before the
-implementation PR merges. The draft must be **mergeable**: GitHub runs no `pull_request` workflow on a PR with a
-merge conflict, so base the scratch branch on a feature branch that is up to date with `master`.
+([docs/branch-protection.md](../../docs/branch-protection.md)); the feature branch carries the new `qa.yml`
+(default pull-request events; `PR_NUMBER` and `GH_TOKEN` on a traceability job limited to `contents: read`,
+`pull-requests: read` and `issues: read`), the new `qa-recheck.yml` (`edited`, `labeled`, `unlabeled` on `master`;
+`actions: write`, `contents: read`, `pull-requests: write`; no concurrency group), its script `scripts/qa_recheck.py`,
+and the new `check_traceability.py` — merged or not: a `pull_request` run uses
+the workflow files from the PR's own merge commit, so a PR based on the feature branch runs the new gate and the
+new recheck before the implementation PR merges. The draft must be **mergeable**: GitHub runs no `pull_request`
+workflow on a PR with a merge conflict, so base the scratch branch on a feature branch that is up to date with
+`master`.
 
 Vehicle: a throwaway **draft** PR to `master` from a scratch branch based on the feature branch — a name without a
 numeric prefix (for example `probe/honest-path`), so only the Spec-PR rule is under test. On that branch first
 restore `specs/` to master's version with `git checkout --no-overlay origin/master -- specs/` (an overlay checkout,
 the default, keeps files the branch added under `specs/`), add one trivial change under `src/` (a comment), commit
 both together, and confirm that `git diff --name-only origin/master...HEAD -- specs/` prints nothing before opening
-the draft — so its diff holds no spec file and the spec-change rule stays out of the way until step 6. Every issue or PR number written below is one that does not exist (`#999999`), so the throwaway PR leaves
-no cross-reference on a real issue or pull request. Its description carries exactly:
+the draft — so its diff holds no spec file and the spec-change rule stays out of the way until step 8. The numbers
+used below: `#37`, a real, closed issue of this repository (the bugfix pass step leaves a "mentioned this"
+cross-reference on it — the only trace the throwaway leaves); `#999999`, which no issue or pull request has; `#49`,
+a pull request. Its description carries exactly:
 
 ```text
 Spec-PR: none
 Spec-PR-reason: refactor
 ```
 
-1. Create it with `gh pr create --draft --label refactor --body-file <file>`: an `opened` run and a `labeled` run
-   start on the same commit; both read the description and labels live, so both pass the Spec-PR rule. (If the
-   `opened` run reads before the label lands it fails and `notify` emails once; the `labeled` run that follows is
-   the newer, passing result.) The `review` check is irrelevant here: the Claude action refuses a PR that changes a
-   workflow file, so it passes only while `SKIP_AI_REVIEW=true`.
-2. Remove the label (no push): the pipeline runs again on `unlabeled`; `traceability` fails because the `refactor`
-   label is missing, and the message names the three accepted forms. Add it back: it runs again and passes.
-3. Re-run the failed run of step 2 from the Actions page: it reads the current state (label present) and passes —
-   a re-run judges now, not the event that first triggered it (FR-018).
-4. Edit the description to `Spec-PR-reason: bugfix: #999999` (no push): the pipeline runs on `edited`; with only
-   the `refactor` label on, it fails because the `bugfix` label is missing (the first failed condition is the one
-   reported). Add `bugfix` (both labels on): it fails because the `refactor` label contradicts the reason. Remove
-   `refactor`: it passes; the issue number is not looked up.
-5. Add a `Spec-PR: #999999` line beside the `none` line: it fails as a conflict. Replace both new lines by
+1. Create it with `gh pr create --draft --label refactor --body-file <file>`: the `opened` event starts the
+   pipeline, the `labeled` event starts the recheck, which waits for that pipeline run to complete and re-runs its
+   `traceability` job; the re-run reads the label live and passes. (If the `opened` run read the state before the
+   label landed it failed and `notify` emailed once; the re-run is the newer, passing attempt.) The recheck shows as
+   its own, non-required check. The `review` check is irrelevant here: the Claude action refuses a PR that changes
+   a workflow file, so it passes only while `SKIP_AI_REVIEW=true`.
+2. Remove the label (no push): the recheck re-runs `traceability`, which fails because the `refactor` label is
+   missing, and the message names the three accepted forms; `quality` and `review` keep their results. Add the label
+   back: it re-runs again and passes. Then, in one action, remove `refactor` and add an unrelated label
+   (`gh pr edit --remove-label refactor --add-label documentation`): two events — the `unlabeled` recheck re-runs
+   `traceability`, which turns red; the `labeled` run skips its job and cancels nothing. Swap them back in one
+   action (`--remove-label documentation --add-label refactor`): it passes again. Then, in one action, remove
+   `refactor` and add `bugfix` instead (`gh pr edit --remove-label refactor --add-label bugfix`, the description
+   still reading `Spec-PR-reason: refactor`): two *relevant* events this time — both the `unlabeled` and the
+   `labeled` recheck start, and one of their re-run requests may be refused (both land within seconds of the same
+   run completing); either way neither recheck posts the stale-result comment and both exit `0` — a refused one
+   re-reads the run, sees it is not yet `completed`, and waits and retries rather than mistaking the refusal for a
+   final one (the re-read path itself is `tests/unit/test_qa_recheck.py`'s, T034, to prove; with 30-second polling
+   and the freshness pre-check, the second recheck usually sees the run already in progress, or already fresh,
+   before it ever posts). `traceability` re-runs and turns red (the reason line still says `refactor`, and the
+   `refactor` label is now gone). Swap back to `refactor` alone (`--remove-label bugfix --add-label refactor`): it
+   passes again.
+3. Re-run the first failed attempt of step 2 from the Actions page: it reads the current state (label present) and passes
+   — a re-run judges now, not the event that first triggered it (FR-018).
+4. Edit the description's body to `Spec-PR-reason: bugfix: #37` (no push): the recheck re-runs `traceability`; with
+   only the `refactor` label on, it fails because the `bugfix` label is missing (the first failed condition is the
+   one reported). Add `bugfix` (both labels on): it fails because the `refactor` label contradicts the reason.
+   Remove `refactor`: it passes — the lookup found `#37`, a closed issue of this repository (FR-024).
+5. Edit the body to `Spec-PR-reason: bugfix: #999999`: it fails — `#999999` is not an issue of this repository.
+   Edit it to `Spec-PR-reason: bugfix: #49`: it fails the same way — a pull request is not an issue. Edit it back to
+   `#37`: it passes.
+6. Edit only the title: a recheck run starts with its job skipped; `traceability`, `quality` and `review` keep their
+   results. Add a label other than `refactor` and `bugfix` (for example `documentation`), then remove it: the same —
+   nothing re-runs (FR-019). (The stale-result cases — a fork, the 50-re-run cap, a timeout — are not provoked here;
+   their comment and the merge rule are in the spec's Assumptions.)
+7. Add a `Spec-PR: #999999` line beside the `none` line: it fails as a conflict. Replace both new lines by
    `Spec-PR: #999999` alone, with the `bugfix` label still on: it passes — labels and other `Spec-PR:` values are
-   ignored on the numbered form (SC-009). Restore the two honest-path lines (`Spec-PR: none`,
-   `Spec-PR-reason: refactor`), remove the `bugfix` label, add the `refactor` label: it passes again.
-6. Push a spec edit (any file under `specs/`) with no `spec-change:` line: it fails on the spec-change rule
-   (FR-010), as any implementation PR would — a distinct observation, since the draft's diff held no spec file
-   until now.
-7. Close the draft PR unmerged and delete the scratch branch.
+   ignored on the numbered form, and the number is not looked up (SC-009). Restore the two honest-path lines
+   (`Spec-PR: none`, `Spec-PR-reason: refactor`), remove the `bugfix` label, add the `refactor` label: it passes
+   again.
+8. Push a spec edit (any file under `specs/`) with no `spec-change:` line: the pipeline runs on `synchronize` and
+   fails on the spec-change rule (FR-010), as any implementation PR would — a distinct observation, since the
+   draft's diff held no spec file until now.
+9. Close the draft PR unmerged and delete the scratch branch.
 
 Locally, without GitHub, the same matrix is the unit test `tests/unit/test_check_traceability.py` (T021) over the
-pure helpers in [contracts/pr-rules.md](contracts/pr-rules.md), with the description and the labels passed as plain
-arguments.
+pure helpers in [contracts/pr-rules.md](contracts/pr-rules.md), with the description, the labels and a stubbed
+issue lookup passed as plain arguments.
 
 ## Success criteria mapping
 
@@ -116,6 +144,6 @@ arguments.
 | 3 | FR-002, FR-004, FR-005, FR-006, SC-001 |
 | 4 | FR-009, FR-010, FR-011, SC-003, SC-007 |
 | 5 | FR-007, FR-008, FR-013, SC-004 |
-| 6 | FR-009, FR-015, FR-016, FR-017, FR-018, FR-019, FR-020, FR-021, FR-022, SC-007, SC-008, SC-009, SC-010 |
+| 6 | FR-009, FR-015, FR-016, FR-017, FR-018, FR-019, FR-020, FR-021, FR-022, FR-024, SC-007, SC-008, SC-009, SC-010 |
 | docs/qa-pipeline.md, docs/branch-protection.md, CLAUDE.md, docs/roadmap.md | FR-021, FR-023 |
 | README + docs/qa-pipeline.md | FR-012, SC-005 |
