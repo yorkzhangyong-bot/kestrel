@@ -123,3 +123,71 @@ reporting a skipped gate as success) lives in `qa.yml`; the parts GitHub will no
 | No automated HS-code e2e (Principle VII) | The feature's end-to-end path is a GitHub PR event (spec PR → approval → impl PR → gates), which cannot be exercised from pytest and does not touch the sacrificial target. | A pytest e2e against HS-code would test nothing about this feature; the real flow is validated by the manual scenarios in `quickstart.md`, and all pure logic has unit tests. |
 
 Accepted via `/speckit-analyze` (finding C1, 2026-10-29), mirroring the feature 005 C3 resolution where the Principle VII end-to-end requirement was likewise settled by an explicit user decision.
+
+## Change 2026-11-24 — an honest Spec-PR path for refactor and bug-fix PRs
+
+**Spec amendment**: FR-009 and SC-007 amended (scope corrected to `src/` or `ui/` changes on any branch, as the
+gate has enforced since commit df9a65f of 2026-11-10; the `Spec-PR: none` form added); FR-015–FR-023 and
+SC-008–SC-010 added; User Story 5. Owner's requirement: the roadmap Housekeeping item — the graph refactor PR #49
+was admin-merged with the check red, and every bug fix that touches `src/` or `ui/` fails the gate the same way (a tests-only fix never meets the rule).
+
+### Summary
+
+The traceability job accepts `Spec-PR: none` on a PR that changes `src/` or `ui/` only together with exactly one
+reason line (`Spec-PR-reason: refactor` or `Spec-PR-reason: bugfix: #<issue>`) and the matching PR label
+(`refactor` / `bugfix`, not the other one); every other shape fails closed with a message naming the accepted
+forms, and the numbered form `Spec-PR: #<n>` is unchanged. The rule stays a pure function over the description text
+and the list of label names; the job reads both live from the platform at evaluation time (`gh pr view`, falling
+back to an empty description and no labels on any failure), never from the triggering event's snapshot, and the
+workflow runs on the `edited`, `labeled` and `unlabeled` events too, so a declaration completed after opening is
+re-checked without a push and a re-run judges the current state. The gate reads the raw description, exactly as
+today. The two labels are created by hand and documented beside the branch-protection settings.
+
+### Technical context (delta)
+
+- No new dependency (Principle X): `check_traceability.py` gains `json.loads` (stdlib) for the output of
+  `gh pr view --json body,labels`, one `subprocess` call to `gh` (the runner's CLI, as `git` already is) and three new
+  patterns; the rule helpers stay pure. The workflow change: the six event types, the traceability step's inputs
+  become `PR_NUMBER` + `GH_TOKEN` (`github.token`) in place of `PR_BODY`, and the traceability job is limited to
+  `permissions: {contents: read, pull-requests: read}`.
+- Files: `scripts/check_traceability.py`, `tests/unit/test_check_traceability.py`, `.github/workflows/qa.yml`,
+  `.github/PULL_REQUEST_TEMPLATE.md`, `docs/qa-pipeline.md`, `docs/branch-protection.md`, `CLAUDE.md`,
+  `docs/roadmap.md`, plus this feature's `traceability.md` (lines for the FR-018 live-read half, FR-019, FR-021,
+  FR-023, SC-010 — written in the spec PR). No `src/` or `ui/` change.
+- Testing: tests first (T021) — the declaration matrix of contracts/pr-rules.md over `spec_pr_rule_problems`, the
+  parse of the live read (`parse_pr_state`) and the wiring (`pr_rule_problems(files, body, labels)`); the existing
+  rule tests are not edited (SC-009). The GitHub half (events, live read, the merge route) is verified on a throwaway
+  draft PR based on the feature branch (quickstart scenario 6) before the implementation PR merges — a
+  `pull_request` run uses the workflow file from the PR's own merge commit, so the draft runs the new gate.
+
+### Constitution re-check
+
+Unchanged from the original gate: I–III, V, VI, VIII, IX are not touched; IV — the live read uses the job's own
+token (`github.token`) on a traceability job limited to `contents: read` and `pull-requests: read`, which is never
+printed, and a description value reaches the
+log only as an escaped, truncated literal; VII — unit tests first, and the same justified deviation on the
+HS-code e2e (the end-to-end path is a GitHub PR event; Complexity Tracking, finding C1); X — stdlib only.
+**PASS.**
+
+### Design decisions (detail in research.md §9–§17)
+
+- One keyed reason line, `Spec-PR-reason:`, whole-line value; labels named after the keywords (§9, §13).
+- The description and the labels are read live with `gh pr view <number> --json body,labels` at evaluation time;
+  any failure of that read counts as an empty description and no labels (§10).
+- The whole pipeline re-runs on `edited` / `labeled` / `unlabeled`; no partial run — a verdict-only review on those
+  events was considered and rejected in round 2 (§11).
+- The issue number is checked for form only (§12). Failure messages name the accepted forms and echo description
+  values only as escaped, truncated literals (§14).
+- The gate reads the raw description, as today (the round-1 comment stripping was reversed in round 2, §16); keyed
+  lines start in column 1; on the honest path the `Spec-PR:` line is exactly one and exactly `none` (§16, §17).
+- Rollout: this spec PR → the owner creates the labels → the implementation PR is pushed and verified live on a
+  throwaway draft PR based on the feature branch (its `specs/` restored to master's version, closed unmerged
+  afterwards) → the implementation PR, which moves the roadmap item to Done, merges by one of the two
+  workflow-edit routes (§15).
+
+### Complexity tracking (delta)
+
+No new violation. The workflow-editing implementation PR cannot be reviewed by the Claude review action (it refuses
+a PR that changes a workflow), so it merges by one of the two routes in docs/branch-protection.md (the review check
+passes while `SKIP_AI_REVIEW=true`; otherwise an administrator merges with it red) — a process constraint, not a
+design deviation.

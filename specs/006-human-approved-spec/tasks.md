@@ -14,7 +14,7 @@ description: "Task list for feature 006: human-approved spec workflow"
 ## Format: `[ID] [P?] [Story?] Description`
 
 - **[P]**: can run in parallel (different file, no dependency on an unfinished task)
-- **[Story]**: US1–US4; Setup/Foundational/Polish carry no story label (except the Foundational spec-mode tasks, tagged `[US2]` for traceability since they deliver User Story 2)
+- **[Story]**: US1–US5; Setup/Foundational/Polish carry no story label (except the Foundational spec-mode tasks, tagged `[US2]` for traceability since they deliver User Story 2)
 
 ## Path conventions
 
@@ -101,6 +101,42 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 
 ---
 
+## Phase 7: User Story 5 — An honest Spec-PR path for refactor and bug-fix PRs (added 2026-11-24)
+
+**Spec amendment of 2026-11-24**: FR-009 and SC-007 amended; FR-015–FR-023 and SC-008–SC-010 added (spec.md,
+Clarifications Session 2026-11-24; plan.md "Change 2026-11-24"; research.md §9–§17; contracts/pr-rules.md).
+
+**Goal**: the traceability job accepts `Spec-PR: none` only with exactly one reason line (`Spec-PR-reason: refactor`
+or `Spec-PR-reason: bugfix: #<issue>`) and the matching label (`refactor` / `bugfix`, not the other), re-evaluates
+when the description or the labels change, names the accepted forms when it fails, and leaves the `Spec-PR: #<n>`
+form unchanged.
+
+**Independent Test**: the unit matrix over the pure helpers (T021) is green; then, on a throwaway draft PR based on the
+feature branch (quickstart scenario 6): with the label it passes, without it fails, a label change alone re-runs the
+gate, and a manual re-run judges the current state.
+
+### Tests (write first, must fail)
+
+- [ ] T021 [US5] Extend `tests/unit/test_check_traceability.py` (006/FR-009, 006/FR-015, 006/FR-016, 006/FR-017, 006/FR-018, 006/FR-020, 006/FR-022, 006/SC-008, 006/SC-009) with the matrix of contracts/pr-rules.md (its Tests section is the row list) over the pure `spec_pr_rule_problems(pr_body, labels)`, `parse_pr_state(raw)` and `pr_rule_problems(files, pr_body, labels)`, plus `pr_state()` with the environment and `subprocess.run` monkeypatched. **Pass**: `#<n>` with neither new line — with no labels, with `refactor`, with both labels, beside a second number, beside `Spec-PR: TBD`, when the numbered line sits inside a multi-line `<!--` … `-->` block whose keyed line starts in column 1 (the raw description counts), and beside a one-line reason comment `<!-- Spec-PR-reason: refactor -->` (not a keyed line, so no conflict); `none` + `refactor` + label `refactor`, also when both lines sit inside a multi-line `<!--` … `-->` block whose keyed lines start in column 1; `none` + `bugfix: #12` + label `bugfix` (`#999999`, `bugfix:#12` and `bugfix:<tab>#12` too — form only); case variants (`spec-pr: NONE`, `SPEC-PR-REASON: Refactor`, label `Refactor`); CRLF line endings. **Fail** (each message names the three accepted forms and the failed condition; the row 2, 4 and 6 messages also carry the hint that every column-1 keyed line counts, also inside code blocks and HTML comments, so quoted examples must be indented; echoed values appear as `repr` literals): no `Spec-PR:` line; `Spec-PR: TBD` alone; `Spec-PR:` with an empty value; `none` alone; `none` + a reason + no labels; `none` + `refactor` + label `bugfix` only; `none` + `refactor` + both labels; `none` + `bugfix: #12` + label `refactor`; malformed reasons `refactoring`, `bugfix`, `bugfix: 12`, `bugfix: #`, `refactor of the graph`, `bugfix: #١٢` (non-ASCII digits); `none because …` alone; `none` + `none because …`; `none` + `TBD`; two `none` lines; two reason lines (same and different); `#<n>` + `none`; `#<n>` + `none because …`; `#<n>` + a reason line, also when that reason line sits inside a multi-line `<!--` … `-->` block with the reason line in column 1 (raw read: a conflict); a reason line with no `Spec-PR:` line; an indented or bulleted `Spec-PR: none`; a one-line comment `<!-- Spec-PR: #12 -->` and a one-line honest-path pair `<!-- Spec-PR: none -->` + `<!-- Spec-PR-reason: refactor -->` (not keyed lines: the key is not in column 1); a `none` value carrying a lone carriage return and `::warning::` (message shows the escaped literal, no raw CR). **Parse**: `parse_pr_state` on valid JSON → body and label names; `body` missing or non-string → `""`; `labels` with an element lacking a string `name`, or not a list → `[]`; `None`, `""`, invalid JSON, a non-object → `("", [])`. **Live read, failure path** (`pr_state` with `os.environ` and `subprocess.run` monkeypatched, stdout captured): no `PR_NUMBER` → `("", [])` and `subprocess.run` is never called; a non-zero `gh` exit → `("", [])`; `subprocess.TimeoutExpired` → `("", [])`; `FileNotFoundError` (no `gh` on the path) → `("", [])`; a successful call → `parse_pr_state` of its stdout; and the notice printed on every failure carries no body or label value. **Wiring**: `pr_rule_problems` — a `src/` change + a valid honest path + `["refactor"]` → `[]`; the same with `[]` labels → exactly the label failure; a tests-only change with a lone `Spec-PR: none` → `[]`; a `src/` + `specs/` honest path without `spec-change:` → exactly the spec-change problem; the same with a column-1 `spec-change:` line, outside a comment or inside a multi-line `<!--` … `-->` block (the raw description counts) → `[]`; the same with only a one-line `<!-- spec-change: x -->` → the spec-change problem (not a keyed line). Leave every existing assertion untouched.
+
+### Implementation
+
+- [ ] T022 [US5] In `scripts/check_traceability.py` (FR-009, FR-015, FR-016, FR-017, FR-018, FR-020, FR-022): add the patterns and helpers of contracts/pr-rules.md — `SPEC_PR_LINE_RE`, `REASON_LINE_RE`, `REASON_VALUE_RE` (`[0-9]+`), `REASON_LABELS`, `spec_pr_rule_problems` (the ten-row order over the raw description, as today; echoed values as `repr` truncated to 80 characters), `parse_pr_state`, the `gh pr view` subprocess `pr_state()` (reads `PR_NUMBER` from the environment and calls `subprocess.run` with a 30 s timeout; any failure → `("", [])` and a notice without values), and the pure wiring `pr_rule_problems(files, pr_body, labels)` with `_pr_rule_problems()` reduced to `pr_rule_problems(changed_files(), *pr_state())`; `PR_BODY` is no longer read; `changes_app_code` and the existing patterns stay unchanged; update the module docstring. Makes T021 pass.
+- [ ] T023 [US5] In `.github/workflows/qa.yml` (FR-018, FR-019): set `on.pull_request.types` to `[opened, synchronize, reopened, edited, labeled, unlabeled]` (listing types replaces the default three, so all six are named); on the traceability step replace `PR_BODY` by `PR_NUMBER: ${{ github.event.pull_request.number }}` and `GH_TOKEN: ${{ github.token }}`, and give the traceability job `permissions: {contents: read, pull-requests: read}` (least privilege for the token that step exposes; the workflow-level `pull-requests: write` stays because `classify`, `quality` — the gitleaks action comments on PRs — and `notify` inherit it, while the review job declares its own permissions block). No job becomes conditional on the event, the review job included (research §11). (A workflow edit — the implementation PR merges by one of the two routes in docs/branch-protection.md.)
+- [ ] T024 [US5] Owner, by hand (FR-021): create the labels `refactor` (a behaviour-preserving change that implements no spec; pairs with `Spec-PR: none` + `Spec-PR-reason: refactor`) and `bugfix` (a fix for behaviour an approved spec already covers; pairs with `Spec-PR: none` + `Spec-PR-reason: bugfix: #<issue>`) with `gh label create <name> --description "…" --color <hex>`; the exact commands are recorded by T025.
+- [ ] T025 [P] [US5] Update `docs/branch-protection.md` (FR-021): a "Labels" section listing the two labels, their meaning, the create commands, and that the traceability gate reads them (names compared ignoring case).
+- [ ] T026 [P] [US5] Update `docs/qa-pipeline.md` (FR-023): the traceability row and the implementation-PR rules — the three accepted forms, the fail-closed cases, the re-run events (`edited`, `labeled`, `unlabeled`), and that a tests-only or scripts-only PR needs no `Spec-PR:` line.
+- [ ] T027 [P] [US5] Update `CLAUDE.md` (FR-023): the "Spec Kit flow" and "Git / review" lines on the Spec-PR rule (the accepted forms and the labels; workflow-editing PRs still admin-merged), plus a dated learned note.
+- [ ] T028 [P] [US5] Update `docs/roadmap.md` (FR-023): move the Housekeeping item "Traceability gate: an honest path for refactor and bug-fix PRs" to Done inside the implementation PR, naming the spec PR and the implementation PR.
+- [ ] T032 [P] [US5] Update `.github/PULL_REQUEST_TEMPLATE.md` (FR-023): inside its HTML comment, replace the stale "Implementation PRs must reference the merged spec PR" text by the rule as enforced — a PR that changes `src/` or `ui/` carries `Spec-PR: #<n>`, or `Spec-PR: none` + `Spec-PR-reason: refactor` + the `refactor` label, or `Spec-PR: none` + `Spec-PR-reason: bugfix: #<issue>` + the `bugfix` label — with every example indented four spaces inside the comment — the gate reads the raw description, so a template example must never be a column-1 keyed line, comment or not — and a note that a keyed line counts only in column 1; keep the `spec-change:` and spec-only notes. The `spec-change:` example is the one with no backstop — a column-1 copy would silently satisfy FR-010 on every web-form PR that edits `specs/` beside `src/` — so the owner's review of any template edit must keep it indented. No test asserts the template's text (owner rule); justified in traceability.md.
+- [ ] T029 [US5] Run `uv run pytest tests/unit/test_check_traceability.py -q`, the full offline suite (`uv run pytest tests/unit tests/integration`), `uvx ruff check scripts tests`, and `GITHUB_HEAD_REF=006-gate-honest-path uv run python scripts/check_traceability.py` (no `GITHUB_BASE_REF`, so only tests-traceability runs) to confirm every 006 id is traced by a test or by `traceability.md` (SC-008, SC-009).
+- [ ] T030 [P] [US5] Validate `.github/workflows/qa.yml` parses, lists the six event types, and passes `PR_NUMBER` and `GH_TOKEN` to the traceability step; confirm by reading that `docs/branch-protection.md` names the labels exactly as the gate compares them (FR-019, FR-021).
+- [ ] T031 [US5] Before the implementation PR merges, once T022/T023 are pushed on the feature branch and the labels exist (T024): run quickstart scenario 6 on a throwaway **draft** PR to `master` from a scratch branch based on the feature branch (no numeric prefix, e.g. `probe/honest-path`; mergeable, since GitHub runs no `pull_request` workflow on a conflicting PR) that first restores `specs/` to master's version (`git checkout --no-overlay origin/master -- specs/` — an overlay checkout keeps files the branch added under `specs/` — committed together with the `src/` comment, after which `git diff --name-only origin/master...HEAD -- specs/` must print nothing) and adds one trivial `src/` change — a `pull_request` run uses the PR's own merged workflow file, so the draft runs the new gate; write only non-existent issue and PR numbers (`#999999`); cover steps 1–6 (both runs of `gh pr create --label` pass; removing the label re-runs and fails with a message naming the accepted forms; a manual re-run judges the current state; the numbered form ignores labels; a spec edit without `spec-change:` fails), then close the draft unmerged and delete the branch (FR-018, FR-019, FR-020, SC-009, SC-010).
+
+**Checkpoint**: a refactor or bug-fix PR passes the gate truthfully; everything else still fails closed.
+
+---
+
 ## Dependencies & execution order
 
 - **Setup (T001)** → **Foundational (T002–T004)** blocks everything. Foundational now delivers both the `classify` output (drives the spec-only and implementation-PR paths) and the spec-mode checker `check_spec.py` (consumed by US1's traceability wiring).
@@ -109,6 +145,11 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 - **US4 (P3)** documents the finished pipeline; depends on US1/US3 being settled.
 - **qa.yml is one file**: T002, T007, T008, T009, T013 touch it and are **sequential** with each other (not `[P]`).
 - Within a story / phase: tests before implementation (T003 before T004; T011 before T012).
+- **Phase 7 (US5, added 2026-11-24)** depends on nothing unfinished: T021 before T022 (tests first); T023
+  (workflow) is independent of T022 but both are needed end to end; T024 (labels, by the owner) before
+  T031; T025–T028 and T032 (docs, template) any time after the rule is settled; T029 and T030 after
+  T022/T023; T031 (the throwaway draft PR) after T022/T023 are pushed and the labels exist — before the
+  implementation PR merges, not after.
 
 ## Parallel opportunities
 
@@ -117,6 +158,7 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 - Tests across phases: T003 ‖ T011 (different test files).
 - US4 docs: T014 ‖ T015.
 - Polish: T017 ‖ T020.
+- Phase 7: T025 ‖ T026 ‖ T027 ‖ T028 ‖ T032 (docs and template); T022 ‖ T023 (script vs workflow); T029 ‖ T030.
 
 ## Implementation strategy
 
@@ -124,6 +166,9 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 2. **US1 (MVP)** — the spec-only path + CODEOWNERS + branch-protection guide → the approval gate works, standing alone on Foundational.
 3. US3 — implementation-PR rules; US4 — docs.
 4. Polish: full suite, ruff, dogfood, name-match audit, YAML validation. Apply `docs/branch-protection.md` manually (one-time, by the owner) — SC-004 holds only after this.
+5. *(2026-11-24)* Phase 7 — the honest Spec-PR path: tests, script, workflow, labels, docs and template; verify live
+   on a throwaway draft PR based on the feature branch (T031) before the implementation PR merges by one of the two
+   workflow-edit routes.
 
 ## Requirement coverage
 
@@ -143,3 +188,18 @@ Single repo; CI and governance files at `.github/`, checker scripts at `scripts/
 | SC-002 | T003, T004 | | SC-006 | T003 |
 | SC-003 | T011, T012 | | SC-007 | T011, T012 |
 | SC-004 | T010 | | | |
+
+### Added 2026-11-24 (Phase 7)
+
+| FR | Tasks | | SC | Tasks |
+|---|---|---|---|---|
+| FR-009 (amended) | T021, T022 | | SC-007 (amended) | T021, T022 |
+| FR-015 | T021, T022 | | SC-008 | T021, T022, T029 |
+| FR-016 | T021, T022 | | SC-009 | T021, T022, T029, T031 |
+| FR-017 | T021, T022 | | SC-010 | T023, T031 |
+| FR-018 | T021, T022, T023, T031 | | | |
+| FR-019 | T023, T030, T031 | | | |
+| FR-020 | T021, T022, T031 | | | |
+| FR-021 | T024, T025, T030 | | | |
+| FR-022 | T021, T022 | | | |
+| FR-023 | T026, T027, T028, T032 | | | |
