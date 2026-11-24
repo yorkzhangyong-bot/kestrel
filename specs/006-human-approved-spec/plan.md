@@ -123,3 +123,103 @@ reporting a skipped gate as success) lives in `qa.yml`; the parts GitHub will no
 | No automated HS-code e2e (Principle VII) | The feature's end-to-end path is a GitHub PR event (spec PR → approval → impl PR → gates), which cannot be exercised from pytest and does not touch the sacrificial target. | A pytest e2e against HS-code would test nothing about this feature; the real flow is validated by the manual scenarios in `quickstart.md`, and all pure logic has unit tests. |
 
 Accepted via `/speckit-analyze` (finding C1, 2026-10-29), mirroring the feature 005 C3 resolution where the Principle VII end-to-end requirement was likewise settled by an explicit user decision.
+
+## Change 2026-11-24 — an honest Spec-PR path for refactor and bug-fix PRs
+
+**Spec amendment**: FR-009 and SC-007 amended (scope corrected to `src/` or `ui/` changes on any branch, as the
+gate has enforced since commit df9a65f of 2026-11-10; the `Spec-PR: none` form added); FR-015–FR-024 and
+SC-008–SC-010 added; User Story 5. Owner review of spec PR #50 (2026-11-24): re-run only on relevant events,
+through a recheck workflow (FR-019); the bugfix issue must exist in this repository (FR-024). Owner's requirement: the roadmap Housekeeping item — the graph refactor PR #49
+was admin-merged with the check red, and every bug fix that touches `src/` or `ui/` fails the gate the same way (a tests-only fix never meets the rule).
+
+### Summary
+
+The traceability job accepts `Spec-PR: none` on a PR that changes `src/` or `ui/` only together with exactly one
+reason line (`Spec-PR-reason: refactor` or `Spec-PR-reason: bugfix: #<issue>`) and the matching PR label
+(`refactor` / `bugfix`, not the other one); every other shape fails closed with a message naming the accepted
+forms, and the numbered form `Spec-PR: #<n>` is unchanged. The rule stays a pure function over the description text
+and the list of label names; the job reads both live from the platform at evaluation time (`gh pr view`, falling
+back to an empty description and no labels on any failure), never from the triggering event's snapshot. The pipeline
+keeps its default events; a separate recheck workflow, on a body change or a `refactor`/`bugfix` label change only,
+re-runs the traceability job of the newest pipeline run for the current commit, so a declaration completed after
+opening is re-checked without a push while the quality gate and the review never re-run for it. A `bugfix: #<issue>`
+reason is accepted only once a live lookup finds the number as an issue of this repository. The gate reads the raw
+description, exactly as today. The two labels are created by hand and documented beside the branch-protection settings.
+
+### Technical context (delta)
+
+- No new dependency (Principle X): `check_traceability.py` gains `json.loads` (stdlib) for the output of
+  `gh pr view --json body,labels` and of the issue lookup, two `subprocess` calls to `gh` (the runner's CLI, as `git`
+  already is) and three new patterns; the rule helpers stay pure (the lookup is injected). The workflow changes:
+  `qa.yml` keeps its default events, its traceability step's inputs become `PR_NUMBER` + `GH_TOKEN` (`github.token`)
+  in place of `PR_BODY`, and the traceability job is limited to `permissions: {contents: read, pull-requests: read,
+  issues: read}`; a new `.github/workflows/qa-recheck.yml` (one job, `permissions: {actions: write, contents: read,
+  pull-requests: write}`, no concurrency group) re-runs the traceability job on a body change or a `refactor`/`bugfix`
+  label change and, when it cannot, posts one fixed-text stale-result comment. Its step machine is a new script,
+  `scripts/qa_recheck.py` (stdlib `datetime` for the freshness compare, `gh api`/`gh run` subprocess calls for the
+  rest, an injected API client for its tests) — no new dependency.
+- Files: `scripts/check_traceability.py`, `tests/unit/test_check_traceability.py`, `.github/workflows/qa.yml`,
+  `.github/workflows/qa-recheck.yml`, `scripts/qa_recheck.py`, `tests/unit/test_qa_recheck.py`,
+  `.github/PULL_REQUEST_TEMPLATE.md`, `docs/qa-pipeline.md`, `docs/branch-protection.md`, `CLAUDE.md`,
+  `docs/roadmap.md`, plus this feature's `traceability.md` (lines for the FR-018 live-read half, FR-019, FR-021,
+  FR-023, SC-010 — written in the spec PR). No `src/` or `ui/` change.
+- Testing: tests first (T021) — the declaration matrix of contracts/pr-rules.md over `spec_pr_rule_problems`, the
+  parse of the live read (`parse_pr_state`), the issue lookup stubbed (`issue_exists`) and parsed (`parse_issue_lookup`),
+  and the wiring (`pr_rule_problems(files, body, labels, issue_exists)`); the existing rule tests are not edited
+  (SC-009). `scripts/qa_recheck.py`'s step machine and `already_fresh` — including every API-failure path of review
+  round 3 — are unit-tested offline first, against a stub API client (`tests/unit/test_qa_recheck.py`, T034), with
+  the script itself making those tests pass (T033), the same order as T021/T022. The GitHub half (events, live read, the merge route) is verified on a throwaway
+  draft PR based on the feature branch (quickstart scenario 6) before the implementation PR merges — a
+  `pull_request` run uses the workflow file from the PR's own merge commit, so the draft runs the new gate.
+
+### Constitution re-check
+
+Unchanged from the original gate: I–III, V, VI, VIII, IX are not touched; IV — the live read and the issue lookup use
+the job's own token (`github.token`) on a traceability job limited to `contents: read`, `pull-requests: read` and
+`issues: read`, and the recheck holds `actions: write` (to re-run a job) and `pull-requests: write` (for its one
+fixed-text stale-result comment) only; no token is ever
+printed, and a description value reaches the
+log only as an escaped, truncated literal; VII — unit tests first, and the same justified deviation on the
+HS-code e2e (the end-to-end path is a GitHub PR event; Complexity Tracking, finding C1); X — stdlib only.
+**PASS.**
+
+### Design decisions (detail in research.md §9–§17)
+
+- One keyed reason line, `Spec-PR-reason:`, whole-line value; labels named after the keywords (§9, §13).
+- The description and the labels are read live with `gh pr view <number> --json body,labels` at evaluation time;
+  any failure of that read counts as an empty description and no labels (§10).
+- A body change or a `refactor`/`bugfix` label change — nothing else — re-runs only the traceability job, through a
+  separate recheck workflow and the platform's job re-run endpoint; no job inside the pipeline is skipped, a
+  verdict-only review stays rejected, the recheck has no concurrency group (an irrelevant event never cancels a
+  relevant one), and a recheck that cannot re-run fails with one fixed-text stale-result comment under the owner's
+  merge rule — generalised to cover a pull request from a fork directly (§11, owner review of PR #50 and its
+  review).
+- A re-run refusal is classified by re-reading the run, never by the POST's HTTP status code (the endpoint sends
+  the same `403` whether another attempt is in progress or the refusal is final); the recheck's step machine ships
+  as a tested script, `scripts/qa_recheck.py`, with an injected API client, a pre-POST freshness skip (never
+  re-running when the live read is already current), and comment-hygiene safeguards (no `VERDICT:` substring,
+  per-call timeouts, one comment retry) (§11, review round 2 of the owner changes).
+- Every client call in `scripts/qa_recheck.py` returns a value or raises `RecheckApiError` after its own timeout —
+  "no run" and "no `traceability` job" are successful, empty results, never a failure in disguise; a failure in
+  steps 1–3 or the post-refusal re-read is retried within the same 30-minute budget and, if the budget runs out,
+  still ends in the stale-result comment (reason `error`), never a silent exit 0; a run with no `traceability` job
+  reaches the comment at once; `already_fresh` never raises, so a missing or unparsable timestamp sends the re-run
+  request rather than skipping it; the script's own entry point catches any other exception and still attempts the
+  comment before exit 1 (§11, review round 3 of the owner changes).
+- The bugfix issue must exist in this repository: one live lookup after every other condition holds, fail-closed,
+  outside the pure rule (§12, owner review of PR #50). Failure messages name the accepted forms and echo description
+  values only as escaped, truncated literals (§14).
+- The gate reads the raw description, as today (the round-1 comment stripping was reversed in round 2, §16); keyed
+  lines start in column 1; on the honest path the `Spec-PR:` line is exactly one and exactly `none` (§16, §17).
+- Rollout: this spec PR → the owner creates the labels → the implementation PR is pushed and verified live on a
+  throwaway draft PR based on the feature branch (its `specs/` restored to master's version, closed unmerged
+  afterwards) → the implementation PR, which moves the roadmap item to Done, merges by one of the two
+  workflow-edit routes; a pull request already open across that merge needs one push, since its recheck would
+  re-run the old traceability job, which fails closed (§15).
+
+### Complexity tracking (delta)
+
+No new violation. The workflow-editing implementation PR cannot be reviewed by the Claude review action (it refuses
+a PR that changes a workflow), so it merges by one of the two routes in docs/branch-protection.md (the review check
+passes while `SKIP_AI_REVIEW=true`; otherwise an administrator merges with it red) — a process constraint, not a
+design deviation.
