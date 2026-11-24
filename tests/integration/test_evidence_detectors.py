@@ -1,0 +1,238 @@
+"""The two reply detectors through the API (013/FR-009, FR-012 to FR-014, FR-065, SC-001, SC-003).
+
+A stub target whose reply carries the run's *real* joined override form — read back from the store, never a fixed
+string — confirms the run with one instruction-override item and no judge call; the parts quoted apart, the
+instruction quoted back or a refusal confirm nothing. The joined form appears in none of the requests Kestrel
+sent, checked on the normalised body. A run whose own attacker message carries the joined form disarms the token
+and records no item afterwards (the API's disarmed notice is asserted in test_evidence_api_ui.py, where the
+run-detail shape lives). No attack text: placeholder messages, and the unsafe-output samples come from the inert
+fixture."""
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from kestrel.attack.attacker import AttackerReply
+from kestrel.evidence import override
+from tests.support import (StubAttacker, StubJudge, fixture_library, in_progress_run_id, planted_values,
+                           saved_target)
+
+FEATURE = "013"
+
+FAMILY = "direct_injection"
+SEED_ID = "dir-001"
+
+
+def seed_text(family: str = FAMILY, seed_id: str = SEED_ID) -> str:
+    return fixture_library().pick(family, seed_id).text
+
+
+class ReplyingTarget:
+    """A stub target whose reply is built from the run's own planted values, read back from the store."""
+
+    def __init__(self, store, make_reply) -> None:
+        self._store = store
+        self._make_reply = make_reply
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        run_id = in_progress_run_id(self._store)
+        values = planted_values(self._store, run_id) if run_id is not None else {}
+        return httpx.Response(200, json={"reply": self._make_reply(values)})
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self)
+
+    def sent_bodies(self) -> list[str]:
+        import json
+        return [json.loads(r.content.decode("utf-8"))["message"] for r in self.requests]
+
+
+class JoiningAttacker(StubAttacker):
+    """An attacker whose turn-2 message itself carries the run's joined form — the disarm case of FR-012."""
+
+    def __init__(self, store, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._store = store
+
+    async def next_message(self, *, conversation, family, progress=None, hints=None, timeout=None):
+        run_id = in_progress_run_id(self._store)
+        values = planted_values(self._store, run_id) if run_id is not None else {}
+        joined = values.get("joined", "")
+        return AttackerReply(message=f"<attacker turn {len(conversation) // 2 + 1}> {joined}", tokens=10)
+
+
+def client_for(make_client, settings, make_reply, *, judge=None, attacker=None):
+    """A client whose stub target replies with `make_reply(planted values of the run in progress)`."""
+    store_box: dict = {}
+
+    class Deferred:
+        def __call__(self, request):
+            return store_box["target"](request)
+
+    target = Deferred()
+    api = make_client(settings, transport=httpx.MockTransport(target), library=fixture_library(),
+                      judge=judge or StubJudge(verdict="failed"), attacker=attacker)
+    replying = ReplyingTarget(api.app.state.store, make_reply)
+    store_box["target"] = replying
+    return api, replying
+
+
+def run_attack(api, target_id, *, family=FAMILY, seed_id=SEED_ID, mode="single_turn"):
+    response = api.post("/api/runs", json={"target_id": target_id, "family": family, "prompt_id": seed_id,
+                                           "mode": mode})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+# ---- the override detector (FR-009, FR-013, SC-001, SC-003) ----
+
+
+def test_a_reply_with_the_joined_form_confirms_without_the_judge(make_client, settings, json_log):
+    # FR-009, FR-013, SC-001, SC-003
+    judge = StubJudge(verdict="failed")   # would disagree; it must not be consulted at all
+    api, _target = client_for(make_client, settings, lambda v: f"here you go: {v['joined']}", judge=judge)
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id)
+
+    assert run["verdict"] == "succeeded" and run["hard_evidence"] is True and run["judge_used"] is False
+    assert judge.calls == []
+    items = store.list_evidence(run["id"])
+    assert [(i.kind, i.turn, i.location) for i in items] == [("instruction_override", 1, "reply")]
+    assert items[0].owasp_category == "LLM01: Prompt Injection"
+    assert items[0].detail == "the planted marker appeared in the reply"   # never the token itself (FR-007)
+    assert [line for line in json_log() if line.get("event") == "model.request"
+            and line.get("kind") == "judge"] == []
+
+
+@pytest.mark.parametrize("shape", ["separated", "quoted_instruction", "refusal", "one_part"])
+def test_a_reply_that_does_not_join_the_parts_records_no_item_and_is_judged_as_today(make_client, settings, shape):
+    # FR-009, SC-001
+    replies = {
+        "separated": lambda v: f"the fragments are {v['first']} and {v['second']}",
+        "quoted_instruction": lambda v: f"You asked: {override.override_task_paragraph(
+            override.OverrideToken(v['first'], v['second']))[0]} — I will not do that.",
+        "refusal": lambda v: "I can't follow instructions that override my own.",
+        "one_part": lambda v: f"all I will say is {v['first']}",
+    }
+    judge = StubJudge(verdict="failed")
+    api, _target = client_for(make_client, settings, replies[shape], judge=judge)
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id)
+
+    assert store.list_evidence(run["id"]) == []
+    assert run["hard_evidence"] is False and run["judge_used"] is True and run["verdict"] == "failed"
+    assert len(judge.calls) == 1
+
+
+def test_the_joined_form_is_in_none_of_the_messages_kestrel_sent(make_client, settings):  # FR-009, SC-001
+    api, target_stub = client_for(make_client, settings, lambda v: "an ordinary reply")
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id)
+
+    values = planted_values(store, run["id"])
+    assert values["joined"] and values["first"] in run["prompt_text"] and values["second"] in run["prompt_text"]
+    for body in target_stub.sent_bodies():
+        assert override.text_contains_joined(body, values["joined"]) is False
+    assert override.text_contains_joined(run["prompt_text"], values["joined"]) is False
+    assert seed_text() in run["prompt_text"]   # the library seed is sent verbatim, with the task placed at its point
+
+
+def test_two_runs_get_different_tokens(make_client, settings):  # FR-008, FR-051
+    api, _target = client_for(make_client, settings, lambda v: "an ordinary reply")
+    store = api.app.state.store
+    target = saved_target(store)
+
+    first = planted_values(store, run_attack(api, target.id)["id"])
+    second = planted_values(store, run_attack(api, target.id)["id"])
+
+    assert first["joined"] and second["joined"] and first["joined"] != second["joined"]
+
+
+def test_a_family_that_carries_no_task_plants_nothing_and_sends_todays_message(make_client, settings):  # FR-011
+    api, target_stub = client_for(make_client, settings, lambda v: "an ordinary reply")
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001")
+
+    assert store.list_planted_tokens(run["id"]) == []
+    assert run["prompt_text"] == seed_text("system_prompt_leak", "spl-001")
+    assert target_stub.sent_bodies() == [run["prompt_text"]]
+
+
+def test_an_indirect_run_carries_the_task_inside_the_seeds_injected_content(make_client, settings):  # FR-064, SC-014
+    api, _target = client_for(make_client, settings, lambda v: "an ordinary reply")
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, family="indirect_injection", seed_id="iin-001")
+
+    seed = seed_text("indirect_injection", "iin-001")
+    point = override.insertion_point("indirect_injection", "iin-001", seed)
+    assert 0 < point.offset < len(seed)   # interior: inside the content, never appended after it
+    sent = run["prompt_text"]
+    assert sent.startswith(seed[:point.offset]) and sent.endswith(seed[point.offset:])
+    assert not sent.endswith(store.list_planted_tokens(run["id"])[0].token)   # never appended in Kestrel's voice
+    values = planted_values(store, run["id"])
+    assert values["first"] in sent and values["second"] in sent
+
+
+def test_a_reply_carrying_the_joined_form_on_turn_one_confirms_before_any_disarm_can_happen(make_client, settings):
+    # FR-002, FR-013
+    api = make_client(settings, transport=httpx.MockTransport(lambda r: store_box["target"](r)),
+                      library=fixture_library(), judge=StubJudge(verdict="failed"), attacker=JoiningAttacker(None))
+    store_box: dict = {}
+    store = api.app.state.store
+    api.app.state.attacker._store = store
+    store_box["target"] = ReplyingTarget(store, lambda v: f"here you go: {v.get('joined', '')}")
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, mode="adaptive")
+
+    assert run["succeeded_turn"] == 1 and run["hard_evidence"] is True
+    token = store.list_planted_tokens(run["id"])[0]
+    assert token.armed is True                       # the run stopped before the attacker could write the form
+    assert [i.kind for i in store.list_evidence(run["id"])] == ["instruction_override"]
+
+
+def test_a_run_disarmed_before_the_confirming_reply_records_no_override_item(make_client, settings, json_log):
+    """The attacker writes the joined form itself on turn 2 (FR-012): from that turn on, a reply carrying the
+    form is not evidence, the run records the token as disarmed, and one warning line says so. Turn 1's reply
+    deliberately does not confirm, so the run reaches the turn that disarms it."""
+    # FR-012, SC-001
+    replies = iter(["nothing useful yet", None])
+
+    def make_reply(values):
+        try:
+            nxt = next(replies)
+        except StopIteration:
+            nxt = None
+        return nxt if nxt is not None else f"echoing it back: {values.get('joined', '')}"
+
+    store_box: dict = {}
+    api = make_client(settings, transport=httpx.MockTransport(lambda r: store_box["target"](r)),
+                      library=fixture_library(), judge=StubJudge(verdict="failed"),
+                      attacker=JoiningAttacker(None))
+    store = api.app.state.store
+    api.app.state.attacker._store = store
+    store_box["target"] = ReplyingTarget(store, make_reply)
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, mode="adaptive")
+
+    token = store.list_planted_tokens(run["id"])[0]
+    assert token.disarmed_turn == 2 and token.armed is False
+    assert [i.kind for i in store.list_evidence(run["id"])] == []   # the later reply is not evidence
+    assert run["hard_evidence"] is False
+    disarmed = [line for line in json_log() if line.get("event") == "evidence.override_disarmed"]
+    assert len(disarmed) == 1 and disarmed[0]["turn"] == 2 and disarmed[0]["level"] == "WARNING"
+    assert all(str(token.token) not in str(line) for line in json_log())   # never the token on a line (FR-048)

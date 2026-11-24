@@ -936,8 +936,14 @@ one attack, asserting the structure of the result.
   `tests/integration/test_provenance_migration.py`); the log-records tests whose turn and event order changes
   because the new per-turn `evidence.check` line now precedes `turn`
   (`tests/integration/test_log_records_adaptive.py`, `test_log_records_single_turn.py`); the prompt-registry pins
-  (`tests/integration/test_config_prompts.py`, `test_prompt_no_secrets.py`) for the new task prompts and the
-  bumped attacker versions; the report coverage/finding tests for the new LLM05 row and the per-item lines; the
+  (`tests/integration/test_config_prompts.py`, `test_prompt_no_secrets.py`, `tests/unit/test_prompt_registry.py`)
+  for the new task prompts, the bumped attacker versions and the optional `framing` front-matter key — the last
+  file pins the exact id set, `version == "1"` for every id, and the exact two-line front-matter prefix of every
+  shipped file, all three of which this feature changes by construction; the one assertion in
+  `tests/unit/test_attacker_client.py` that pins a bumped family's active reference as `@1` while reading it from
+  the live registry (it becomes a comparison against `prompt_registry.active_ref`, so no version literal can go
+  stale again); the report coverage/finding tests for the
+  new LLM05 row and the per-item lines; the
   user-interface tests whose stubbed run shapes predate the evidence fields; `tests/unit/test_bump_prompt.py` (the
   bump-preserves-`framing` case, T015); `tests/e2e/conftest.py` (the
   `kestrel_api` fixture pops `KESTREL_CALLBACK_BASE_URL` so a developer's export cannot change what the e2e plants);

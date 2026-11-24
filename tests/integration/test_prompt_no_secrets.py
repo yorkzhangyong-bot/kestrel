@@ -17,7 +17,11 @@ EXPECTED_IDS = {
     "attacker:indirect_injection",
     "judge",
     "recommender",
+    # Feature 013 (013/SC-008): the planting template the two injection families fill per run.
+    "override_task",
 }
+# Feature 013: the attacker prompts the planted-task families got a new version of (contracts/prompts.md).
+BUMPED_IDS = {"attacker:direct_injection", "attacker:indirect_injection"}
 
 
 def test_the_lock_holds_only_ids_versions_and_fingerprints():  # 009/FR-011, 009/SC-007

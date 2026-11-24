@@ -268,7 +268,9 @@ def test_the_client_exposes_the_reference_it_sends(json_log):  # 010/FR-007
                             system_overrides={"system_prompt_leak": ("PINNED TEXT", "attacker:system_prompt_leak@7")})
     assert pinned.prompt_ref("system_prompt_leak") == "attacker:system_prompt_leak@7"
     assert "PINNED TEXT" in pinned._payload([], None, "system_prompt_leak")["messages"][0]["content"]
-    assert pinned.prompt_ref("direct_injection") == "attacker:direct_injection@1"   # other families: active
+    # Other families fall back to the registry's active version, whatever it is (013/SC-008: feature 013 bumped
+    # the two injection families' prompts, so a version literal here would go stale on every later bump).
+    assert pinned.prompt_ref("direct_injection") == prompt_registry.active_ref("attacker:direct_injection")
     plain = AttackerClient(model="m", api_key="k", base_url="https://atk.test/v1",
                            system_overrides={"system_prompt_leak": "A PLAIN PINNED TEXT"})
     assert plain.prompt_ref("system_prompt_leak") is None   # the feature-009 form: the reference is not known

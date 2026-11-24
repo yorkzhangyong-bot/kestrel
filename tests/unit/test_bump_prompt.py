@@ -91,3 +91,15 @@ def test_main_exit_codes(sandbox, capsys):  # 009/SC-002
     assert bump_prompt.main(["judge", "--lock"]) == 0
     assert "Guard: clean" in capsys.readouterr().out
     assert bump_prompt.main(["nope"]) == 2
+
+
+def test_a_bump_keeps_the_optional_framing_key(sandbox):  # 013/SC-014
+    """Feature 013: bumping the override template must not drop `framing: override` — the structural field a test
+    asserts the planting wording's framing by (013/SC-014)."""
+    prompts, lock = sandbox
+    assert pr.prompt_files(prompts)["override_task"]["1"].framing == "override"
+    created = bump_prompt.bump("override_task", directory=prompts, lock_path=lock)
+    assert created == prompts / "override_task.v2.md"
+    bumped = pr.parse_prompt_file(created)
+    assert (bumped.id, bumped.version, bumped.framing) == ("override_task", "2", "override")
+    assert bumped.text == pr.prompt_files(prompts)["override_task"]["1"].text

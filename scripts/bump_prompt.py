@@ -44,7 +44,10 @@ def bump(prompt_id: str, *, directory: Path | None = None, lock_path: Path | Non
     new_version = str(int(current) + 1)
     target = pr.prompt_path(prompt_id, new_version, directory)
     with open(target, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(pr.format_prompt_file(prompt_id, new_version, versions[current].text))
+        # The optional `framing` key (feature 013) is carried over, so bumping the override template cannot
+        # silently drop the field a test asserts on (013/SC-014).
+        handle.write(pr.format_prompt_file(prompt_id, new_version, versions[current].text,
+                                           framing=versions[current].framing))
     return target
 
 

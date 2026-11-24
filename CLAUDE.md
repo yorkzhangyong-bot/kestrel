@@ -101,7 +101,8 @@ same commit. Before opening any implementation PR, review this file and add anyt
 ## Learned notes
 - 2026-11-13 — **Prompt registry (009, after the PR #19 review).** Every model-facing prompt (attacker per
   family, judge, recommender) is a file `src/kestrel/prompts/<id with ':'→'_'>.v<N>.md` with a two-line YAML
-  front-matter (`id`, `version`); **no prompt text lives in Python**. The files are the registry
+  front-matter (`id`, `version`) — plus, since feature 013, one **optional** third key `framing`, which only a
+  planting template carries (`framing: override`) and which a bump preserves; **no prompt text lives in Python**. The files are the registry
   (`src/kestrel/prompt_registry.py`): the highest `N` is active, older files are the non-active versions an A/B
   arm can pin, and `load_prompt("judge")` returns `(text, "judge@1")`. Versions are plain integers, not semver.
   The committed lock `src/kestrel/prompt_versions.lock.json` (`{id: {version: sha256}}`) pins every file's

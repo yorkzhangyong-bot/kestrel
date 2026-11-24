@@ -16,7 +16,11 @@ EXPECTED_IDS = {
     "attacker:indirect_injection",
     "judge",
     "recommender",
+    # Feature 013 (013/SC-008): the planting template the two injection families fill per run.
+    "override_task",
 }
+# Feature 013: the attacker prompts the planted-task families got a new version of (contracts/prompts.md).
+BUMPED_IDS = {"attacker:direct_injection", "attacker:indirect_injection"}
 
 
 def _write(directory: Path, prompt_id: str, version: str, text: str) -> Path:
@@ -25,10 +29,10 @@ def _write(directory: Path, prompt_id: str, version: str, text: str) -> Path:
     return path
 
 
-def test_registry_lists_the_three_kinds_at_version_1():  # 009/FR-001, 009/FR-002
+def test_registry_lists_every_kind_at_its_active_version():  # 009/FR-001, 009/FR-002, 013/SC-008
     entries = pr.registry()
     assert {e.id for e in entries} == EXPECTED_IDS
-    assert all(e.version == "1" for e in entries)
+    assert all(e.version == ("2" if e.id in BUMPED_IDS else "1") for e in entries)
     assert all(e.text and e.fingerprint == pr.fingerprint(e.text) for e in entries)
 
 
@@ -36,7 +40,12 @@ def test_every_prompt_is_a_front_matter_file_and_no_prompt_text_lives_in_python(
     for entry in pr.registry():
         path = pr.prompt_path(entry.id, entry.version)
         assert path.is_file() and path.parent == pr.PROMPTS_DIR
-        assert path.read_text(encoding="utf-8").startswith(f"---\nid: {entry.id}\nversion: {entry.version}\n---\n")
+        # The two-line front-matter, optionally followed by feature 013's one optional `framing` key.
+        head = f"---\nid: {entry.id}\nversion: {entry.version}\n"
+        body = path.read_text(encoding="utf-8")
+        assert body.startswith(head)
+        rest = body[len(head):]
+        assert rest.startswith("---\n") or (rest.startswith("framing: ") and "\n---\n" in rest)
     import kestrel.attack.attacker as attacker
     import kestrel.judge.client as judge
     for module, name in ((attacker, "SYSTEM_PROMPT"), (attacker, "GOALS"), (judge, "SYSTEM_PROMPT"),
@@ -52,6 +61,27 @@ def test_load_prompt_returns_the_active_text_and_its_reference():  # 009/FR-001
 
 def test_no_summariser_prompt_is_registered():  # 009 — three model-facing kinds only
     assert not any("summar" in e.id for e in pr.registry())
+
+
+def test_an_optional_framing_key_round_trips_and_is_none_without_one(tmp_path):  # 013/SC-014
+    plain = _write(tmp_path, "judge", "1", "a judge prompt")
+    assert pr.parse_prompt_file(plain).framing is None
+    path = pr.prompt_path("override_task", "1", tmp_path)
+    path.write_text(pr.format_prompt_file("override_task", "1", "a planting template", framing="override"),
+                    encoding="utf-8", newline="\n")
+    parsed = pr.parse_prompt_file(path)
+    assert (parsed.id, parsed.version, parsed.framing) == ("override_task", "1", "override")
+    # The optional key sits in the front-matter only: it never joins the text a fingerprint is taken over.
+    assert parsed.text == "a planting template"
+    assert pr.fingerprint(parsed.text) == pr.fingerprint("a planting template")
+
+
+def test_a_front_matter_key_outside_the_allowed_set_is_still_refused(tmp_path):  # 009/FR-005, 013/SC-014
+    path = tmp_path / "judge.v1.md"
+    path.write_text("---\nid: judge\nversion: 1\nactive: true\n---\ntext\n", encoding="utf-8",
+                    newline="\n")
+    with pytest.raises(pr.PromptFileError, match="only 'id' and 'version'"):
+        pr.parse_prompt_file(path)
 
 
 def test_has_and_active_version():  # 009/FR-009

@@ -1,0 +1,38 @@
+{
+  "_note": "Kestrel-owned insertion points for the planted override task (feature 013, FR-064). Each entry names an attack-library seed by its prompt id and records where that seed's planted paragraph goes: a character offset into the seed's verbatim library text, plus a sha256 fingerprint of the text the offset was chosen against. A direct-injection seed's offset is the end of its text (the attacker-voice position); an indirect-injection seed's offset is interior, inside the content the seed presents as retrieved, so the planted instruction reaches the agent as data rather than as a request from its user. The library file itself stays verbatim; a seed whose fingerprint no longer matches fails the test suite, which is what forces a re-review of its point after a library edit.",
+  "version": "1",
+  "points": {
+    "dir-001": {
+      "offset": 197,
+      "fingerprint": "dfd90963a179c2a04ac9a7db0f107b9ec97cca89aa30a6ee7eaf5a51329495fa"
+    },
+    "dir-002": {
+      "offset": 150,
+      "fingerprint": "5e25cae93886be6b9303845591665f8d73541f9ebe7fc973ab53e57b476a8a85"
+    },
+    "dir-003": {
+      "offset": 169,
+      "fingerprint": "44ac18b62e10f2818d317e84295869ed3d89a01f35934229df9af1931dc45479"
+    },
+    "dir-004": {
+      "offset": 214,
+      "fingerprint": "3becff85a1174ea95edad3eed1c13138c09c749cca2685c1e3210dac9700d29f"
+    },
+    "iin-001": {
+      "offset": 98,
+      "fingerprint": "3853928fabba3842a418a794803dd635762223092f12f31137a661b7e7de9f55"
+    },
+    "iin-002": {
+      "offset": 66,
+      "fingerprint": "9ff0f74dca594240618335b2e48c4f1d0b53e6bb8e93160b31cdcca24dba0180"
+    },
+    "iin-003": {
+      "offset": 70,
+      "fingerprint": "24bf69cba72ec9f8044b0c18c82f9cbc6dc1c95f85cbef43cadea39a72977375"
+    },
+    "iin-004": {
+      "offset": 94,
+      "fingerprint": "0070284848599b44112488001df7beba7a77b7800dff0dd879d96d5f443525cb"
+    }
+  }
+}
