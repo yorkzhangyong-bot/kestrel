@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.tester import ResolvedSettings, TestOutcome as Outcome
+from kestrel.evidence.checker import EvidenceChecker
 from kestrel.judge.client import JudgeError
 from kestrel.judge.verdict import ParsedVerdict
 from kestrel.runs import execute_run
@@ -75,6 +76,29 @@ def run(store, target, *, judge, sender, canaries=(), clock=None):
     return asyncio.run(execute_run(store, target_id=target.id, prompt=PROMPT, attacker_source=SOURCE,
                                    canaries=list(canaries), resolved=RESOLVED, mode="local", judge=judge,
                                    sender=sender, clock=clock or FakeClock()))
+
+
+# --- a failure after the claim still closes the row (FR-010; 013/FR-008) ---
+
+class _ExplodingChecker(EvidenceChecker):
+    """A checker whose bind_run fails: the planted-token row right after the claim could not be written."""
+
+    def bind_run(self, run_id):
+        raise RuntimeError("the planted-token row could not be written")
+
+
+def test_a_failure_recording_what_the_run_planted_still_closes_the_row(store, target):  # FR-010, 013/FR-008
+    judge = StubJudge(result=ParsedVerdict("failed", "never reached"))
+    checker = _ExplodingChecker(canaries=[], family=PROMPT.family, store=store)
+    with pytest.raises(RuntimeError, match="planted-token"):
+        asyncio.run(execute_run(store, target_id=target.id, prompt=PROMPT, attacker_source=SOURCE, canaries=[],
+                                resolved=RESOLVED, mode="local", judge=judge, sender=sender_returning(ok()),
+                                clock=FakeClock(), evidence=checker))
+    [closed] = store.list_runs(target.id)
+    assert closed.status != "in_progress" and closed.verdict == "unclear"
+    assert closed.reason == "The run failed unexpectedly."
+    assert store.other_run_in_progress(target.id, excluding_run_id=-1) is False   # the target is not left locked
+    assert judge.calls == []
 
 
 # --- canary first (FR-016, Principle II) ---

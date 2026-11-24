@@ -340,7 +340,9 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `EvidenceChecker` (`src/kestrel/evidence/`), built per run by `build_checker(...)`, owns every check and runs
   them in the fixed order of FR-001 over each reply; **any** item ends the run succeeded with hard evidence and
   no judge call for that turn, and `evidence=None` keeps `EvidenceChecker.canary_only(...)` — today's behaviour
-  exactly — so no existing caller or test changed. Items are rows of `run_evidence` (kind, turn, location, OWASP
+  exactly — for the *live* run functions only, so no existing caller or test changed; **both replay paths always
+  build the full checker** from the source's copied tokens (FR-014, FR-035 — `evidence=` is a test seam there,
+  never a canary-only fallback). Items are rows of `run_evidence` (kind, turn, location, OWASP
   class, non-secret detail, plus a pattern name and set version for unsafe output); the seven kinds and their
   labels/locations/classes live in one table (`evidence/model.py`), and `derived_items(run, stored)` is the one
   helper that gives a **pre-013** hard-evidence run its single canary item on every surface, so the summary, the
@@ -386,7 +388,14 @@ same commit. Before opening any implementation PR, review this file and add anyt
   creates every table of *both* parts, so part 2 needs no second bump. Pre-existing tests edited beyond
   SC-008's original list (and added to it): `tests/unit/test_prompt_registry.py` (the exact id set, the
   `version == "1"` pin and the two-line front-matter prefix, all three of which a new prompt id, two bumped
-  attacker versions and the optional `framing` key change by construction) and one assertion in
+  attacker versions and the optional `framing` key change by construction), one assertion in
   `tests/unit/test_attacker_client.py` that pinned a bumped family's active reference as `@1` while reading it
   from the live registry — now compared against `prompt_registry.active_ref`, so no version literal can go stale
-  again.
+  again — and `tests/unit/test_experience_summary.py`, whose fallback-summary assertion pinned the old
+  "canary hard evidence" suffix (now "; hard evidence": any deterministic proof, review round 1 item 13). The
+  unsafe-output boundary after review round 2: a SQL statement must start its line (a *named* client prompt
+  such as `mysql>` allowed, a bare `#`/`>`/`$` not), so an embedded "run: DROP TABLE x;" after prose is a known
+  recall cost; `eval` counts only at a command position; a shell or runtime given its own program inline
+  (`-c`/`-e`) reads a piped download as data; a non-JavaScript `type` makes a script element a data block; a
+  no-op `javascript:` URI is not a sink; and the tag context is an attribute-list grammar on one line, never
+  a `<` comparison.

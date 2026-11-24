@@ -26,7 +26,7 @@ with the last pull request.
 | FR-057 | `tests/unit/test_store_migration_v11.py` (additive, no rebuild, every row readable) |
 | FR-061 | `tests/integration/test_evidence_store_isolation.py` (a family that plants nothing writes exactly what it did before); `tests/unit/test_retrieval_query_scrub.py` (the query without planted values is unchanged) |
 | FR-063, SC-013 | `tests/unit/test_strip_planted_tasks.py` (a framed task stripped whole, the bare paragraph alone would leave the frame); `tests/unit/test_retrieval_query_scrub.py`; `tests/integration/test_evidence_store_isolation.py` (repeating attacker and judge doubles, confirmed on turn 3; the shipped indirect seed's frame never reaches the pool or a query) |
-| FR-021, FR-027, FR-030, FR-068 | `tests/unit/test_settings_evidence.py` (the three settings and the start-up validation of the base URL; the listener and the per-run check themselves are part 2) |
+| FR-021, FR-027, FR-030, FR-068 | **settings only; behaviour in part 2** — `tests/unit/test_settings_evidence.py` covers the three settings and the start-up validation of the base URL, nothing more; the side-channel check inside "Test connection", the callback wait, the listener and the per-run usable-base check are part-2 behaviour with no test yet, so the gate's pass here must not be read as coverage — T068 re-checks these four ids against the part-2 tests |
 | SC-010 | `tests/e2e/test_us013_detectors.py` (part 1's live scenario; part 2 adds its own) |
 
 ## Reviewed properties (SC-014) — for the implementation pull request's reviewer
@@ -75,7 +75,7 @@ by the part-2 pull request", which replaces these lines with its tests.
 - 013/FR-032: part 2 — implemented by the part-2 pull request (the protected-state snapshots).
 - 013/FR-033: part 2 — implemented by the part-2 pull request (state values never stored, shown or logged).
 - 013/FR-041: part 2 — implemented by the part-2 pull request (the side-channel form section).
-- 013/FR-049: part 2 — implemented by the part-2 pull request (side-channel and callback traffic confinement; the model-input half is kept by part 1's redaction test).
+- 013/FR-049: part 2 — implemented by the part-2 pull request (side-channel and callback traffic confinement, and the model-input half too: no part-1 test inspects a judge, attacker or recommender input — `tests/integration/test_evidence_redaction.py` counts markers on the log stream only).
 - 013/FR-052: part 2 — implemented by the part-2 pull request (the HS-code target's tool-call recording and endpoints).
 - 013/FR-053: part 2 — implemented by the part-2 pull request (the honeypot tool).
 - 013/FR-054: part 2 — implemented by the part-2 pull request (the bounded outbound-request tool).

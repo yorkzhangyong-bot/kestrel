@@ -16,8 +16,9 @@ import pytest
 
 from kestrel.attack.attacker import AttackerReply
 from kestrel.evidence import override
-from tests.support import (StubAttacker, StubJudge, fixture_library, in_progress_run_id, planted_values,
-                           saved_target)
+from kestrel.secrets import MASK
+from tests.support import (SECRET, TARGET_URL, StubAttacker, StubJudge, fixture_library, in_progress_run_id,
+                           planted_values, saved_target)
 
 FEATURE = "013"
 
@@ -406,3 +407,21 @@ def test_an_excerpt_carrying_a_planted_token_part_is_scrubbed_before_it_is_store
     for value in (values["first"], values["second"], values["joined"]):
         assert value not in items[0].detail
     assert override.SCRUB_PLACEHOLDER in items[0].detail
+
+
+def test_an_excerpt_carrying_the_target_url_or_an_auth_value_is_masked_before_it_is_stored(make_client, settings):
+    # FR-007
+    # The matched text carries the target's own URL and its auth header value - the mask list every run starter
+    # hands the checker - so the excerpt would quote them back; both are masked before the detail is stored.
+    sample = fixture_case("active_script_element", "positive")
+    api, _target = client_for(make_client, settings,
+                              lambda v: sample.replace("https://example.com", f"{TARGET_URL}?key={SECRET}"))
+    store = api.app.state.store
+    target = saved_target(store)                                  # its URL is TARGET_URL, its header value SECRET
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001")   # plants nothing: the mask alone
+
+    items = store.list_evidence(run["id"])
+    assert [i.kind for i in items] == ["unsafe_executable_output"]
+    assert TARGET_URL not in items[0].detail and SECRET not in items[0].detail
+    assert MASK in items[0].detail and "?key=" in items[0].detail   # the rest of the excerpt is kept

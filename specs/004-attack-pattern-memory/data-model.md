@@ -81,7 +81,7 @@ One per run, per target (FR-006). Retrieved by exact `target_id` match, never se
 ### The one-line summary (FR-008, FR-013)
 
 - **Built from**: the run's per-turn `judge_progress` notes, joined in order, with **no model call**.
-- **Fallback** (no judge notes): fixed template from metadata, e.g. `"<family>: <verdict> after N turn(s); stopped at <condition>"` (+ `"; canary hard evidence"` when `hard_evidence`).
+- **Fallback** (no judge notes): fixed template from metadata, e.g. `"<family>: <verdict> after N turn(s); stopped at <condition>"` (+ `"; hard evidence"` when `hard_evidence` — since feature 013 any deterministic proof, not only a canary, so the suffix no longer names one).
 - **Sanitised** to a fixed shape: collapse whitespace to single spaces, strip control characters, truncate to **≈280 chars**, one line. Guarantees SC-009 and blocks self-injection.
 
 ## Retrieval selection (warm)

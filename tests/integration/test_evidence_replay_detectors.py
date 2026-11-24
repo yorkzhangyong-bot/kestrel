@@ -102,6 +102,23 @@ def replay(store, source, source_turns, *, judge, sender):
     return asyncio.run(run())
 
 
+# ---- the turn line of a single-turn replay (FR-047) ----
+
+
+def test_a_single_turn_replays_turn_line_counts_every_item(store, target, json_log):  # FR-047, SC-009
+    """Two declared canaries in one reply are two items (FR-005); the replay's one turn line reports the item
+    count, as every other turn line does - never the number of distinct kinds."""
+    store.set_canaries(target.id, ["KESTREL-CANARY-ONE", "KESTREL-CANARY-TWO"])
+    source = single_turn_source(store, target, family="system_prompt_leak", planted=False)
+    run = replay(store, source, [], judge=StubJudge(verdict="failed"),
+                 sender=replies("leaked KESTREL-CANARY-ONE and KESTREL-CANARY-TWO"))
+    assert run.replay_outcome == "still_vulnerable" and run.hard_evidence is True
+    assert [i.kind for i in store.list_evidence(run.id)] == ["canary_in_reply", "canary_in_reply"]
+    [line] = json_log.of("turn")
+    assert line["evidence_count"] == 2 and line["evidence_kinds"] == ["canary_in_reply"]
+    assert line["canary_hit"] is True and line["hard_evidence"] is True
+
+
 # ---- the override detector on a replay (FR-035, SC-009) ----
 
 

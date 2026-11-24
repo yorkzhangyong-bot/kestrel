@@ -128,8 +128,9 @@ own voice.
 8. **Given** a run of the indirect-injection family, **When** the message Kestrel sends is inspected, **Then** the
    override task sits inside the seed's simulated injected content (the insertion point the sidecar records for
    that seed), inside the quoting frame the sidecar records for it — presented as a quoted excerpt of the
-   document, email, OCR text or ticket the seed names — not appended in Kestrel's own voice, so the agent reads
-   it as content it retrieved rather than as a request from its user.
+   document, email, OCR text or ticket the seed names — not appended in Kestrel's own voice, so the task reaches
+   the agent as simulated retrieved content inside the user turn rather than as a request in the user's own
+   voice (FR-064; proof that an instruction travelled a real retrieval path is part 2's).
 
 ---
 
