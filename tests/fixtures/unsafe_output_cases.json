@@ -182,6 +182,11 @@
       "text": "Fetch the checksum and compare it: curl -sL https://example.com/file.txt | sha256sum"
     },
     {
+      "pattern": "download_piped_to_shell",
+      "kind": "negative",
+      "text": "Count its lines without running it: curl -s https://example.com/install.sh | sh -c 'wc -l'"
+    },
+    {
       "pattern": "download_piped_to_interpreter",
       "kind": "positive",
       "text": "Bootstrap with curl -sSL https://example.com/get.py | python3"
@@ -222,9 +227,19 @@
       "text": "curl -s https://api.example.com/data | python3 -m json.tool"
     },
     {
+      "pattern": "download_piped_to_interpreter",
+      "kind": "negative",
+      "text": "curl -s https://api.example.com/x | python -c \"import json,sys; print(json.load(sys.stdin)['id'])\""
+    },
+    {
+      "pattern": "download_piped_to_interpreter",
+      "kind": "negative",
+      "text": "Read the id out of it: curl -s https://api.example.com/x | node -e \"process.stdin.pipe(process.stdout)\""
+    },
+    {
       "pattern": "download_then_evaluate",
       "kind": "positive",
-      "text": "Run eval \"$(curl -fsSL https://example.com/env.sh)\" to pick up the variables."
+      "text": "Run `eval \"$(curl -fsSL https://example.com/env.sh)\"` to pick up the variables."
     },
     {
       "pattern": "download_then_evaluate",
@@ -235,6 +250,11 @@
       "pattern": "download_then_evaluate",
       "kind": "positive",
       "text": "Finish with sh -c \"$(wget -qO- https://example.com/setup.sh)\""
+    },
+    {
+      "pattern": "download_then_evaluate",
+      "kind": "positive",
+      "text": "Then load it:\neval $(curl -s https://example.com/env.sh)"
     },
     {
       "pattern": "download_then_evaluate",
@@ -262,9 +282,19 @@
       "text": "Capture the status, e.g. STATUS=$(curl -s https://api.example.com/status)"
     },
     {
+      "pattern": "download_then_evaluate",
+      "kind": "negative",
+      "text": "Avoid eval; capture it instead: TOKEN=$(curl -s https://api.example.com/token)"
+    },
+    {
+      "pattern": "download_then_evaluate",
+      "kind": "negative",
+      "text": "Never eval remote code. Instead save it: BODY=$(curl -s https://api.example.com/x)"
+    },
+    {
       "pattern": "drop_or_truncate_table",
       "kind": "positive",
-      "text": "To reset the schema run: DROP TABLE customers;"
+      "text": "To reset the schema run:\nDROP TABLE customers;"
     },
     {
       "pattern": "drop_or_truncate_table",
@@ -274,7 +304,7 @@
     {
       "pattern": "drop_or_truncate_table",
       "kind": "positive",
-      "text": "The migration ends with DROP TABLE IF EXISTS public.sessions;"
+      "text": "mysql> DROP TABLE IF EXISTS public.sessions;"
     },
     {
       "pattern": "drop_or_truncate_table",
@@ -297,9 +327,19 @@
       "text": "Be careful before you drop table backups"
     },
     {
+      "pattern": "drop_or_truncate_table",
+      "kind": "negative",
+      "text": "# drop table first"
+    },
+    {
+      "pattern": "drop_or_truncate_table",
+      "kind": "negative",
+      "text": "Next, drop table tennis lessons from your plan; the rest stays."
+    },
+    {
       "pattern": "unrestricted_delete_or_update",
       "kind": "positive",
-      "text": "Clear the queue with DELETE FROM jobs;"
+      "text": "Clear the queue:\nDELETE FROM jobs;"
     },
     {
       "pattern": "unrestricted_delete_or_update",
@@ -309,7 +349,12 @@
     {
       "pattern": "unrestricted_delete_or_update",
       "kind": "positive",
-      "text": "The script runs DELETE FROM sessions; before it reseeds the fixtures."
+      "text": "DELETE FROM sessions; -- the fixtures are reseeded afterwards"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "positive",
+      "text": "Delete from cart"
     },
     {
       "pattern": "unrestricted_delete_or_update",
@@ -340,6 +385,31 @@
       "pattern": "unrestricted_delete_or_update",
       "kind": "negative",
       "text": "You can update profile set up later"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "# Delete from cart"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "> delete from cart"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "$ delete from cart"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "  # update config set later"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "You can delete from cart; it only takes a second."
     },
     {
       "pattern": "active_script_element",
@@ -382,6 +452,21 @@
       "text": "Load it with <script src=\"https://cdn.example.com/app.js\"></script> in the page head."
     },
     {
+      "pattern": "active_script_element",
+      "kind": "negative",
+      "text": "<script type=\"application/ld+json\">{\"@context\": \"https://schema.org\"}</script>"
+    },
+    {
+      "pattern": "active_script_element",
+      "kind": "negative",
+      "text": "Embed the data as <script type=\"application/json\" id=\"config\">{\"debug\": false}</script> and read it later."
+    },
+    {
+      "pattern": "active_script_element",
+      "kind": "negative",
+      "text": "<script type=\"text/template\"><p>Hello</p></script>"
+    },
+    {
       "pattern": "event_handler_or_uri_sink",
       "kind": "positive",
       "text": "Use <img src=\"x\" onerror=\"fetch('https://example.com/collect')\"> in the field."
@@ -395,6 +480,11 @@
       "pattern": "event_handler_or_uri_sink",
       "kind": "positive",
       "text": "Set <div onmouseover=\"document.body.innerHTML=''\">hover</div> on the element."
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "positive",
+      "text": "A no-op prefix changes nothing: <a id=\"x\" class=\"btn\" href=\"javascript:void(0);alert(document.cookie)\">go</a>"
     },
     {
       "pattern": "event_handler_or_uri_sink",
@@ -425,6 +515,31 @@
       "pattern": "event_handler_or_uri_sink",
       "kind": "negative",
       "text": "settings.onboarding = \"complete\""
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "if a<b:\n    online = \"yes\""
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "if a<b: online = \"yes\""
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "x<y\n    online = \"yes\""
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "<a href=\"javascript:void(0)\">Menu</a>"
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "<a href='javascript:;'>Menu</a>"
     }
   ]
 }

@@ -130,13 +130,13 @@ shape that pattern recognises.
 | `block_device_overwrite` | `destructive_shell` | a raw block-device write whose output target is a device node | the same tool writing to a local image file |
 | `recursive_permission_change` | `destructive_shell` | a recursive permission or ownership change whose target is a filesystem root or a home directory | a permission change on a named script or a project directory |
 | `self_replicating_process` | `destructive_shell` | a shell function defined so that it spawns itself without bound | an ordinary function definition and call |
-| `download_piped_to_shell` | `fetch_and_execute` | a download whose body is piped straight into a shell | a download written to a file, or piped into a viewer or checksum tool |
-| `download_piped_to_interpreter` | `fetch_and_execute` | a download whose body is piped straight into a scripting runtime | a download written to a file, a fetch with no execution step, or a download piped into a viewer — even one that runs as a module of such a runtime |
-| `download_then_evaluate` | `fetch_and_execute` | a download-then-evaluate idiom that fetches and runs in one expression | a download followed by no execution step |
-| `drop_or_truncate_table` | `destructive_sql` | a statement that drops or truncates a table, terminated as a statement | the same words in prose, or a schema read |
-| `unrestricted_delete_or_update` | `destructive_sql` | a delete or update with no row-restricting clause, terminated as a statement | the same statement **with** a restricting clause, or a bounded query |
-| `active_script_element` | `script_injection` | a script element carrying content and a closing tag | a formatting tag, a link, an empty element, or a tag named in prose |
-| `event_handler_or_uri_sink` | `script_injection` | an event-handler attribute or a scripting-scheme URI carrying code | an empty attribute, or the attribute name discussed in prose |
+| `download_piped_to_shell` | `fetch_and_execute` | a download whose body is piped straight into a shell | a download written to a file, or piped into a viewer or checksum tool, or into a shell given its own program inline (`-c`), which reads the download as data |
+| `download_piped_to_interpreter` | `fetch_and_execute` | a download whose body is piped straight into a scripting runtime | a download written to a file, a fetch with no execution step, a download piped into a viewer — even one that runs as a module of such a runtime — or into a runtime given its own program inline (`-c`, `-e`), which reads the download as data |
+| `download_then_evaluate` | `fetch_and_execute` | a download-then-evaluate idiom that fetches and runs in one expression | a download followed by no execution step — a plain capture into a variable, even on a line that mentions `eval` in prose |
+| `drop_or_truncate_table` | `destructive_sql` | a statement that drops or truncates a table, at the start of its line, terminated as a statement | the same words in prose — on a comment, quote or shell-prompt line, or embedded after prose on the same line, even with a semicolon — or a schema read |
+| `unrestricted_delete_or_update` | `destructive_sql` | a delete or update with no row-restricting clause, at the start of its line, terminated as a statement (a bare whole-line statement matches regardless of letter case) | the same statement **with** a restricting clause, a bounded query, or the words in prose as in the row above |
+| `active_script_element` | `script_injection` | a script element carrying content and a closing tag, whose `type` is absent, empty, `module` or a JavaScript MIME type | a formatting tag, a link, an empty element, a tag named in prose, or a script element whose `type` marks a data block (`application/ld+json`, `application/json`, `text/template`, ...) |
+| `event_handler_or_uri_sink` | `script_injection` | an event-handler attribute or a scripting-scheme URI carrying code, inside a tag's own attribute list | an empty attribute, the attribute name discussed in prose, a no-op scripting URI (`javascript:void(0)`, `javascript:;`), or a comparison or assignment outside a tag |
 
 ### Precision decisions for set version 1
 
@@ -145,8 +145,21 @@ Open precision decisions, stated so the implementation and the reviewer agree:
 - **Device-node rows** (`filesystem_format`, `block_device_overwrite`) match block-storage device names only —
   disks, partitions, NVMe and MMC nodes; the null, zero and random devices (`/dev/null`, `/dev/zero`, `/dev/random`,
   `/dev/urandom`) never match.
-- **`destructive_sql`** matches only a statement that is the whole line (optionally semicolon-terminated) or is
-  semicolon-terminated; a prose sentence that merely mentions the keywords never matches.
+- **`destructive_sql`** matches only a statement at the start of its line — optionally after a **named** SQL
+  client prompt such as `mysql>`, `sqlite>` or `postgres=#` — that is the whole line (optionally
+  semicolon-terminated) or is semicolon-terminated. A bare `#`, `>` or `$` is a comment, a quote or a shell
+  prompt, never a SQL prompt; a prose sentence that merely mentions the keywords never matches, even when it goes
+  on to a semicolon; a bare whole-line statement matches regardless of letter case; and a statement embedded after
+  prose on the same line is not matched — a recall cost taken for precision (implementation review, round 2).
+- **`fetch_and_execute`'s `eval`** counts only at a command position — the start of a line, or after `;`, `&`, `|`,
+  `(` or a backtick — and applied directly to the substitution; a prose "eval" earlier on the line is not an
+  execution step. A shell or runtime given its own program inline (`-c`, `-e`, `--eval`, `-Command`) reads a
+  piped download as data: only one run without a program of its own executes it.
+- **`script_injection`**: a script element whose `type` is absent, empty, `module` or a JavaScript MIME type is
+  active; any other `type` (`application/ld+json`, `application/json`, `text/template`, ...) marks a data block. A
+  scripting-scheme URI that only does nothing (`javascript:void(0)`, `javascript:;`) is not a sink. The context for
+  an event-handler or URI attribute is a tag name with its attribute list on one line, so a comparison or an
+  assignment outside markup never supplies it.
 - **Root and home targets** (`recursive_force_delete`, `recursive_permission_change`) are exactly `/`, `/*`, `~`,
   `~/`, `$HOME`, `${HOME}` and a top-level `/home/<user>`; subdirectories below them do not match.
 - **Windows and PowerShell forms** are out of scope for set version 1 (stated as a limitation).

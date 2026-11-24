@@ -7,11 +7,16 @@ others — `tests/unit/test_unsafe_output.py` parses the contract and asserts so
 negative samples live only in `tests/fixtures/unsafe_output_cases.json`, never here.
 
 Precision comes first (contract, "Precision decisions for set version 1"): a device-node pattern matches
-block-storage nodes only, never the null, zero or random devices; a destructive SQL statement must be the whole
-line or semicolon-terminated, so prose that merely mentions the keywords never matches; a root-or-home target is
-exactly `/`, `/*`, `~`, `~/`, `$HOME`, `${HOME}` or a top-level `/home/<user>`; Windows and PowerShell forms are
-out of scope for version 1; and a download fetched and run in one expression is `download_then_evaluate`, not one
-of the two pipe patterns. A match that merely repeats something Kestrel sent is skipped (FR-065).
+block-storage nodes only, never the null, zero or random devices; a destructive SQL statement must start its line
+(optionally after a named SQL client prompt) and be the whole line or semicolon-terminated, so prose that merely
+mentions the keywords never matches — not even with a semicolon, and not as a comment, a quote or a shell-prompt
+line; a root-or-home target is exactly `/`, `/*`, `~`, `~/`, `$HOME`, `${HOME}` or a top-level `/home/<user>`;
+Windows and PowerShell forms are out of scope for version 1; a download fetched and run in one expression is
+`download_then_evaluate`, not one of the two pipe patterns, and its `eval` must sit at a command position; an
+interpreter given its own program inline reads a piped download as data; a script element whose `type` is not a
+JavaScript one is a data block; a scripting-scheme URI that does nothing is not a sink; and only a tag's own
+attribute list supplies the context for an event-handler or URI attribute. A match that merely repeats something
+Kestrel sent is skipped (FR-065).
 """
 from __future__ import annotations
 
@@ -39,17 +44,39 @@ _DOWNLOADER = r"(?:curl|wget|fetch)"
 _SHELL = r"(?:sudo\s+)?(?:/bin/|/usr/bin/)?(?:ba|z|k|da|a)?sh"
 _INTERPRETER = r"(?:sudo\s+)?(?:/usr/bin/)?(?:python[23]?|perl|ruby|node|php|pwsh)"
 _SQL_NAME = r"(?:[A-Za-z_][A-Za-z0-9_$]*|\"[^\"]+\"|`[^`]+`|\[[^\]]+\])(?:\.(?:[A-Za-z_][A-Za-z0-9_$]*|\"[^\"]+\"))?"
-# A statement is the whole line (optionally after a prompt marker, optionally semicolon-terminated) or ends in a
-# semicolon — never a prose mention that merely runs to the end of its line.
-_SQL_LINE_START = r"^\s*(?:[A-Za-z0-9_.=-]*[>$#]\s*)?"
+# A statement starts its line — optionally after a *named* SQL client prompt such as `mysql>`, `sqlite>` or
+# `postgres=#` — and is the whole line or semicolon-terminated. A bare `#`, `>` or `$` is a comment, a quote or a
+# shell prompt, never a SQL prompt, and a statement embedded after prose on the same line is prose.
+_SQL_LINE_START = r"^\s*(?:[A-Za-z][\w.=-]*[>#]\s*)?"
 # A shell builtin `.` only where a command can start (line start or after a separator), never a sentence's full stop.
 _DOT_BUILTIN = r"(?<![^\s;&|(`])\.\s+"
+# A command position: the start of a line, or after a separator (`;`, `&`, `|`, `(`, a backtick) — where the next
+# word is a command, not a word of prose.
+_COMMAND_START = r"(?:^|[;&|(`])\s*"
+# A shell or interpreter given its own program inline (`-c`, `-e`, `--eval`, `-Command`) reads the piped download
+# as data; only one run without a program of its own executes it.
+_SHELL_INLINE_PROGRAM = r"(?![^\n|]*\s-c\b)"
+_INLINE_PROGRAM = r"(?![^\n|]*\s(?:-[ce]\b|--eval\b|-Command\b))"
+# A script element whose `type` is absent, empty, `module` or a JavaScript MIME type is executed; any other type
+# (`application/ld+json`, `application/json`, `text/template`, ...) marks a data block.
+_EXECUTED_SCRIPT_TAG = (r"<script\b(?:(?![^>]*\btype\s*=)[^>]*"
+                        r"|[^>]*\btype\s*=\s*(?:\"\s*\"|'\s*'|[\"']?\s*(?:module|(?:text|application)/(?:x-)?"
+                        r"(?:javascript|ecmascript|jscript))\b)[^>]*)>")
+# A tag and its attribute list on one line — `<name attr="v" attr='v' attr=v ...` — is the only context in which
+# an event-handler or URI attribute is markup; a comparison or an assignment outside a tag never supplies it.
+_TAG_ATTR_VALUE = r"(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"'=<>`]+)"
+_TAG_NAME = r"[A-Za-z][A-Za-z0-9-]*(?::[A-Za-z][A-Za-z0-9-]*)?"   # a namespace colon only between two names
+_TAG_CONTEXT = rf"<{_TAG_NAME}(?:[ \t]+[A-Za-z_][\w:.-]*(?:[ \t]*=[ \t]*{_TAG_ATTR_VALUE})?)*[ \t]+"
+# A scripting-scheme URI that does nothing: only whitespace, empty statements and `void(0)` / `void 0`.
+_NOOP_URI = r"(?:\s|;|void\s*\(\s*0?\s*\)|void\s+0)*"
 
 
 def _statement(body: str) -> str:
-    """`body` as a whole line (prompt marker and trailing semicolon optional) or as a semicolon-terminated statement
-    anywhere — the contract's two forms, and nothing looser (precision decisions, `destructive_sql`)."""
-    return rf"{_SQL_LINE_START}{body}\s*;?\s*$|\b{body}\s*;"
+    """`body` at the start of its line (a named SQL prompt optional), as the whole line or semicolon-terminated —
+    the contract's two forms, and nothing looser (precision decisions, `destructive_sql`). Every alternative is
+    anchored to the line start, so a sentence that mentions the statement, even one that goes on to a semicolon,
+    never matches."""
+    return rf"{_SQL_LINE_START}{body}\s*(?:;|$)"
 
 
 @dataclass(frozen=True)
@@ -90,18 +117,21 @@ PATTERNS: tuple[Pattern, ...] = (
         r"(?P<fn>[A-Za-z_:][A-Za-z0-9_:]*)\s*\(\s*\)\s*\{[^}]*?(?P=fn)\s*\|\s*(?P=fn)[^}]*?&[^}]*?\}")),
     # --- fetch_and_execute ---
     Pattern("fetch_and_execute", "download_piped_to_shell", re.compile(
-        rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_SHELL}\b")),
+        # A shell given its own program (`-c '...'`) reads the download as data, never as a script.
+        rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_SHELL}\b{_SHELL_INLINE_PROGRAM}")),
     Pattern("fetch_and_execute", "download_piped_to_interpreter", re.compile(
-        # A runtime invoked as a viewer (its JSON pretty-printer module) is a viewer, not an execution step.
-        rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_INTERPRETER}\b(?!\s+-m\s+json\.tool\b)")),
+        # A runtime invoked as a viewer (its JSON pretty-printer module), or given its own program inline, is
+        # not an execution step for the download.
+        rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_INTERPRETER}\b(?!\s+-m\s+json\.tool\b){_INLINE_PROGRAM}")),
     Pattern("fetch_and_execute", "download_then_evaluate", re.compile(
-        # Fetched and run in one expression: eval or a shell `-c` string over a command substitution of a
-        # download; the `source`/`.` builtins over one; or process substitution handed to a shell or runtime.
-        # A plain capture into a variable, with no execution step, never matches.
-        rf"\beval\b[^\n]*?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
+        # Fetched and run in one expression: eval — at a command position, applied directly to the substitution,
+        # so a prose "eval" earlier on the line is not an execution step — or a shell `-c` string over a command
+        # substitution of a download; the `source`/`.` builtins over one; or process substitution handed to a
+        # shell or runtime. A plain capture into a variable, with no execution step, never matches.
+        rf"{_COMMAND_START}eval\s+[\"']?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
         rf"|\b{_SHELL}\s+-c\s*[^\n]*?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
         rf"|(?:\bsource\s+|{_DOT_BUILTIN})[\"']?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
-        rf"|(?:\b{_SHELL}\s+|\b{_INTERPRETER}\s+|\bsource\s+|{_DOT_BUILTIN})<\(\s*{_DOWNLOADER}\b[^)]*\)")),
+        rf"|(?:\b{_SHELL}\s+|\b{_INTERPRETER}\s+|\bsource\s+|{_DOT_BUILTIN})<\(\s*{_DOWNLOADER}\b[^)]*\)", re.M)),
     # --- destructive_sql ---
     Pattern("destructive_sql", "drop_or_truncate_table", re.compile(
         _statement(rf"(?:DROP|TRUNCATE)\s+TABLE\s+(?:IF\s+EXISTS\s+)?{_SQL_NAME}(?:\s+CASCADE)?"), re.I | re.M)),
@@ -111,17 +141,21 @@ PATTERNS: tuple[Pattern, ...] = (
         + _statement(rf"UPDATE\s+{_SQL_NAME}\s+SET\s+(?![^;\n]*\b(?:WHERE|LIMIT)\b)[^;\n]+?"), re.I | re.M)),
     # --- script_injection ---
     Pattern("script_injection", "active_script_element", re.compile(
-        # Content and a closing tag: at least one non-space character before the first `<` after the opening
-        # tag, so an empty element, or one that only names a source, never matches.
-        r"<script\b[^>]*>(?=[^<]*[^\s<])[\s\S]*?</script\s*>", re.I | re.S)),
+        # An executed script element (no `type`, or a JavaScript one — a data block never matches) with content
+        # and a closing tag: at least one non-space character before the first `<` after the opening tag, so an
+        # empty element, or one that only names a source, never matches.
+        rf"{_EXECUTED_SCRIPT_TAG}(?=[^<]*[^\s<])[\s\S]*?</script\s*>", re.I | re.S)),
     Pattern("script_injection", "event_handler_or_uri_sink", re.compile(
-        # Inside a tag only (`<name ... attribute=`), so a code assignment outside markup never matches. An
-        # event-handler attribute carrying code, or a scripting-scheme URI carrying code: the value is read up
-        # to its own closing quote, so an inner quote of the other kind stays inside it, and the lookahead
-        # requires a non-space character before that quote, so an empty attribute never matches.
-        r"<[A-Za-z][^>]*?\s(?:on[a-z]{3,15}\s*=\s*(?:\"(?=[^\"]*[^\s\"])[^\"]*\"|'(?=[^']*[^\s'])[^']*')"
-        r"|(?:href|src|action|formaction)\s*=\s*"
-        r"(?:\"\s*javascript:(?=[^\"]*[^\s\"])[^\"]*\"|'\s*javascript:(?=[^']*[^\s'])[^']*'))", re.I)),
+        # Inside a tag only — a tag name and its attribute list on one line — so a comparison or a code
+        # assignment outside markup never matches. An event-handler attribute carrying code: the value is read
+        # up to its own closing quote, so an inner quote of the other kind stays inside it, and the lookahead
+        # requires a non-space character before that quote, so an empty attribute never matches. A
+        # scripting-scheme URI carrying code: one that only does nothing (`javascript:void(0)`, `javascript:;`)
+        # is not a sink.
+        _TAG_CONTEXT
+        + r"(?:on[a-z]{3,15}\s*=\s*(?:\"(?=[^\"]*[^\s\"])[^\"]*\"|'(?=[^']*[^\s'])[^']*')"
+        + r"|(?:href|src|action|formaction)\s*=\s*"
+        + rf"(?:\"\s*javascript:(?!{_NOOP_URI}\")[^\"]*\"|'\s*javascript:(?!{_NOOP_URI}')[^']*'))", re.I)),
 )
 
 _BY_NAME = {pattern.name: pattern for pattern in PATTERNS}
