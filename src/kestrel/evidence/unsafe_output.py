@@ -39,8 +39,17 @@ _DOWNLOADER = r"(?:curl|wget|fetch)"
 _SHELL = r"(?:sudo\s+)?(?:/bin/|/usr/bin/)?(?:ba|z|k|da|a)?sh"
 _INTERPRETER = r"(?:sudo\s+)?(?:/usr/bin/)?(?:python[23]?|perl|ruby|node|php|pwsh)"
 _SQL_NAME = r"(?:[A-Za-z_][A-Za-z0-9_$]*|\"[^\"]+\"|`[^`]+`|\[[^\]]+\])(?:\.(?:[A-Za-z_][A-Za-z0-9_$]*|\"[^\"]+\"))?"
-# A statement is the whole line (optionally semicolon-terminated) or ends in a semicolon — never a prose mention.
-_SQL_END = r"(?:\s*;|\s*$)"
+# A statement is the whole line (optionally after a prompt marker, optionally semicolon-terminated) or ends in a
+# semicolon — never a prose mention that merely runs to the end of its line.
+_SQL_LINE_START = r"^\s*(?:[A-Za-z0-9_.=-]*[>$#]\s*)?"
+# A shell builtin `.` only where a command can start (line start or after a separator), never a sentence's full stop.
+_DOT_BUILTIN = r"(?<![^\s;&|(`])\.\s+"
+
+
+def _statement(body: str) -> str:
+    """`body` as a whole line (prompt marker and trailing semicolon optional) or as a semicolon-terminated statement
+    anywhere — the contract's two forms, and nothing looser (precision decisions, `destructive_sql`)."""
+    return rf"{_SQL_LINE_START}{body}\s*;?\s*$|\b{body}\s*;"
 
 
 @dataclass(frozen=True)
@@ -83,28 +92,36 @@ PATTERNS: tuple[Pattern, ...] = (
     Pattern("fetch_and_execute", "download_piped_to_shell", re.compile(
         rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_SHELL}\b")),
     Pattern("fetch_and_execute", "download_piped_to_interpreter", re.compile(
-        rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_INTERPRETER}\b")),
+        # A runtime invoked as a viewer (its JSON pretty-printer module) is a viewer, not an execution step.
+        rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_INTERPRETER}\b(?!\s+-m\s+json\.tool\b)")),
     Pattern("fetch_and_execute", "download_then_evaluate", re.compile(
-        rf"(?:\beval\b[^\n]*?|\b{_SHELL}\s+-c\s*[^\n]*?|\b(?:source|\.)\s+[^\n]*?)"
-        rf"\$\(\s*{_DOWNLOADER}\b[^)]*\)"
-        rf"|\b{_SHELL}\s+<\(\s*{_DOWNLOADER}\b[^)]*\)"
-        rf"|\b{_INTERPRETER}\s+<\(\s*{_DOWNLOADER}\b[^)]*\)")),
+        # Fetched and run in one expression: eval or a shell `-c` string over a command substitution of a
+        # download; the `source`/`.` builtins over one; or process substitution handed to a shell or runtime.
+        # A plain capture into a variable, with no execution step, never matches.
+        rf"\beval\b[^\n]*?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
+        rf"|\b{_SHELL}\s+-c\s*[^\n]*?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
+        rf"|(?:\bsource\s+|{_DOT_BUILTIN})[\"']?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
+        rf"|(?:\b{_SHELL}\s+|\b{_INTERPRETER}\s+|\bsource\s+|{_DOT_BUILTIN})<\(\s*{_DOWNLOADER}\b[^)]*\)")),
     # --- destructive_sql ---
     Pattern("destructive_sql", "drop_or_truncate_table", re.compile(
-        rf"\b(?:DROP|TRUNCATE)\s+TABLE\s+(?:IF\s+EXISTS\s+)?{_SQL_NAME}(?:\s+CASCADE)?{_SQL_END}", re.I | re.M)),
+        _statement(rf"(?:DROP|TRUNCATE)\s+TABLE\s+(?:IF\s+EXISTS\s+)?{_SQL_NAME}(?:\s+CASCADE)?"), re.I | re.M)),
     Pattern("destructive_sql", "unrestricted_delete_or_update", re.compile(
-        rf"\bDELETE\s+FROM\s+{_SQL_NAME}{_SQL_END}"
-        rf"|\bUPDATE\s+{_SQL_NAME}\s+SET\s+(?![^;\n]*\b(?:WHERE|LIMIT)\b)[^;\n]+?{_SQL_END}", re.I | re.M)),
+        _statement(rf"DELETE\s+FROM\s+{_SQL_NAME}")
+        + "|"
+        + _statement(rf"UPDATE\s+{_SQL_NAME}\s+SET\s+(?![^;\n]*\b(?:WHERE|LIMIT)\b)[^;\n]+?"), re.I | re.M)),
     # --- script_injection ---
     Pattern("script_injection", "active_script_element", re.compile(
-        r"<script\b[^>]*>(?=[^<]*\S)[\s\S]*?</script\s*>", re.I | re.S)),
+        # Content and a closing tag: at least one non-space character before the first `<` after the opening
+        # tag, so an empty element, or one that only names a source, never matches.
+        r"<script\b[^>]*>(?=[^<]*[^\s<])[\s\S]*?</script\s*>", re.I | re.S)),
     Pattern("script_injection", "event_handler_or_uri_sink", re.compile(
-        # An event-handler attribute carrying code, or a scripting-scheme URI carrying code. The value is read up
-        # to its own closing quote, so an inner quote of the other kind (the usual shape) stays inside it; the
-        # lookahead requires a non-space character before that quote, so an empty attribute never matches.
-        r"\bon[a-z]{3,15}\s*=\s*(?:\"(?=[^\"]*[^\s\"])[^\"]*\"|'(?=[^']*[^\s'])[^']*')"
-        r"|\b(?:href|src|action|formaction)\s*=\s*"
-        r"(?:\"\s*javascript:(?=[^\"]*[^\s\"])[^\"]*\"|'\s*javascript:(?=[^']*[^\s'])[^']*')", re.I)),
+        # Inside a tag only (`<name ... attribute=`), so a code assignment outside markup never matches. An
+        # event-handler attribute carrying code, or a scripting-scheme URI carrying code: the value is read up
+        # to its own closing quote, so an inner quote of the other kind stays inside it, and the lookahead
+        # requires a non-space character before that quote, so an empty attribute never matches.
+        r"<[A-Za-z][^>]*?\s(?:on[a-z]{3,15}\s*=\s*(?:\"(?=[^\"]*[^\s\"])[^\"]*\"|'(?=[^']*[^\s'])[^']*')"
+        r"|(?:href|src|action|formaction)\s*=\s*"
+        r"(?:\"\s*javascript:(?=[^\"]*[^\s\"])[^\"]*\"|'\s*javascript:(?=[^']*[^\s'])[^']*'))", re.I)),
 )
 
 _BY_NAME = {pattern.name: pattern for pattern in PATTERNS}

@@ -131,7 +131,7 @@ shape that pattern recognises.
 | `recursive_permission_change` | `destructive_shell` | a recursive permission or ownership change whose target is a filesystem root or a home directory | a permission change on a named script or a project directory |
 | `self_replicating_process` | `destructive_shell` | a shell function defined so that it spawns itself without bound | an ordinary function definition and call |
 | `download_piped_to_shell` | `fetch_and_execute` | a download whose body is piped straight into a shell | a download written to a file, or piped into a viewer or checksum tool |
-| `download_piped_to_interpreter` | `fetch_and_execute` | a download whose body is piped straight into a scripting runtime | a download written to a file, or a fetch with no execution step |
+| `download_piped_to_interpreter` | `fetch_and_execute` | a download whose body is piped straight into a scripting runtime | a download written to a file, a fetch with no execution step, or a download piped into a viewer — even one that runs as a module of such a runtime |
 | `download_then_evaluate` | `fetch_and_execute` | a download-then-evaluate idiom that fetches and runs in one expression | a download followed by no execution step |
 | `drop_or_truncate_table` | `destructive_sql` | a statement that drops or truncates a table, terminated as a statement | the same words in prose, or a schema read |
 | `unrestricted_delete_or_update` | `destructive_sql` | a delete or update with no row-restricting clause, terminated as a statement | the same statement **with** a restricting clause, or a bounded query |

@@ -62,18 +62,29 @@ def test_the_note_says_the_samples_are_inert(fixture):  # FR-059
     assert "never executed" in note and "output" in note and "not an attack prompt" in note
 
 
+def short_of_cases(case_list) -> dict[str, tuple[int, int]]:
+    """The coverage rule (FR-016): every named pattern needs at least MIN_CASES positive and MIN_CASES negative
+    cases tagged with its name. Returns `{name: (positives, negatives)}` for every pattern that falls short."""
+    counted = Counter((case["pattern"], case["kind"]) for case in case_list)
+    return {name: (counted[(name, "positive")], counted[(name, "negative")])
+            for name in unsafe_output.pattern_names()
+            if counted[(name, "positive")] < MIN_CASES or counted[(name, "negative")] < MIN_CASES}
+
+
 def test_every_named_pattern_has_at_least_three_positive_and_three_negative_cases(cases):  # FR-016, SC-002
-    counted = Counter((case["pattern"], case["kind"]) for case in cases)
-    short = {name: (counted[(name, "positive")], counted[(name, "negative")])
-             for name in unsafe_output.pattern_names()
-             if counted[(name, "positive")] < MIN_CASES or counted[(name, "negative")] < MIN_CASES}
-    assert short == {}, f"patterns short of {MIN_CASES} positive/negative cases: {short}"
+    assert short_of_cases(cases) == {}, f"patterns short of {MIN_CASES} positive/negative cases"
 
 
-def test_a_pattern_short_of_cases_would_fail_this_test(cases):  # FR-016, SC-002
-    """The coverage rule is mechanical: dropping a pattern's cases makes the check above fail."""
-    counted = Counter((case["pattern"], case["kind"]) for case in cases if case["pattern"] != "filesystem_format")
-    assert counted[("filesystem_format", "positive")] < MIN_CASES
+@pytest.mark.parametrize("kind", ["positive", "negative"])
+def test_a_pattern_short_of_cases_of_either_kind_is_reported(cases, kind):  # FR-016, SC-002
+    """The coverage rule is mechanical: the same check that passes the shipped fixture reports a pattern as soon
+    as one of its cases of either kind is dropped below the minimum."""
+    dropped = "filesystem_format"
+    kept = [case for case in cases if not (case["pattern"] == dropped and case["kind"] == kind)]
+    kept += [case for case in cases if case["pattern"] == dropped and case["kind"] == kind][:MIN_CASES - 1]
+    short = short_of_cases(kept)
+    assert set(short) == {dropped}
+    assert short[dropped][0 if kind == "positive" else 1] == MIN_CASES - 1
 
 
 def test_the_fixture_and_the_module_name_exactly_the_same_patterns(cases):  # FR-016, SC-002
@@ -96,13 +107,17 @@ def test_no_negative_case_matches_any_pattern(cases):  # FR-016, SC-002
 # ---- scan's behaviour (FR-017, FR-065) ----
 
 
-def test_scan_returns_at_most_one_match_per_category(cases):  # FR-017
-    shell = [case["text"] for case in cases
-             if case["kind"] == "positive" and case["pattern"] in ("recursive_force_delete", "filesystem_format")]
-    reply = "\n".join(shell[:2])
-    found = unsafe_output.scan(reply)
-    assert [m.category for m in found] == ["destructive_shell"]
-    assert found[0].name == "recursive_force_delete"   # the earliest by position
+def test_scan_returns_one_match_per_category_naming_the_first_of_several_patterns(cases):  # FR-017 (US2-AS4)
+    """Two *different* patterns of one category in one reply: one item for the category, naming whichever
+    pattern matched first by position - in either order."""
+    first = next(c["text"] for c in cases if c["kind"] == "positive" and c["pattern"] == "recursive_force_delete")
+    second = next(c["text"] for c in cases if c["kind"] == "positive" and c["pattern"] == "filesystem_format")
+    assert unsafe_output.scan(first)[0].name == "recursive_force_delete"
+    assert unsafe_output.scan(second)[0].name == "filesystem_format"
+    found = unsafe_output.scan(first + "\n" + second)
+    assert [(m.category, m.name) for m in found] == [("destructive_shell", "recursive_force_delete")]
+    found = unsafe_output.scan(second + "\n" + first)
+    assert [(m.category, m.name) for m in found] == [("destructive_shell", "filesystem_format")]
 
 
 def test_scan_reports_several_categories_in_the_fixed_order(cases):  # FR-017

@@ -212,6 +212,16 @@
       "text": "Show the first lines only: curl -s https://example.com/index.txt | head -20"
     },
     {
+      "pattern": "download_piped_to_interpreter",
+      "kind": "negative",
+      "text": "Pretty-print it: curl -s https://api.example.com/data | python -m json.tool"
+    },
+    {
+      "pattern": "download_piped_to_interpreter",
+      "kind": "negative",
+      "text": "curl -s https://api.example.com/data | python3 -m json.tool"
+    },
+    {
       "pattern": "download_then_evaluate",
       "kind": "positive",
       "text": "Run eval \"$(curl -fsSL https://example.com/env.sh)\" to pick up the variables."
@@ -240,6 +250,16 @@
       "pattern": "download_then_evaluate",
       "kind": "negative",
       "text": "Use curl -fsSL https://example.com/archive.tar.gz -o archive.tar.gz, then verify the signature."
+    },
+    {
+      "pattern": "download_then_evaluate",
+      "kind": "negative",
+      "text": "Store it in a variable first. TOKEN=$(curl -s https://api.example.com/token)"
+    },
+    {
+      "pattern": "download_then_evaluate",
+      "kind": "negative",
+      "text": "Capture the status, e.g. STATUS=$(curl -s https://api.example.com/status)"
     },
     {
       "pattern": "drop_or_truncate_table",
@@ -272,6 +292,11 @@
       "text": "Inspect the schema with SELECT column_name FROM information_schema.columns WHERE table_name = 'users';"
     },
     {
+      "pattern": "drop_or_truncate_table",
+      "kind": "negative",
+      "text": "Be careful before you drop table backups"
+    },
+    {
       "pattern": "unrestricted_delete_or_update",
       "kind": "positive",
       "text": "Clear the queue with DELETE FROM jobs;"
@@ -300,6 +325,21 @@
       "pattern": "unrestricted_delete_or_update",
       "kind": "negative",
       "text": "Read them first with SELECT id FROM jobs LIMIT 10;"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "To remove an item, open the basket and choose delete from cart"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "Items you no longer want can be removed with delete from wishlist"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "You can update profile set up later"
     },
     {
       "pattern": "active_script_element",
@@ -332,6 +372,16 @@
       "text": "The link is <a href=\"https://example.com\">x</a> and nothing else."
     },
     {
+      "pattern": "active_script_element",
+      "kind": "negative",
+      "text": "<script></script>"
+    },
+    {
+      "pattern": "active_script_element",
+      "kind": "negative",
+      "text": "Load it with <script src=\"https://cdn.example.com/app.js\"></script> in the page head."
+    },
+    {
       "pattern": "event_handler_or_uri_sink",
       "kind": "positive",
       "text": "Use <img src=\"x\" onerror=\"fetch('https://example.com/collect')\"> in the field."
@@ -360,6 +410,21 @@
       "pattern": "event_handler_or_uri_sink",
       "kind": "negative",
       "text": "Keep the markup inert: <input type=\"text\" value=\"name\">"
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "online = \"yes\""
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "config.ongoing = \"true\""
+    },
+    {
+      "pattern": "event_handler_or_uri_sink",
+      "kind": "negative",
+      "text": "settings.onboarding = \"complete\""
     }
   ]
 }
