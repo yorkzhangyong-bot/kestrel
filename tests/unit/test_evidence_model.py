@@ -68,11 +68,20 @@ def test_an_override_item_carries_the_fixed_statement_never_the_token():  # FR-0
     assert DETAIL_MAX_CHARS == 200
 
 
-@pytest.mark.parametrize("value", ["abcdefghjkmn", "abcdef", "http://127.0.0.1:8000/callback/f00dcafef00dcafef00dcafe"])
-def test_no_detail_the_model_builds_contains_a_token_part_or_a_url(value):  # FR-007
-    run = a_run(hard_evidence=True, verdict="succeeded", succeeded_turn=None)
+def test_no_detail_the_model_builds_carries_the_runs_own_token_parts_or_a_url():  # FR-007
+    """Built against a real generated token and a planted URL that the run's own stored message and reply carry:
+    a derived item that quoted either back, or an override detail that named the marker, would fail here."""
+    from kestrel.evidence import override
+    token = override.generate_override_token()
+    url = "http://127.0.0.1:8000/callback/f00dcafef00dcafef00dcafe"
+    run = a_run(hard_evidence=True, verdict="succeeded", succeeded_turn=None,
+                prompt_text=f"<seed> {token.first} then {token.second} and {url}",
+                reply_text=f"as instructed: {token.joined} via {url}")
     details = [OVERRIDE_DETAIL] + [item.detail for item in derived_items(run)]
-    assert all(value not in detail for detail in details)
+    assert details and all(detail for detail in details)
+    for value in (token.first, token.second, token.joined, url):
+        assert all(value not in detail for detail in details), value
+    assert "{" not in OVERRIDE_DETAIL     # a fixed statement, never a template with a slot for the marker
 
 
 def test_a_pre_013_hard_evidence_run_derives_exactly_one_canary_item():  # FR-005

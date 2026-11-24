@@ -57,16 +57,17 @@ def written_texts(spy: SpyExperienceStore) -> list[str]:
 @pytest.mark.parametrize("family, seed_id", PLACEMENTS)
 def test_no_token_part_joined_form_or_task_wording_reaches_the_store_or_a_query(make_client, settings, family,
                                                                                 seed_id):  # FR-063, SC-013
-    # Confirmed on turn 2, so the write-back takes the pattern path and its document is the winning messages -
-    # turn 1's planted opening and turn 2's attacker message, which repeats the parts.
-    api, spy, store = warm_client(make_client, settings, confirm_on_turn=2)
+    # Confirmed on turn 3, so the write-back takes the pattern path with the winning messages as its document -
+    # turn 1's planted opening and the turn-2 and turn-3 attacker messages, which repeat the parts - and the
+    # turn-3 retrieval query is built from turn 2's repeating message, which stripping alone would never clean.
+    api, spy, store = warm_client(make_client, settings, confirm_on_turn=3)
     target = saved_target(store, description="a customs assistant")
 
     response = api.post("/api/runs", json={"target_id": target.id, "family": family, "prompt_id": seed_id,
                                            "mode": "adaptive"})
     assert response.status_code == 201, response.text
     run = response.json()
-    assert run["verdict"] == "succeeded" and run["hard_evidence"] is True and run["succeeded_turn"] == 2
+    assert run["verdict"] == "succeeded" and run["hard_evidence"] is True and run["succeeded_turn"] == 3
     assert [write.outcome for write in spy.pattern_writes], "a confirmed run must write a pattern"
 
     values = planted_values(store, run["id"])
@@ -76,9 +77,11 @@ def test_no_token_part_joined_form_or_task_wording_reaches_the_store_or_a_query(
     markers = {"first part": values["first"], "second part": values["second"], "joined form": values["joined"],
                "task wording": paragraph}
 
-    # Nothing written to the store, and nothing used to search, carries any of them.
+    # Nothing written to the store, and nothing used to search, carries any of them. The turn-3 query is the one
+    # that matters: it is built from turn 2's repeating attacker message, so only the value scrub can clean it.
     queries = [query["query_text"] for query in spy.queries]
-    assert queries, "a warm adaptive run must have queried the pattern pool"
+    assert len(queries) == 2, "a warm adaptive run confirmed on turn 3 queries on turns 2 and 3"
+    assert "<attacker turn 2>" in queries[1]
     for label, marker in markers.items():
         for query in queries:
             assert marker not in query, f"{label} reached a retrieval query"

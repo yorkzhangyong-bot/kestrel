@@ -188,8 +188,15 @@ def derive_insertion_point(family: str, seed_text: str) -> InsertionPoint:
 
 def insertion_point(family: str, prompt_id: str, seed_text: str) -> InsertionPoint:
     """Where this run's planted paragraph goes (FR-064): the sidecar's reviewed point when it describes this exact
-    seed text, else the derived one of the same shape. A seed the sidecar names whose text has *moved* is not an
-    error at run time — the suite's own guard is what reports it — so a library edit never breaks a live run."""
+    seed text, else a derived point of the same shape (`derive_insertion_point`).
+
+    The fallback exists on purpose and is silent on purpose: the sidecar is keyed to the shipped library, but a
+    run can be driven against a seed it does not describe — the synthetic fixture library the offline suite uses
+    (its seeds share the shipped ids with other text), or a library edited ahead of its sidecar — and a strict
+    lookup would crash every such run. For the shipped library the reviewed point is always the one returned:
+    `tests/unit/test_override_placement.py` checks every shipped seed's fingerprint and offset against the sidecar
+    and that this function returns exactly the sidecar's point, so a library edit without a sidecar update fails
+    CI there rather than being logged at run time (no log line, by decision)."""
     points = load_insertion_points()
     point = points.get(prompt_id)
     if point is not None and point.fingerprint == fingerprint(seed_text) and 0 < point.offset <= len(seed_text):

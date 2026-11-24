@@ -87,11 +87,15 @@ def test_a_direct_injection_run_plants_an_echo_proof_token_and_reports_its_evide
                                                key=lambda kind: list(KINDS).index(kind))
         assert run["side_channel_status"] == "not_configured"
 
-        # Deterministic evidence decides without the judge; a judged run records the prompt version (FR-002).
+        # Deterministic evidence decides without the judge; the judge prompt version is recorded exactly when
+        # the judge was consulted - never for a run the detectors confirmed (FR-002, 009/FR-003).
+        stored = store.get_run(run["id"])
         if run["evidence"]:
             assert run["hard_evidence"] is True and run["verdict"] == "succeeded" and run["judge_used"] is False
+            assert stored.judge_prompt_version is None
         else:
-            assert run["hard_evidence"] is False
+            assert run["hard_evidence"] is False and run["judge_used"] is True
+            assert stored.judge_prompt_id == "judge" and stored.judge_prompt_version is not None
         detail = api.get(f"/api/runs/{run['id']}").json()
         assert detail["evidence"] == run["evidence"] and detail["override_disarmed_notice"] is None
 

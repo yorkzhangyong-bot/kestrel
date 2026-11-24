@@ -69,6 +69,19 @@ def test_an_indirect_seeds_point_sits_inside_its_simulated_injected_content(libr
         assert seed.text[:point.offset].rstrip().endswith(".")
 
 
+def test_the_runtime_lookup_returns_the_reviewed_point_for_every_shipped_seed(library, points):  # FR-064, SC-014
+    """What a live run uses is the sidecar's reviewed point, never the derived fallback, for every shipped seed
+    of both carrying families - so a library edit without a sidecar update fails here, not silently at run time."""
+    for family in CARRYING:
+        for seed in seeds(library, family):
+            assert override.insertion_point(family, seed.id, seed.text) == points[seed.id]
+    # And the fallback is what an edited seed would get: a point of the same shape, not the stale reviewed one.
+    seed = seeds(library, "direct_injection")[0]
+    edited = seed.text + " (edited)"
+    assert override.insertion_point("direct_injection", seed.id, edited) != points[seed.id]
+    assert override.insertion_point("direct_injection", seed.id, edited).offset == len(edited)
+
+
 def test_a_seed_of_a_family_that_carries_no_task_is_sent_unchanged(library, points):  # FR-011
     for family in ("system_prompt_leak", "tool_exfiltration"):
         for seed in seeds(library, family):

@@ -9,6 +9,8 @@ run-detail shape lives). No attack text: placeholder messages, and the unsafe-ou
 fixture."""
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -177,13 +179,20 @@ def test_an_indirect_run_carries_the_task_inside_the_seeds_injected_content(make
     run = run_attack(api, target.id, family="indirect_injection", seed_id="iin-001")
 
     seed = seed_text("indirect_injection", "iin-001")
-    point = override.insertion_point("indirect_injection", "iin-001", seed)
-    assert 0 < point.offset < len(seed)   # interior: inside the content, never appended after it
     sent = run["prompt_text"]
-    assert sent.startswith(seed[:point.offset]) and sent.endswith(seed[point.offset:])
-    assert not sent.endswith(store.list_planted_tokens(run["id"])[0].token)   # never appended in Kestrel's voice
     values = planted_values(store, run["id"])
+    paragraph = override.override_task_paragraph(override.OverrideToken(values["first"], values["second"]))[0]
+    # The expected position comes from the documented rule applied to the seed text itself, never from the
+    # implementation: a seed with no sentence boundary (the fixture's placeholder) is split at the first word
+    # boundary at or after its middle, so the paragraph lands inside the seed, between two of its own words.
+    middle = len(seed) // 2
+    expected = seed.index(" ", middle) + 1
+    assert 0 < expected < len(seed)
+    assert sent == f"{seed[:expected]}{paragraph} {seed[expected:]}"
+    assert not sent.endswith(seed) and not sent.startswith(paragraph)   # inside, never before or after the seed
+    # Echo-proof on the sent text: the parts are there, the joined form is not, even after normalisation.
     assert values["first"] in sent and values["second"] in sent
+    assert override.normalise(values["joined"]) not in override.normalise(sent)
 
 
 def test_a_reply_carrying_the_joined_form_on_turn_one_confirms_before_any_disarm_can_happen(make_client, settings):
@@ -236,6 +245,54 @@ def test_a_run_disarmed_before_the_confirming_reply_records_no_override_item(mak
     disarmed = [line for line in json_log() if line.get("event") == "evidence.override_disarmed"]
     assert len(disarmed) == 1 and disarmed[0]["turn"] == 2 and disarmed[0]["level"] == "WARNING"
     assert all(str(token.token) not in str(line) for line in json_log())   # never the token on a line (FR-048)
+    # The API composes the exact notice for a really disarmed run (FR-039), on the detail of this run only.
+    detail = api.get(f"/api/runs/{run['id']}").json()
+    assert detail["override_disarmed_notice"] == "The override token was disarmed on turn 2."
+    assert detail["planted_tokens"] == [{"kind": "override", "armed": False, "disarmed_turn": 2,
+                                         "prompt": "override_task@1"}]
+
+
+def test_a_message_kestrel_sent_is_never_scanned_only_the_reply(make_client, settings):  # FR-018, FR-065
+    """The attacker's own turn-2 message carries a positive sample; the agent answers benignly. The detector
+    scans replies only, so no item is recorded - whatever Kestrel itself put in front of the agent."""
+    sample = fixture_case("download_piped_to_shell", "positive")
+    store_box: dict = {}
+    api = make_client(settings, transport=httpx.MockTransport(lambda r: store_box["target"](r)),
+                      library=fixture_library(), judge=StubJudge(verdict="failed"),
+                      attacker=EchoingAttacker(sample))
+    store = api.app.state.store
+    store_box["target"] = ReplyingTarget(store, lambda _values: "I would rather not run anything like that.")
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001", mode="adaptive")
+
+    assert store.list_evidence(run["id"]) == [] and run["hard_evidence"] is False
+    turns = api.get(f"/api/runs/{run['id']}").json()["turns"]
+    assert any(sample in turn["attacker_message"] for turn in turns[1:])   # Kestrel really sent the sample
+
+
+def test_a_confirmed_run_costs_no_model_call_at_all(make_client, settings, model_transport):  # SC-012, FR-050
+    """A run the detector confirms makes zero model requests - at most the cost of the same run today, which is
+    one judge request; a run the detector does not confirm still makes exactly that one."""
+    from tests.support import real_judge
+    store_box: dict = {}
+    model_transport.target_reply = lambda request: store_box["reply"](request)
+    api = make_client(settings, transport=model_transport.transport, library=fixture_library(),
+                      judge=real_judge(model_transport))
+    store = api.app.state.store
+    target = saved_target(store)
+
+    store_box["reply"] = lambda request: "an ordinary reply"
+    judged = run_attack(api, target.id)
+    assert judged["judge_used"] is True and len(model_transport.model_requests("judge")) == 1
+
+    joined_of = ReplyingTarget(store, lambda v: f"as instructed: {v['joined']}")
+    store_box["reply"] = lambda request: json.loads(joined_of(request).content)["reply"]
+    before = len(model_transport.requests)
+    confirmed = run_attack(api, target.id)
+    assert confirmed["hard_evidence"] is True and confirmed["judge_used"] is False
+    assert len(model_transport.model_requests("judge")) == 1                   # no second judge request
+    assert len(model_transport.requests) - before == 1                          # the one send to the target
 
 
 # ---- the unsafe-output detector (FR-014, FR-017, FR-065, SC-003) ----

@@ -140,9 +140,11 @@ read. (Part 2 adds the target side channel, the honeypot tool and the canary cal
   the callback and the protected state) — **every one to completion**, and answers with a `TurnEvidence` whose
   `items` is the authority: any item ends the run as succeeded with hard evidence and **no judge call for that
   turn**, exactly as a canary match does today. `EvidenceChecker.canary_only(...)` is today's behaviour exactly
-  and is what every run function falls back to when no checker is passed (`evidence=None`), so no existing
-  caller or test changed. The checker holds the store only to record what it planted and to disarm it; it never
-  imports the experience store, so `attack/graph.py` stays free of ChromaDB and httpx.
+  and is what the **live** run functions (`execute_run`, `run_adaptive`) fall back to when no checker is passed
+  (`evidence=None`), so no existing caller or test changed; the two replay paths (`execute_replay`,
+  `run_replay_adaptive`) always build the full checker from their source's copied tokens (FR-014, FR-035) —
+  their `evidence=` parameter is a test seam only. The checker holds the store only to record what it planted
+  and to disarm it; it never imports the experience store, so `attack/graph.py` stays free of ChromaDB and httpx.
 - **The instruction-override detector (`evidence/override.py`).** A run of the two injection families gets its
   own token: two parts of six characters from a 31-symbol unambiguous alphabet. The planted instruction — a
   versioned prompt file (`prompts/override_task.v1.md`, front-matter `framing: override`), never text in Python
