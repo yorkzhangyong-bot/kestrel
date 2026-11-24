@@ -8,15 +8,16 @@ negative samples live only in `tests/fixtures/unsafe_output_cases.json`, never h
 
 Precision comes first (contract, "Precision decisions for set version 1"): a device-node pattern matches
 block-storage nodes only, never the null, zero or random devices; a destructive SQL statement must start its line
-(optionally after a named SQL client prompt) and be the whole line or semicolon-terminated, so prose that merely
-mentions the keywords never matches — not even with a semicolon, and not as a comment, a quote or a shell-prompt
-line; a root-or-home target is exactly `/`, `/*`, `~`, `~/`, `$HOME`, `${HOME}` or a top-level `/home/<user>`;
-Windows and PowerShell forms are out of scope for version 1; a download fetched and run in one expression is
-`download_then_evaluate`, not one of the two pipe patterns, and its `eval` must sit at a command position; an
-interpreter given its own program inline reads a piped download as data; a script element whose `type` is not a
-JavaScript one is a data block; a scripting-scheme URI that does nothing is not a sink; and only a tag's own
-attribute list supplies the context for an event-handler or URI attribute. A match that merely repeats something
-Kestrel sent is skipped (FR-065).
+(optionally after a named SQL client prompt) or be wrapped in inline-code backticks, and be the whole line or
+semicolon-terminated, so prose that merely mentions the keywords never matches — not even with a semicolon, and not
+as a comment, a quote or a shell-prompt line; a root-or-home target is exactly `/`, `/*`, `~`, `~/`, `$HOME`,
+`${HOME}` or a top-level `/home/<user>`; Windows and PowerShell forms are out of scope for version 1; a download
+fetched and run in one expression is `download_then_evaluate`, not one of the two pipe patterns, and its `eval`
+must be applied directly to the download's substitution; an interpreter given its own program inline — judged
+within the piped command itself, never from a later command on the line — reads a piped download as data; a script
+element whose `type` is not a JavaScript one is a data block (a `data-type` attribute is not a `type`); a
+scripting-scheme URI that does nothing is not a sink; and only a tag's own attribute list supplies the context for
+an event-handler or URI attribute. A match that merely repeats something Kestrel sent is skipped (FR-065).
 """
 from __future__ import annotations
 
@@ -45,22 +46,25 @@ _SHELL = r"(?:sudo\s+)?(?:/bin/|/usr/bin/)?(?:ba|z|k|da|a)?sh"
 _INTERPRETER = r"(?:sudo\s+)?(?:/usr/bin/)?(?:python[23]?|perl|ruby|node|php|pwsh)"
 _SQL_NAME = r"(?:[A-Za-z_][A-Za-z0-9_$]*|\"[^\"]+\"|`[^`]+`|\[[^\]]+\])(?:\.(?:[A-Za-z_][A-Za-z0-9_$]*|\"[^\"]+\"))?"
 # A statement starts its line — optionally after a *named* SQL client prompt such as `mysql>`, `sqlite>` or
-# `postgres=#` — and is the whole line or semicolon-terminated. A bare `#`, `>` or `$` is a comment, a quote or a
-# shell prompt, never a SQL prompt, and a statement embedded after prose on the same line is prose.
+# `postgres=#` — or is wrapped in inline-code backticks (code presentation, not prose), and is the whole line, the
+# whole inline code or semicolon-terminated. A bare `#`, `>` or `$` is a comment, a quote or a shell prompt, never
+# a SQL prompt, and a statement embedded after prose on the same line without backticks is prose.
 _SQL_LINE_START = r"^\s*(?:[A-Za-z][\w.=-]*[>#]\s*)?"
 # A shell builtin `.` only where a command can start (line start or after a separator), never a sentence's full stop.
 _DOT_BUILTIN = r"(?<![^\s;&|(`])\.\s+"
-# A command position: the start of a line, or after a separator (`;`, `&`, `|`, `(`, a backtick) — where the next
-# word is a command, not a word of prose.
-_COMMAND_START = r"(?:^|[;&|(`])\s*"
 # A shell or interpreter given its own program inline (`-c`, `-e`, `--eval`, `-Command`) reads the piped download
-# as data; only one run without a program of its own executes it.
-_SHELL_INLINE_PROGRAM = r"(?![^\n|]*\s-c\b)"
-_INLINE_PROGRAM = r"(?![^\n|]*\s(?:-[ce]\b|--eval\b|-Command\b))"
+# as data; only one run without a program of its own executes it. The flag is looked for within the piped command
+# itself — up to the next `|`, `;` or `&`, and never past a ` -- ` that hands the rest of the line to the
+# downloaded script — so a later command's flag on the same line changes nothing.
+_OWN_COMMAND = r"(?:(?!\s--\s)[^\n|;&])*"
+_SHELL_INLINE_PROGRAM = rf"(?!{_OWN_COMMAND}\s-c\b)"
+_INLINE_PROGRAM = rf"(?!{_OWN_COMMAND}\s(?:-[ce]\b|--eval\b|-Command\b))"
 # A script element whose `type` is absent, empty, `module` or a JavaScript MIME type is executed; any other type
-# (`application/ld+json`, `application/json`, `text/template`, ...) marks a data block.
-_EXECUTED_SCRIPT_TAG = (r"<script\b(?:(?![^>]*\btype\s*=)[^>]*"
-                        r"|[^>]*\btype\s*=\s*(?:\"\s*\"|'\s*'|[\"']?\s*(?:module|(?:text|application)/(?:x-)?"
+# (`application/ld+json`, `application/json`, `text/template`, ...) marks a data block. A `data-type` (or any
+# `*-type`, `*:type`) attribute is not a `type`.
+_TYPE_ATTR = r"(?<![\w:-])type\s*="
+_EXECUTED_SCRIPT_TAG = (rf"<script\b(?:(?![^>]*{_TYPE_ATTR})[^>]*"
+                        rf"|[^>]*{_TYPE_ATTR}\s*(?:\"\s*\"|'\s*'|[\"']?\s*(?:module|(?:text|application)/(?:x-)?"
                         r"(?:javascript|ecmascript|jscript))\b)[^>]*)>")
 # A tag and its attribute list on one line — `<name attr="v" attr='v' attr=v ...` — is the only context in which
 # an event-handler or URI attribute is markup; a comparison or an assignment outside a tag never supplies it.
@@ -72,11 +76,11 @@ _NOOP_URI = r"(?:\s|;|void\s*\(\s*0?\s*\)|void\s+0)*"
 
 
 def _statement(body: str) -> str:
-    """`body` at the start of its line (a named SQL prompt optional), as the whole line or semicolon-terminated —
-    the contract's two forms, and nothing looser (precision decisions, `destructive_sql`). Every alternative is
-    anchored to the line start, so a sentence that mentions the statement, even one that goes on to a semicolon,
-    never matches."""
-    return rf"{_SQL_LINE_START}{body}\s*(?:;|$)"
+    """`body` at the start of its line (a named SQL prompt optional), as the whole line or semicolon-terminated, or
+    wrapped in inline-code backticks — the contract's forms, and nothing looser (precision decisions,
+    `destructive_sql`). Every alternative is anchored, to the line start or to the opening backtick, so a sentence
+    that mentions the statement without backticks, even one that goes on to a semicolon, never matches."""
+    return rf"{_SQL_LINE_START}{body}\s*(?:;|$)|(?<=`)\s*{body}\s*;?\s*(?=`)"
 
 
 @dataclass(frozen=True)
@@ -117,21 +121,22 @@ PATTERNS: tuple[Pattern, ...] = (
         r"(?P<fn>[A-Za-z_:][A-Za-z0-9_:]*)\s*\(\s*\)\s*\{[^}]*?(?P=fn)\s*\|\s*(?P=fn)[^}]*?&[^}]*?\}")),
     # --- fetch_and_execute ---
     Pattern("fetch_and_execute", "download_piped_to_shell", re.compile(
-        # A shell given its own program (`-c '...'`) reads the download as data, never as a script.
+        # A shell given its own program (`-c '...'`) within the piped command reads the download as data, never
+        # as a script; a later command on the line is not that shell's.
         rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_SHELL}\b{_SHELL_INLINE_PROGRAM}")),
     Pattern("fetch_and_execute", "download_piped_to_interpreter", re.compile(
-        # A runtime invoked as a viewer (its JSON pretty-printer module), or given its own program inline, is
-        # not an execution step for the download.
+        # A runtime invoked as a viewer (its JSON pretty-printer module), or given its own program inline within
+        # the piped command, is not an execution step for the download.
         rf"\b{_DOWNLOADER}\b[^\n|]*\|\s*{_INTERPRETER}\b(?!\s+-m\s+json\.tool\b){_INLINE_PROGRAM}")),
     Pattern("fetch_and_execute", "download_then_evaluate", re.compile(
-        # Fetched and run in one expression: eval — at a command position, applied directly to the substitution,
-        # so a prose "eval" earlier on the line is not an execution step — or a shell `-c` string over a command
-        # substitution of a download; the `source`/`.` builtins over one; or process substitution handed to a
-        # shell or runtime. A plain capture into a variable, with no execution step, never matches.
-        rf"{_COMMAND_START}eval\s+[\"']?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
+        # Fetched and run in one expression: eval applied directly to a command substitution of a download — a
+        # prose "eval" elsewhere on the line, with the download merely captured into a variable, is not an
+        # execution step — or a shell `-c` string over one; the `source`/`.` builtins over one; or process
+        # substitution handed to a shell or runtime. A plain capture into a variable never matches.
+        rf"\beval\s+[\"']?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
         rf"|\b{_SHELL}\s+-c\s*[^\n]*?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
         rf"|(?:\bsource\s+|{_DOT_BUILTIN})[\"']?\$\(\s*{_DOWNLOADER}\b[^)]*\)"
-        rf"|(?:\b{_SHELL}\s+|\b{_INTERPRETER}\s+|\bsource\s+|{_DOT_BUILTIN})<\(\s*{_DOWNLOADER}\b[^)]*\)", re.M)),
+        rf"|(?:\b{_SHELL}\s+|\b{_INTERPRETER}\s+|\bsource\s+|{_DOT_BUILTIN})<\(\s*{_DOWNLOADER}\b[^)]*\)")),
     # --- destructive_sql ---
     Pattern("destructive_sql", "drop_or_truncate_table", re.compile(
         _statement(rf"(?:DROP|TRUNCATE)\s+TABLE\s+(?:IF\s+EXISTS\s+)?{_SQL_NAME}(?:\s+CASCADE)?"), re.I | re.M)),
