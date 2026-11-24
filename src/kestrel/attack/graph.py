@@ -117,10 +117,12 @@ def _initial_state() -> _State:
 # ---- the per-run dependencies: LangGraph's runtime context, never a closure ----
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class _Deps:
     """What every node of a run needs, handed to the compiled graph as its runtime context
-    (`compiled.ainvoke(initial, context=deps)`) and read by a node as `runtime.context`."""
+    (`compiled.ainvoke(initial, context=deps)`) and read by a node as `runtime.context`. No generated repr, on
+    the whole family: `secrets` holds the target's plaintext auth values and `resolved` the target, and LangGraph's
+    `Runtime` repr includes its context, so neither may ever render them (001/FR-022, research R9)."""
     store: TargetStore
     run_id: int
     resolved: ResolvedSettings
@@ -143,7 +145,7 @@ class _Deps:
         return self.deadline - self.clock()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class _LiveDeps(_Deps):
     seed_prompt: AttackPrompt
     opening: str                          # turn 1's message: the seed with any planted task in place (013/FR-011)
@@ -154,7 +156,7 @@ class _LiveDeps(_Deps):
     attacker_prompt_version: str | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class _ReplayDeps(_Deps):
     source: Run
     source_turns: list[Turn]

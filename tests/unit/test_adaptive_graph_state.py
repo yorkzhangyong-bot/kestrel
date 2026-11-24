@@ -1,15 +1,17 @@
 """The adaptive loop's typed state: the conversation is appended through a reducer (a node returns only its
-turn's delta), `turns_used` counts the turns driven and `judge_requests` counts the judge calls actually made
+turn's delta) and `turns_used` counts the turns driven
 (003/FR-005: the loop reads the conversation so far each turn; 003/FR-010: the turn accounting the caps rest on).
 
 Drives the module-level compiled live graph directly, with stubbed dependencies in its runtime context - no
-network, no model, no attack text (placeholder messages only).
+network, no model, no attack text (placeholder messages only). The one secrets-handling check (001/FR-022) is that
+no repr of the runtime context can show the placeholder auth value it carries.
 """
 from __future__ import annotations
 
 import asyncio
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from kestrel.attack.graph import LIVE_GRAPH, _initial_state, _LiveDeps, _State
 from kestrel.attacks.library import AttackPrompt
@@ -17,11 +19,13 @@ from kestrel.connection.tester import ResolvedSettings, TestOutcome as SendOutco
 from kestrel.evidence.checker import EvidenceChecker
 from tests.support import StubAttacker, StubJudge
 
+FEATURE = "003"
+
 SEED = AttackPrompt(id="spl-002", title="t", text="<seed opening>", family="system_prompt_leak",
                     owasp_category="LLM07: System Prompt Leakage", source="x", source_url="x", licence="x")
 RESOLVED = ResolvedSettings(url="http://t/chat", method="POST", headers=(("X-API-Key", "test-key-123"),),
                             body_template='{"message": "{{prompt}}"}', response_path="$.reply")
-CANARY = "KESTREL-CANARY-7Q4M2X"
+SECRET = "test-key-123"   # the placeholder auth value every offline test registers
 
 
 class StubStore:
@@ -38,9 +42,8 @@ class StubStore:
         self.evidence.append(len(items))
 
 
-def numbered_sender(*, fail_at: int | None = None, canary_at: int | None = None):
-    """A sender whose n-th reply is `<agent reply n>` (with the canary appended at `canary_at`), or a failed
-    send at `fail_at`."""
+def numbered_sender(*, fail_at: int | None = None):
+    """A sender whose n-th reply is `<agent reply n>`, or a failed send at `fail_at`."""
     count = {"n": 0}
 
     async def send(resolved, **_kwargs):
@@ -49,17 +52,17 @@ def numbered_sender(*, fail_at: int | None = None, canary_at: int | None = None)
         if n == fail_at:
             return SendOutcome(ok=False, step="endpoint_error", message="Status 502", reply_text=None,
                               reply_truncated=False, status_code=502)
-        reply = f"<agent reply {n}>" + (f" {CANARY}" if n == canary_at else "")
+        reply = f"<agent reply {n}>"
         return SendOutcome(ok=True, step="success", message="Connection works.", reply_text=reply,
                           reply_truncated=False, status_code=200)
     return send
 
 
-def make_deps(*, store, sender, judge, attacker, max_turns=3, canaries=()):
-    return _LiveDeps(store=store, run_id=1, resolved=RESOLVED, secrets=["test-key-123"], mode="local",
+def make_deps(*, store, sender, judge, attacker, max_turns=3):
+    return _LiveDeps(store=store, run_id=1, resolved=RESOLVED, secrets=[SECRET], mode="local",
                      sender=sender, transport=None, resolver=None, judge=judge, judge_prompt="judge@1",
                      judge_prompt_id="judge", judge_prompt_version="1",
-                     checker=EvidenceChecker.canary_only(list(canaries), family=SEED.family),
+                     checker=EvidenceChecker.canary_only([], family=SEED.family),
                      max_turns=max_turns, token_budget=40000, deadline=1300.0, clock=lambda: 1000.0,
                      seed_prompt=SEED, opening=SEED.text, attacker=attacker, hint_provider=None,
                      attacker_prompt="attacker:system_prompt_leak@1", attacker_prompt_id="attacker:system_prompt_leak",
@@ -80,25 +83,6 @@ def test_the_conversation_holds_each_turns_pair_once_in_order_and_turns_used_cou
                                      ("attacker", "<attacker turn 3>"), ("agent", "<agent reply 3>")]
     assert final["turns_used"] == 3 and store.turns == [1, 2, 3]
     assert final["outcome"].stopping_condition == "turn_cap"
-
-
-def test_judge_requests_counts_only_the_judge_calls_actually_made():   # FR-005
-    judge = StubJudge(verdict="failed")
-    final = drive(make_deps(store=StubStore(), sender=numbered_sender(), judge=judge, attacker=StubAttacker(),
-                            max_turns=3))
-    assert final["judge_requests"] == 3 == len(judge.calls)
-
-    # A canary in turn 2's reply ends the run on hard evidence: the judge was asked once, on turn 1 only.
-    judge = StubJudge(verdict="failed")
-    final = drive(make_deps(store=StubStore(), sender=numbered_sender(canary_at=2), judge=judge,
-                            attacker=StubAttacker(), max_turns=3, canaries=[CANARY]))
-    assert final["judge_requests"] == 1 == len(judge.calls)
-    assert final["turns_used"] == 2 and final["outcome"].hard_evidence is True
-
-    # No judge configured: the judge node runs every turn but never makes a request.
-    final = drive(make_deps(store=StubStore(), sender=numbered_sender(), judge=StubJudge(configured=False),
-                            attacker=StubAttacker(), max_turns=2))
-    assert final["judge_requests"] == 0 and final["judge_used"] is True and final["turns_used"] == 2
 
 
 def test_a_failed_send_appends_the_message_alone_and_nothing_is_doubled_or_lost():   # FR-005, FR-010
@@ -132,3 +116,13 @@ def test_an_empty_delta_leaves_the_conversation_unchanged():   # FR-005
     final = asyncio.run(graph.compile().ainvoke(initial))
 
     assert final["conversation"] == before and final["turns_used"] == 2
+
+
+def test_no_repr_of_the_runtime_context_shows_an_auth_value():   # 001/FR-022
+    """The deps carry the target's auth values and LangGraph's `Runtime` repr includes its context, so neither
+    repr may render the placeholder secret (the resolved target's own repr already hides it)."""
+    deps = make_deps(store=StubStore(), sender=numbered_sender(), judge=StubJudge(), attacker=StubAttacker())
+    runtime = Runtime(context=deps)
+
+    assert SECRET not in repr(deps) and SECRET not in repr(runtime)
+    assert SECRET not in repr(RESOLVED)

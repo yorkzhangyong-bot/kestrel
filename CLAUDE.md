@@ -409,7 +409,8 @@ same commit. Before opening any implementation PR, review this file and add anyt
   per-run value (store, run id, resolved target and secrets, clients, sender, checker, caps, deadline + clock,
   prompt references, a replay's recorded turns) is a field of a frozen dataclass context handed to
   `compiled.ainvoke(initial, config, context=deps)` and read by a node as `runtime.context`
-  (`from langgraph.runtime import Runtime`); no node closes over a per-run value. The conversation and a
+  (`from langgraph.runtime import Runtime`); no node closes over a per-run value. The deps family is `repr=False`:
+  `secrets` holds the auth values and `repr(runtime)` includes the context (001/FR-022). The conversation and a
   replay's `turn_results` are reducer-appended (`Annotated[list[...], _appended]`): a record node returns only
   its turn's delta and an empty delta is a no-op; `judge_requests` is a state field counted *before* the request
   is made (a `JudgeError` still counts, as the old one-item box did); the run's end is one frozen `Outcome`
