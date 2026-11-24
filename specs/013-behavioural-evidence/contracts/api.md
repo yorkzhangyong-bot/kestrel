@@ -127,7 +127,7 @@ removes the side channel. The header value is encrypted with the vault and never
 ```jsonc
 {
   "evidence": {
-    "callback_listener": true,             // KESTREL_CALLBACK_BASE_URL is set (the URL itself is not reported)
+    "callback_listener": true,             // set = the /callback route is mounted (FR-073); never the URL itself
     "callback_wait_s": 2.0,
     "side_channel_timeout_s": 10,
     "detectors": ["instruction_override", "unsafe_executable_output"],
@@ -150,5 +150,8 @@ shown as `[callback-url]` and no side-channel data of any kind (FR-049, FR-061).
 
 ## The callback listener route
 
-`GET|POST|PUT|HEAD /callback/{token}` — see `contracts/callback-listener.md`. Not part of the user-facing API:
-no `X-Kestrel-Token` is required (FR-029), no JSON body is returned (`204` or `404`, empty).
+`GET|POST|PUT|HEAD /callback/{token}` — see `contracts/callback-listener.md`. Mounted only when
+`KESTREL_CALLBACK_BASE_URL` is set, so `evidence.callback_listener` above reports exactly whether this route exists
+(FR-073). Not part of the user-facing API: no `X-Kestrel-Token` is required while it is mounted (FR-029), no JSON
+body is returned (`204` or `404`, empty), and at most `CALLBACK_HITS_CAP` (100) hits are stored per run — later
+requests still get `204` (FR-072).

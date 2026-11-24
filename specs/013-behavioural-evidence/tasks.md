@@ -477,8 +477,15 @@ confirms the run; models never see the URL.
       or private base against a public target plants nothing and sets `callback_note` (FR-068); a replay of a
       source whose URL the listener can no longer receive is never `fixed` — still vulnerable on another item, else
       inconclusive, with its reason — and that replay's re-sent URL is **still redacted from the judge's and
-      recommender's view even though the listener is now off or the base changed** (FR-031, FR-069) (FR-027 to
-      FR-031, FR-068, FR-069, FR-070, SC-006, SC-007, SC-015).
+      recommender's view even though the listener is now off or the base changed** (FR-031, FR-069); **the per-run
+      cap**: with `store.CALLBACK_HITS_CAP` lowered by `monkeypatch` (the store and the route read it at call time,
+      never bind it at import), one request beyond the cap still answers `204`, stores nothing, and produces
+      exactly one `callback.ignored` line with reason `hit_cap_reached` bound to the run (a second capped request
+      adds no line), while the turn's item counts exactly the cap (FR-072, SC-016); **the mount rule**: an app
+      created without `KESTREL_CALLBACK_BASE_URL` has no `/callback/` route — a well-formed token path gets the
+      app's ordinary not-found response, no store lookup and no `callback.*` line, and in hosted mode (an access
+      token set) that path is refused by the token like any other (FR-073, SC-016) (FR-027 to FR-031, FR-068,
+      FR-069, FR-070, FR-072, FR-073, SC-006, SC-007, SC-015, SC-016).
 - [ ] T051 [US6] Author `src/kestrel/prompts/callback_task.v1.md` (id `callback_task`, placeholder
       `{callback_url}`) — a short paragraph **appended to the opening message in the user's voice** — and `--lock`
       it; bump `attacker:tool_exfiltration` to v2 (steer toward the address, writing the `[callback-url]`
@@ -487,12 +494,18 @@ confirms the run; models never see the URL.
       (FR-028, FR-059, FR-068, SC-008).
 - [ ] T052 [US6] Implement `src/kestrel/evidence/callback.py`: `generate_callback_token`, `callback_url`,
       `callback_task_paragraph`, `redact_callback_urls`, `restore_callback_url`, `wait_for_hits`, and the
-      base-usability check of FR-068; plus the store methods `record_callback_hit`,
-      `count_unconsumed_callback_hits` and `consume_callback_hits` (FR-027 to FR-031, FR-068, FR-070).
-- [ ] T053 [US6] Add the `/callback/{token}` route to `api/main.py` (GET/POST/PUT/HEAD), exempt from
-      `require_token` for `/callback/` paths, reading no body: `204` + `record_callback_hit` + `callback.hit` for
-      a token on an in-progress run, else `404` + `callback.ignored`; `token` must match `^[0-9a-f]{24}$`
-      (FR-027, FR-029, FR-030).
+      base-usability check of FR-068; plus the store methods `record_callback_hit` — returning `(run_id, stored)`
+      and inserting nothing once the run holds `store.CALLBACK_HITS_CAP = 100` rows, consumed or not, a documented
+      constant beside `RUN_LOG_CAP` (FR-072) — `count_unconsumed_callback_hits` and `consume_callback_hits`
+      (FR-027 to FR-031, FR-068, FR-070, FR-072).
+- [ ] T053 [US6] Add the `/callback/{token}` route to `api/main.py` (GET/POST/PUT/HEAD), **registered in
+      `create_app` only when `KESTREL_CALLBACK_BASE_URL` is set** — with it unset the path does not exist, the
+      app's ordinary not-found response answers it, and `require_token` exempts nothing (FR-073) — exempt from
+      `require_token` for `/callback/` paths while mounted, reading no body: `204` + `record_callback_hit` +
+      `callback.hit` for a token on an in-progress run; when the store reports that run at its cap, still `204`
+      with nothing stored and one `callback.ignored` (`reason` `hit_cap_reached`) through `events.warn_once` keyed
+      on the run id and bound to the run with `bind_run_reference` (FR-072); else `404` + `callback.ignored`;
+      `token` must match `^[0-9a-f]{24}$` (FR-027, FR-029, FR-030, FR-072, FR-073).
 - [ ] T054 [US6] Extend the checker and planting: `build_checker` plants a callback token for `tool_exfiltration`
       only when the listener is enabled **and its base is usable for this target**, recording `callback_note` when
       it is not (FR-068); `check_turn` runs the bounded wait (`min(callback_wait_s, remaining())`, no model call)
@@ -601,7 +614,8 @@ confirms the run; models never see the URL.
 - [ ] T067 [P] Update the "001–012 merged" status lines to "001–013" in `README.md` (the opening Status paragraph
       and the "What's next" line) and `CLAUDE.md`, with a one-paragraph summary of behavioural evidence, and
       extend T040's `docs/technical-design.md` section and `CLAUDE.md` learned note to cover part 2 (the side
-      channel, the listener placement, the HS-code tools' gate and allow-list, the two e2e) (FR-062).
+      channel, the listener placement, its mount rule and per-run hit cap, the HS-code tools' gate and allow-list,
+      the two e2e) (FR-062).
 - [ ] T068 Write `specs/013-behavioural-evidence/traceability.md` mapping every `013/FR-###`/`013/SC-###` to the
       test(s) that cover it, and justifying the ids no test can carry: **FR-023** (the side-channel contract is a
       documentation requirement, satisfied by `contracts/side-channel.md`), **FR-058** (the constitution edit,

@@ -80,7 +80,7 @@ side channel only to its configured URL through the address guard, the listener 
 models given nothing new (FR-049).
 
 **Scale/Scope**: single user; one side channel per target; at most one task paragraph per run (the override and
-callback families are disjoint); the listener records one hit row per accepted request.
+callback families are disjoint); the listener stores at most `CALLBACK_HITS_CAP` (100) hit rows per run (FR-072).
 
 ## Constitution Check
 
@@ -135,7 +135,7 @@ touch `.specify/memory/constitution.md`.
 | V — learn from every run | Write-back is unchanged **except** the deliberate stripping of the planted-task text and scrubbing of the run's planted values from what the store receives (FR-063): the pool still learns every success, only without the per-run token/URL that would pollute it — an improvement to the signal, not a skipped write-back, so no Principle-V deviation to record. ✓ |
 | VI — OWASP-mapped, fix-ready | Every evidence kind maps to an OWASP class (table below); the report lists items by class and gains the LLM05 coverage row. A run is counted **confirmed** under a class only when one of its own items carries that class, so a cross-class item never produces a confirmed claim with no proof for the family's class (FR-004, FR-044, FR-045). ✓ |
 | VII — tests first, thin slices, one e2e | TDD per story; vertical slices (store v11 → evidence package → run wiring → API → UI → report → logging); one e2e **per part** (FR-056, SC-010). ✓ |
-| VIII — only attack owned, hard caps | Side-channel reads are plain GETs to the owned target through the address guard; the listener is Kestrel's own; the sacrificial target's outbound tool can reach only an allow-listed URL prefix (scheme, host, port and a path prefix ending in `/`, `GET` only, with **no default list** — an unset/empty list refuses everything, and the e2e/browser harness sets the prefix explicitly) and its three new tools are off unless an environment flag enables them; a callback URL is planted only when its base is usable for that target; no model call and no raised cap (FR-049, FR-050, FR-066, FR-067, FR-068, SC-012, SC-015). ✓ |
+| VIII — only attack owned, hard caps | Side-channel reads are plain GETs to the owned target through the address guard; the listener is Kestrel's own; the sacrificial target's outbound tool can reach only an allow-listed URL prefix (scheme, host, port and a path prefix ending in `/`, `GET` only, with **no default list** — an unset/empty list refuses everything, and the e2e/browser harness sets the prefix explicitly) and its three new tools are off unless an environment flag enables them; a callback URL is planted only when its base is usable for that target; the callback route exists only when a base is configured and stores at most 100 hits per run; no model call and no raised cap (FR-049, FR-050, FR-066, FR-067, FR-068, FR-072, FR-073, SC-012, SC-015). ✓ |
 | IX — simple for a vibe coder | Part 1 needs no configuration at all; the side channel is an optional form section a user fills only if they wired their agent; the API hands the UI ready-made labels, statuses and notices (FR-043). ✓ |
 | X — stack fixed; new dep needs justification | No new dependency; detectors are `re`/`secrets`, the listener is a FastAPI route, the side-channel client is `httpx` (FR-060, SC-011). ✓ |
 
@@ -217,7 +217,8 @@ src/kestrel/
 ├── prompt_versions.lock.json      # the five new/bumped files recorded (scripts/bump_prompt.py … --lock)
 ├── api/schemas.py                 # the run/target/config/connection-test shapes (data-model.md); the reserved header
 └── api/main.py                    # the checker at start_run; the side channel in save/update/test; the
-                                   #   /callback/{token} route exempt from require_token; evidence in run_detail/report/config
+                                   #   /callback/{token} route (mounted only when the base URL is set, exempt from
+                                   #   require_token); evidence in run_detail/report/config
 ui/
 ├── api_client.py                  # no new call shape (the existing run/target/config endpoints carry the fields)
 └── app.py                         # the headline "confirmed by {labels}"; the Evidence section; the run-list column;

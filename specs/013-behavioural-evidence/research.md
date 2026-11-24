@@ -352,21 +352,34 @@ so feature 012's replay still re-sends something that works.
 ## D13 — The listener lives inside the API process
 
 **Decision**: a FastAPI route `/callback/{token}` accepting `GET`, `POST`, `PUT` and `HEAD`, registered in
-`create_app`, exempt from `require_token` (the dependency returns early for paths under `/callback/`). It never
-reads the request body, answers `204` for a token of a run in progress (or of a replay in progress, D15) after
-`store.record_callback_hit(token, method)` and emits `callback.hit` under `events.bind_run_reference(run)`;
-otherwise it answers `404` with an empty body and emits `callback.ignored` (warn-once per `reason`:
-`unknown_token` / `run_not_in_progress`). `KESTREL_CALLBACK_BASE_URL` is the public base at which **that route** is
+`create_app` **only when `KESTREL_CALLBACK_BASE_URL` is set** (FR-073; with it unset the path does not exist, the
+app's ordinary not-found response answers it with no store lookup and no listener line, and `require_token`
+exempts nothing), exempt from `require_token` while mounted (the dependency returns early for paths under
+`/callback/` only then). It never reads the request body, answers `204` for a token of a run in progress (or of a
+replay in progress, D15) after `store.record_callback_hit(token, method)` and emits `callback.hit` under
+`events.bind_run_reference(run)`; otherwise it answers `404` with an empty body and emits `callback.ignored`
+(warn-once per `reason`: `unknown_token` / `run_not_in_progress`). **Storage is capped per run** (FR-072):
+`record_callback_hit` inserts nothing once the run holds `store.CALLBACK_HITS_CAP = 100` rows (consumed or not)
+and returns `(run_id, False)`; the route still answers `204` — a target cannot tell a stored hit from a capped one
+— and emits `callback.ignored` with `reason` `hit_cap_reached` through `events.warn_once` keyed on the run id,
+bound to the run, so a flood costs one line, not one per request. `KESTREL_CALLBACK_BASE_URL` is the public base at
+which **that route** is
 reachable — for the in-process listener it therefore ends in `/callback` (for example
 `http://127.0.0.1:8000/callback`); Kestrel appends `/<token>`. Unset means disabled (FR-027).
 
 **Rationale**: no second process to start, configure or secure; the route and the store share the process and the
 database the run writes to, so a hit is visible to the running check immediately. A separate listener process
 ("beside it") stays possible later behind the same base URL contract — the plan's deliberate placement decision
-is in-process.
+is in-process. Not mounting the route when the listener is off leaves a listener-off instance with no public,
+token-exempt path at all, and the cap bounds what a looping agent, or a flood from anyone who learned the URL, can
+write: the run's time limit already bounds the duration, the cap bounds the rows and the lines.
 
 **Alternatives considered**: a standalone listener process (an extra moving part for the vibe coder, Principle
-IX); DNS tokens (a resolver to run — out of scope per the spec).
+IX); DNS tokens (a resolver to run — out of scope per the spec); a per-caller rate limit (the listener never
+records a caller address, FR-048, and a target behind one egress address shares it with everything else there); a
+configurable cap (a setting nobody needs to tune — `RUN_LOG_CAP` set the precedent of a documented constant);
+refusing capped requests with an error (a target could then observe the cap and tell a stored hit from a capped
+one).
 
 ## D14 — The bounded wait polls the store
 

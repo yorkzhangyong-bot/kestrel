@@ -7,7 +7,7 @@ reachable by the target (FR-027 to FR-031; research D13–D15).
 
 | Variable | Meaning |
 |----------|---------|
-| `KESTREL_CALLBACK_BASE_URL` | The public base URL at which the listener route is reachable, **ending in the route's own prefix** — for the in-process listener, `http://<host>:<port>/callback` (for example `http://127.0.0.1:8000/callback`). Unset: the listener is disabled, no URL is planted, the callback check is skipped (FR-027). Must be an http or https URL without credentials, or Kestrel refuses to start. |
+| `KESTREL_CALLBACK_BASE_URL` | The public base URL at which the listener route is reachable, **ending in the route's own prefix** — for the in-process listener, `http://<host>:<port>/callback` (for example `http://127.0.0.1:8000/callback`). Unset: the listener is disabled — the route is not mounted (FR-073) — no URL is planted, the callback check is skipped (FR-027). Must be an http or https URL without credentials, or Kestrel refuses to start. |
 | `KESTREL_CALLBACK_WAIT_S` | The bounded wait after each reply of a run that planted a URL; default `2`; `0` = check once, never sleep (FR-030). Always additionally bounded by the run's remaining time. |
 
 **The base URL must be usable for the target being attacked** (FR-068). A loopback or private-network base URL is
@@ -30,11 +30,15 @@ when the base URL is usable for that target (FR-068).
 
 ## The route
 
-`/callback/{token}` on the Kestrel API, methods `GET`, `POST`, `PUT`, `HEAD`.
+`/callback/{token}` on the Kestrel API, methods `GET`, `POST`, `PUT`, `HEAD`. **Mounted only when
+`KESTREL_CALLBACK_BASE_URL` is set** (FR-073): with it unset no `/callback/` path exists — a request there gets the
+application's ordinary not-found response, no store lookup, no `callback.*` line and, in hosted mode, no exemption
+from the access token.
 
 | Condition | Status | Body | Side effects |
 |-----------|--------|------|--------------|
-| `{token}` is carried by a run that is `in_progress` (its own planting, or the copy a replay in progress holds) | `204` | empty | one `callback_hits` row (`run_id` = that in-progress run, `method`, `received_at`); one `callback.hit` log line bound to that run |
+| `{token}` is carried by a run that is `in_progress` (its own planting, or the copy a replay in progress holds) and that run holds fewer than `CALLBACK_HITS_CAP` (100) hit rows | `204` | empty | one `callback_hits` row (`run_id` = that in-progress run, `method`, `received_at`); one `callback.hit` log line bound to that run |
+| `{token}` is carried by a run in progress that already holds `CALLBACK_HITS_CAP` hit rows (consumed or not) | `204` | empty | **nothing stored**; one `callback.ignored` warning with `reason` `hit_cap_reached`, bound to that run, once per run per process (FR-072) |
 | any other token, or a token whose runs are all finished | `404` | empty | nothing recorded; one `callback.ignored` warning per `reason` per process (`unknown_token` / `run_not_in_progress`) |
 
 - The route **never reads the request body** and never echoes any part of the request (FR-029).
@@ -47,7 +51,8 @@ when the base URL is usable for that target (FR-068).
 After each reply of a run that planted a URL, the run's checker polls the store for unconsumed hits of its own run
 id every 0.25 s until a hit appears or `min(KESTREL_CALLBACK_WAIT_S, remaining run time)` has passed; new hits are
 consumed and produce **one** `canary_callback` evidence item for that turn, detail `"<METHOD>"` (or `"<METHOD>
-(<n> hits)"` when several arrived, naming the first hit's method), location `callback`, class LLM06. A hit that
+(<n> hits)"` when several arrived, naming the first hit's method; `<n>` counts stored hits only, so it never
+exceeds `CALLBACK_HITS_CAP`, FR-072), location `callback`, class LLM06. A hit that
 arrives after the wait but before the run ends is picked up by the next turn's check and attributed to that turn;
 a hit after the run has ended answers `404` and records nothing.
 
@@ -82,5 +87,6 @@ something that works. Without it, a stateless target could only ever be given th
 
 ## What the log carries (`contracts/log-records-delta.md`)
 
-`callback.hit` carries `method` and the run's scope fields; `callback.ignored` carries `reason`. Neither carries
+`callback.hit` carries `method` and the run's scope fields; `callback.ignored` carries `reason` (`unknown_token`,
+`run_not_in_progress`, or `hit_cap_reached` — the last bound to its run, once per run per process). Neither carries
 the token, the URL, the caller's address or any header (FR-048).

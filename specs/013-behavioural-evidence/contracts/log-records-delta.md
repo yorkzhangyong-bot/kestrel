@@ -43,10 +43,13 @@ no `model.request kind=judge` line, exactly as a canary-decided turn has none to
 | `evidence.side_channel_unavailable` | WARNING | a side-channel request failed during a run (inside the run's scope) | `step` (one of the six `side_channel_*` steps, including `side_channel_header_unreadable`) |
 | `evidence.override_disarmed` | WARNING | the joined override form appeared (after normalisation) in a message Kestrel sent — the opening message, an attacker-generated one, or one a replay re-sent — so the token was disarmed (inside the run's scope) | `turn` (already a scope field) |
 | `callback.hit` | INFO | the listener accepted a hit for a run in progress (bound to that run with `events.bind_run_reference`, like the recommender line; stream only, never kept) | `method` (`GET`/`POST`/`PUT`/`HEAD`) |
-| `callback.ignored` | WARNING | the listener declined a request (unscoped; once per `reason` per process) | `reason` (`unknown_token`/`run_not_in_progress`) |
+| `callback.ignored` | WARNING | the listener declined to store a request: an unknown token or a finished run (unscoped; once per `reason` per process), or a run in progress already at its hit cap (bound to that run with `bind_run_reference`; once per run per process, FR-072) | `reason` (`unknown_token`/`run_not_in_progress`/`hit_cap_reached`) |
 
 `callback.hit` carries the run's scope fields through `bind_run_reference` and the `method`; it carries no token,
-no URL and no caller address. `callback.ignored` is unscoped (there is no run to name) and carries only `reason`.
+no URL and no caller address. `callback.ignored` carries only `reason`: it is unscoped for `unknown_token` and
+`run_not_in_progress` (there is no run to name) and bound to the run for `hit_cap_reached` (the capped request
+still answers `204`, so this line is its only trace). With no base URL configured the route is not mounted and
+neither line is ever emitted (FR-073).
 
 ## New catalogue entries (field names added to `events.CATALOGUE`)
 

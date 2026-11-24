@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS callback_hits (
 CREATE INDEX IF NOT EXISTS idx_callback_hits_run ON callback_hits (run_id, consumed);
 ```
 
+At most `store.CALLBACK_HITS_CAP = 100` rows per run (a documented constant beside `RUN_LOG_CAP`, not a setting),
+counted over the run's rows consumed or not; `record_callback_hit` inserts nothing once the cap is reached and
+reports it, so the route still answers `204` and logs the cap once for that run (FR-072).
+
 ### `target_side_channels` — the optional side channel of a target
 
 ```sql
@@ -107,7 +111,7 @@ callback hits (spec Edge Cases).
 | `list_planted_tokens(run_id) -> list[PlantedToken]` | |
 | `disarm_planted_token(run_id, kind, turn) -> None` | sets `disarmed_turn` once (a later call is a no-op) |
 | `copy_planted_tokens(source_run_id, replay_run_id) -> int` | copies every row **including its `disarmed_turn`**; returns the count |
-| `record_callback_hit(token, method) -> int \| None` | the id of the `in_progress` run carrying `token` and the new hit row's run, or `None` (no row inserted) when no in-progress run carries it |
+| `record_callback_hit(token, method) -> tuple[int, bool] \| None` | the id of the `in_progress` run carrying `token` and whether a row was stored — `False` once that run already holds `CALLBACK_HITS_CAP` rows (nothing inserted, FR-072) — or `None` (no row inserted) when no in-progress run carries it |
 | `count_unconsumed_callback_hits(run_id) -> int` | |
 | `consume_callback_hits(run_id) -> list[CallbackHit]` | marks every unconsumed hit consumed and returns them |
 | `set_side_channel(target_id, *, url, header: tuple[str, str \| None] \| None, honeypot_tool) -> None` | a header value of `None` keeps the stored value (the `update_target` convention); `url=None` removes the side channel |

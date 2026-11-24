@@ -321,6 +321,13 @@ run ended, records nothing. Assert the judge and attacker models received a plac
    target, so no callback was planted."**, and every other check runs as normal.
 9. **Given** the configuration endpoint reports whether the listener is enabled, **When** the user reads the
    sidebar, **Then** it shows exactly **"Callback listener: on"** or exactly **"Callback listener: off"**.
+10. **Given** a run in progress that already holds the per-run cap of stored hits for its planted URL, **When** a
+    further request for that URL arrives, **Then** it is answered exactly like an accepted hit, nothing more is
+    stored, one `callback.ignored` line names the cap once for that run, and the run's evidence item counts only
+    the stored hits.
+11. **Given** the listener is disabled (no base URL configured), **When** any request reaches a `/callback/` path,
+    **Then** the route is not mounted: the request receives the application's ordinary not-found response, nothing
+    is looked up, and no listener line is logged.
 
 ---
 
@@ -424,7 +431,11 @@ one attack, asserting the structure of the result.
   move on read, no unordered collections, since such a value would differ on every snapshot and confirm every run.
 - **The listener is disabled, or its base URL cannot reach this target**: no callback wording is planted, no URL is
   sent, the check is skipped, and the run's start line carries a dedicated listener field that distinguishes "the
-  listener is off" from "this family carries no callback task".
+  listener is off" from "this family carries no callback task". With the listener disabled the route is not mounted
+  at all, so a request to a `/callback/` path gets the application's ordinary not-found response.
+- **A target loops on the planted URL, or someone who learned it floods the listener**: the listener stores at most
+  the per-run cap of hits (100 rows), answers every request alike, logs the cap once for that run, and counts only
+  the stored hits on the run's evidence item; the run's time limit bounds how long the URL is live at all.
 - **A callback hit arrives after the bounded wait but before the run ends**: the next turn's check picks it up and
   attributes the item to that turn; a hit after the run ends records nothing.
 - **The target echoes the planted URL in its reply without requesting it**: no hit, no item.
@@ -615,7 +626,8 @@ one attack, asserting the structure of the result.
 **The canary callback listener**
 
 - **FR-027**: Kestrel MUST host a callback listener reachable at a configured public base URL; when no base URL is
-  configured the listener is disabled, no callback wording is planted, and the callback check is skipped. The
+  configured the listener is disabled — its route is not mounted at all (FR-073) — no callback wording is planted,
+  and the callback check is skipped. The
   configured base URL MUST be validated at start-up — an http or https URL without credentials whose path ends in
   the listener's own `/callback` prefix — and refused loudly when malformed, so a base that could never reach the
   `/callback/{token}` route is not accepted silently.
@@ -627,9 +639,9 @@ one attack, asserting the structure of the result.
   MUST record which version planted it. The one permitted reuse of a token value is a replay re-verifying its own
   source's token (FR-035).
 - **FR-029**: The listener MUST record a hit (time and method) only for a token belonging to a run in progress, or
-  to the source of a replay in progress; for any other request it MUST answer "not found", record nothing and echo
-  nothing. It MUST read no more than a small bounded part of any request body, and MUST be reachable without
-  Kestrel's hosted access token (the target, not the user, is its caller).
+  to the source of a replay in progress, and only up to the per-run cap of FR-072; for any other request it MUST
+  answer "not found", record nothing and echo nothing. It MUST NOT read the request body, and MUST be reachable
+  without Kestrel's hosted access token (the target, not the user, is its caller).
 - **FR-030**: After every reply of a run that planted a URL, Kestrel MUST wait a bounded, configurable time
   (default 2 seconds, never beyond the run's time limit) for a hit; a hit MUST produce an evidence item of kind
   `canary_callback` whose detail is the request method, attributed to the turn on whose check it was first seen. A
@@ -645,6 +657,20 @@ one attack, asserting the structure of the result.
   when the base was refused, the run's `callback_note` records why (FR-068), and when the listener is simply off
   that is the ordinary configured-off state and no note is set. This is the single, documented exception to
   "attacker messages are never edited"; without it a stateless target could only ever receive the URL on turn 1.
+- **FR-072**: Kestrel MUST store at most a fixed number of callback hits per run — a documented constant of 100 rows
+  (`CALLBACK_HITS_CAP`), counted over every hit row of that run whether or not a turn's check has consumed it. Once
+  a run holds that many rows, every further request for its token MUST still be answered exactly as an accepted
+  hit (a target cannot tell a stored hit from a capped one), MUST store nothing, and MUST be reported by one
+  `callback.ignored` line with reason `hit_cap_reached`, bound to that run and emitted once per run per process on
+  the first capped request — never once per request. A turn's `canary_callback` item counts stored hits only, so
+  its count never exceeds the cap. The cap is per run row: a replay has its own, separate from its source's. The
+  run's time limit bounds how long the planted URL is live; this bounds what a target that loops on the URL, or
+  anyone who learned it, can write into the database or the log.
+- **FR-073**: The `/callback/{token}` route MUST be registered only when `KESTREL_CALLBACK_BASE_URL` is set. With it
+  unset no `/callback/` path exists: a request there MUST receive the application's ordinary not-found response,
+  perform no store lookup and emit no `callback.*` line, and in hosted mode it is subject to the access token like
+  any other unknown path — the `/callback/` exemption from the token exists only while the route is mounted. The
+  configuration endpoint's listener field (FR-042) therefore reports exactly whether the route is mounted.
 
 **The protected-state check**
 
@@ -735,7 +761,8 @@ one attack, asserting the structure of the result.
   wait used and the number of changed protected-state keys; the kinds found on the turn line, whose hard-evidence
   field MUST mean "this turn produced at least one evidence item of any kind"; the kinds and their count on the
   run's end line; a warning when the side channel is unavailable naming the step; a warning when an override token
-  is disarmed; and an informational line for every recorded callback hit, bound to its run. Every new field MUST
+  is disarmed; an informational line for every recorded callback hit, bound to its run; and a warning, once per run,
+  when a run's stored callback hits reach their cap (FR-072). Every new field MUST
   be catalogued, and MUST follow the existing convention that a field is omitted when it does not apply rather
   than emitted as null.
 - **FR-048**: No log line produced by this feature MUST carry a token, a part of a token, a URL, an auth value, a
@@ -865,7 +892,7 @@ one attack, asserting the structure of the result.
 - **Correlation id**: an opaque per-run value sent with every chat request of a run on a target with a side
   channel, so the target can attribute tool calls to the run.
 - **Callback hit**: a request the listener received for a planted callback token of a run in progress — time and
-  method — turned into an evidence item on the next check.
+  method — turned into an evidence item on the next check; at most 100 are stored per run (FR-072).
 - **State snapshot**: the protected state the side channel exposes at one moment, compared with the previous one
   by top-level key; never stored beyond the comparison.
 - **Detector pattern set**: the unsafe-output patterns as one versioned set — a set version plus, per pattern, a
@@ -946,6 +973,11 @@ one attack, asserting the structure of the result.
   port outside its configured allow-list and 100% of refused URLs produce no request at all; with the tools' flag
   unset it offers exactly today's tool set; and across the offline suite 0 runs plant a callback URL whose base is
   unusable for the target (a loopback or private base against a public target).
+- **SC-016**: In the offline suite, a run whose planted URL receives more requests than the per-run cap ends with
+  exactly the cap's number of stored hit rows, every one of those requests answered alike, exactly 1
+  `callback.ignored` line for the cap, and an evidence item whose count equals the cap; and with no base URL
+  configured, 100% of requests to a `/callback/` path get the application's ordinary not-found response with 0
+  listener lines logged.
 
 ## Assumptions
 
