@@ -126,6 +126,9 @@ def kestrel_api(tmp_path_factory):
            # Keep the adaptive e2e quick and cheap: a low turn cap and time limit (feature 003).
            "KESTREL_ADAPTIVE_MAX_TURNS": "2", "KESTREL_ADAPTIVE_TIME_LIMIT_S": "120"}
     env.pop("KESTREL_SECRET_KEY", None)
+    # Feature 013 (013/SC-008): a developer who exports KESTREL_CALLBACK_BASE_URL must not silently change what
+    # these scenarios plant; the part-2 fixture sets it explicitly instead.
+    env.pop("KESTREL_CALLBACK_BASE_URL", None)
     server = _Server("Kestrel API",
                      [sys.executable, "-m", "uvicorn", "--factory", "kestrel.api.main:create_app",
                       "--host", "127.0.0.1", "--port", str(port)],

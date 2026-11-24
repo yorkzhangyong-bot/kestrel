@@ -126,9 +126,92 @@ A **replay** re-sends a past, succeeded run's recorded attacker message(s) verba
 - **Batch replay and the CI gate.** `execute_batch_replay` loops `execute_replay` over `TargetStore.list_replayable_runs(target_id)` (finished, succeeded, non-replay runs, oldest first), one at a time, each inside its own `events.run_scope()`, bounded by a configurable cap (`KESTREL_REPLAY_BATCH_MAX_RUNS`, default 20, reported on `GET /api/config`) checked before anything is claimed. A `RunInProgress` collision or one entry's own `ReplayFailed` stops the batch — never the batch *request* — with `complete=False` and a `stop_reason`, naming every source never reached; the caller (`POST /api/targets/{id}/replays`, always `200`) and `scripts/check_replay.py` both treat an incomplete result as "could not tell," never as a pass. The script is a standalone `httpx` + stdlib client (no import of `kestrel` or `ui/`) with four exit codes — `1` ("still vulnerable") wins over everything, `0` needs both a **completed** batch and every entry fixed, `2` covers every other case including an incomplete batch, `3` a usage/API error — and sizes its own batch-call timeout from `GET /api/config`'s `replay.per_replay_time_limit_s` (the longer of the adaptive and single-turn deadlines) times the cap.
 - **Schema v10** widens `runs.mode`'s CHECK to accept `'replay'` and adds a self-referencing `source_run_id` (`ON DELETE CASCADE`) and `replay_outcome`. SQLite cannot `ALTER` a CHECK constraint, so this is a second rebuild of `runs`, following v9's own documented procedure (foreign keys off before any DML; the two index statements as separate `execute()` calls, never one script, so the rebuild can still be refused before it commits; `PRAGMA foreign_key_check` empty before `commit()`) **plus one more fix**: a plain rename loses `runs`' `sqlite_sequence` row (a fresh `runs_new` only ever sees the *surviving* rows inserted into it, so its own sequence would settle below the old table's actual watermark) — the old watermark is read before the drop and restored, as `max(old watermark, highest id actually copied)`, inside the same transaction as the rename, or a numeric id freed by an earlier deletion could be reissued and collide with a surviving `memory:run:<id>` record.
 
-## 8. Data model
+## 8. Behavioural evidence (feature 013, part 1)
 
-**SQLite** (`data/kestrel.db`, `meta.schema_version = "10"`; migrations are additive except v9 and v10 — a v1–v8 database is `ALTER`-ed/extended up and an unknown version is refused; v5 added a table, v6 three new tables, v7 prompt-provenance columns, v8 the `run_log` table, with no change to existing ones; v9 (post-review fix) rebuilds `runs` because SQLite cannot `ALTER` AUTOINCREMENT into an existing column; v10 (feature 012) rebuilds `runs` a second time, by the same procedure, because SQLite cannot `ALTER` a `CHECK` constraint either — a database jumping straight from pre-v9 to v10 gets the v10 shape directly from the v9 rebuild step, so the v10 step itself is a no-op for that path, verified empirically):
+Until feature 013 Kestrel had exactly one deterministic proof: a declared canary string in the reply. Part 1 adds
+two more that need nothing from the target, and makes every proof a first-class **evidence item** the user can
+read. (Part 2 adds the target side channel, the honeypot tool and the canary callback listener.)
+
+- **One checker, one order (`src/kestrel/evidence/`).** `EvidenceChecker`, built once per run by
+  `build_checker(...)`, is the single home of every deterministic check; `runs.execute_run`,
+  `attack/graph.py`'s two loops and `replay.execute_replay` call it where they used to call `match_canary`.
+  `check_turn(turn, reply, remaining)` runs the applicable checks over a reply in the fixed order of FR-001 —
+  the canary, the instruction-override token, the unsafe-output pattern set (then, in part 2, the tool-call log,
+  the callback and the protected state) — **every one to completion**, and answers with a `TurnEvidence` whose
+  `items` is the authority: any item ends the run as succeeded with hard evidence and **no judge call for that
+  turn**, exactly as a canary match does today. `EvidenceChecker.canary_only(...)` is today's behaviour exactly
+  and is what every run function falls back to when no checker is passed (`evidence=None`), so no existing
+  caller or test changed. The checker holds the store only to record what it planted and to disarm it; it never
+  imports the experience store, so `attack/graph.py` stays free of ChromaDB and httpx.
+- **The instruction-override detector (`evidence/override.py`).** A run of the two injection families gets its
+  own token: two parts of six characters from a 31-symbol unambiguous alphabet. The planted instruction — a
+  versioned prompt file (`prompts/override_task.v1.md`, front-matter `framing: override`), never text in Python
+  — is framed as the injected override itself and carries the two parts **separated by at least one alphanumeric
+  word**, asking for them joined. The joined form therefore appears in nothing Kestrel composes, even after
+  normalisation (letter case folded, every non-alphanumeric character removed), so a reply containing it is
+  proof the agent followed the injection in preference to its own instructions. The same normalised check runs
+  over **every** message Kestrel sends — the opening message, an attacker-generated one, a replay's re-sends —
+  and **disarms** the token from that turn on if one would yield the joined form, with one
+  `evidence.override_disarmed` warning; a disarmed token is never re-armed, and a replay inherits its source's
+  state. The item's detail is a fixed statement, never the token: the token itself lives on the run.
+- **Where the task goes (`attacks/data/insertion_points.json`).** A Kestrel-owned sidecar, keyed by prompt id,
+  records each injection seed's insertion point as a character offset into its **verbatim** library text plus a
+  sha256 of that text. A direct-injection seed's point is the attacker-voice position (the paragraph follows the
+  seed); an indirect-injection seed's is interior, inside the content the seed presents as retrieved, so the
+  instruction reaches the agent as data rather than as a request from its user. The library file stays verbatim;
+  a seed whose fingerprint no longer matches fails the suite, which is what forces a re-review after a library
+  edit. A seed the sidecar does not describe (an edited library, or the synthetic one the offline suite uses)
+  gets a derived point of the same shape, so a live run never breaks on it.
+- **The unsafe-output detector (`evidence/unsafe_output.py`).** A named, versioned pattern set (set version `1`,
+  twelve patterns across four categories: destructive shell, fetch-and-execute, destructive SQL, script
+  injection), standard library only. `specs/013-behavioural-evidence/contracts/detectors.md` is the review
+  surface: it fixes the set version, every pattern's stable name and category and, per pattern, the exact shape
+  it matches **and the benign shape beside it that it must not**. `scan` returns at most one match per category
+  (earliest by position); a match whose text also appears in a message Kestrel sent in that run is **skipped** —
+  a reply that quotes or refuses what Kestrel put in front of the agent is not the agent emitting unsafe output
+  of its own. Precision is enforced by cases, not by claim: `tests/fixtures/unsafe_output_cases.json` holds at
+  least three positive and three negative inert samples **per named pattern** (the only place such samples
+  live), and a unit test parses the contract's own table and set version, so the contract, the module and the
+  fixture cannot drift apart.
+- **Items, and the surfaces that show them.** Every finding is one row of `run_evidence`: kind, turn, location,
+  OWASP class, a non-secret detail, and (for unsafe output) the pattern name and set version. The seven kinds,
+  their labels, locations and classes are fixed in one table (`evidence/model.py`). The run summary carries the
+  distinct kinds in detection order, their labels and the item count; the detail carries the items, what the run
+  planted (never a token value) and the notices; the run page prints `"Attack succeeded · confirmed by
+  {labels}"` and an **Evidence** section of one exact line per item; the run list joins the labels; the report
+  lists every item per finding and counts a run **confirmed under a class only when one of its own items carries
+  that class** — so a cross-class item never produces a confirmed claim with no proof for the family's class.
+  LLM05 leaves the report's "Not tested" list for a detector row of its own. A run recorded **before** this
+  feature (hard evidence, no stored items) is given exactly **one derived canary item** by the single helper the
+  API and the report share, so the summary, the page and the report can never disagree about it.
+- **No planted value ever leaves the run (FR-063).** Before any text reaches the experience store — a success's
+  pattern document, the per-target memory record, the summary built from judge progress notes — or the pattern
+  retrieval query, two deterministic steps run together: the run's **exact filled task text** is stripped
+  wherever it sits, and the run's **own planted values** (each token part and the joined form) are replaced
+  wherever else they appear. Stripping the template alone would not be enough: a later attacker message or a
+  judge note can repeat a part. The checker is built *before* the retrieval provider and the write-back, so both
+  receive this run's values. The run's own stored message keeps everything exactly as sent, so a replay re-sends
+  it verbatim.
+- **Replay and experiments.** A replay copies its source's planted tokens (armed state included) and builds its
+  checker from them, so the override check verifies against the source's token and a message that disarmed the
+  source disarms the replay at the same turn. **Each replayed turn's result is derived from whether that turn
+  produced any evidence item** — never from the canary flag alone — on both the single-turn branch and the
+  adaptive graph, so a replay confirmed only by a detector is scored still vulnerable, not inconclusive. Both
+  experiment arms get the same checker from the same builder.
+- **Logging.** `run.start` gains four fields (the side channel, whether the listener is enabled at all, and what
+  this run planted), each omitted when it does not apply; a new per-turn `evidence.check` line names the checks
+  that ran and what they found, before the judge is consulted at all; `turn` and `run.end` carry the kinds and
+  counts, and `turn`'s `hard_evidence` now means "this turn produced at least one evidence item of any kind"
+  (`canary_hit` keeps the narrower meaning). Counts, kinds, statuses and steps only: no token, part, URL,
+  detail, reply or attack text on any line.
+- **Schema v11** is additive — four new tables (`run_evidence`, `run_planted_tokens`, `callback_hits`,
+  `target_side_channels`) and two nullable `runs` columns (`correlation_id`, `side_channel_status`) ALTER-added
+  the v3/v4/v7 way. **No table is rebuilt**, so the v9/v10 rebuild helpers and their gotchas are untouched. Every
+  table and column of **both parts** is created here, in part 1, so a two-pull-request split needs no second bump.
+
+## 9. Data model
+
+**SQLite** (`data/kestrel.db`, `meta.schema_version = "11"`; migrations are additive except v9 and v10 — a v1–v8 database is `ALTER`-ed/extended up and an unknown version is refused; v5 added a table, v6 three new tables, v7 prompt-provenance columns, v8 the `run_log` table, with no change to existing ones; v9 (post-review fix) rebuilds `runs` because SQLite cannot `ALTER` AUTOINCREMENT into an existing column; v10 (feature 012) rebuilds `runs` a second time, by the same procedure, because SQLite cannot `ALTER` a `CHECK` constraint either — a database jumping straight from pre-v9 to v10 gets the v10 shape directly from the v9 rebuild step, so the v10 step itself is a no-op for that path, verified empirically):
 
 - `targets` — name (unique, case-folded), url, method, body template, response path, permission timestamp, terms version, and (v4) an optional one-line `description` (the non-secret purpose).
 - `target_headers` — one row per auth header, the value stored as a Fernet token in `value_encrypted` (never returned by the API).
@@ -158,7 +241,7 @@ of words, so "near-identical" and "far" mean something offline).
 
 **Retrieval path** (feature 011, `experience/retrieval.py`). One module serves both run starters (`POST /api/runs` and the experiment engine), so the two cannot drift apart. The query is the family label plus the attacker's **last two own messages** (`attacker` role only — never the target's reply, the judge's reason or progress note, a memory summary or the purpose description; the one accepted residual is an attacker message that itself echoes a reply fragment). The store returns a candidate pool of at most `k × 4` same-family patterns, nearest first, with the collection's own `l2` distances and stored embeddings; the selection walks them nearest first, drops everything beyond the **distance floor** (`KESTREL_EXPERIENCE_DISTANCE_FLOOR`, default 1.8; `off` disables it), skips a candidate within the **near-identical threshold** (`KESTREL_EXPERIENCE_DEDUPE_THRESHOLD`, default 0.15; `off` disables it) of an already selected hit without spending a slot, and stops at `k` — so the selection is short of k only when the pool is exhausted and is never padded with far hits. The same threshold decides the write-back merge above. Both defaults are measured on the shipped model ([research](../specs/011-retrieval-controls/research.md)); another embedding model needs retuned values and a rebuilt store. Hit counts are recorded and logged only — ranking stays by distance. A labelled recall@k fixture (`tests/fixtures/retrieval_recall.json`, neutral placeholders) scores the selection offline on the lexical test embedding.
 
-## 9. Security and safety guards
+## 10. Security and safety guards
 
 - **Hosting guard (Principle VIII, layer 3).** `KESTREL_MODE` is `local` or `hosted` (unset = hosted). In hosted mode `address_guard.is_allowed` resolves the target host and refuses loopback, private, link-local, unspecified, reserved and cloud-metadata (`100.64.0.0/10`) addresses before anything is sent; local mode allows them so a developer can test on `localhost`.
 - **Secrets never leave the vault (Principle IV).** Auth header values are Fernet-encrypted with a key read from `KESTREL_SECRET_KEY`, or from a key file created on first run at `~/.kestrel/secret.key` (logged once; back it up). Header values are never returned by the API, never logged, and never written to the vector store. Since feature 010 no log line, span attribute, log-endpoint response or viewer cell carries an auth value, the target URL or display name, attack or reply text, or model free text either (the catalogue is the allow-list; redaction tests count known strings on every surface). An experiment arm carries only model names and settings; headers are resolved per run exactly as `POST /api/runs` does and never copied into an arm, a payload, a result, or a log.
@@ -166,7 +249,7 @@ of words, so "near-identical" and "far" mean something offline).
 - **No target identity in Chroma.** Pattern and memory records hold only an internal `target_id` and non-secret metadata; summaries are sanitised to a fixed, single-line, length-bounded shape so instruction-like text from a target cannot ride memory into the attacker's prompt (no self-injection).
 - **Bounded harm (Principle VIII).** Attacks are plain conversation. Every adaptive run is capped three ways — turns (`KESTREL_ADAPTIVE_MAX_TURNS`, default 6), a token budget (`KESTREL_ADAPTIVE_TOKEN_BUDGET`, default 40000), and wall-clock (`KESTREL_ADAPTIVE_TIME_LIMIT_S`, default 300) — and each experiment is itself bounded by `KESTREL_EXPERIMENT_MAX_RUNS` (default 50), `KESTREL_EXPERIMENT_TOKEN_BUDGET` (default 500000) and `KESTREL_EXPERIMENT_WALL_CLOCK_S` (default 3600). A run records which cap it hit, so a cutoff is never read as the agent being safe. A response over 1 MB counts as an endpoint error.
 
-## 10. Error handling
+## 11. Error handling
 
 - **Fail-loud write-back (Principle V).** After every run the API (or the experiment engine, when the arm is not cold) writes one memory record (and a pattern on success). If the store write fails, the run's own record is still saved, the run is flagged `memory_written = false`, a visible warning shows on the result, and the error is logged — the attack result is never discarded and write-back is not retried silently.
 - **Experiment failure.** An unexpected error inside `run_experiment` marks the experiment `failed` with a reason and stops; a run that could not start is recorded (not dropped) and the experiment continues. Status and result always read from the database, so they are correct across a worker restart.
@@ -174,7 +257,7 @@ of words, so "near-identical" and "far" mean something offline).
 - **Start-up `self_check`.** When the API opens the experience store it first compares the index's actual distance space with the pinned `l2` and the recorded embedding model name with the running one (feature 011): a mismatch raises `SpaceMismatch` / `EmbeddingModelMismatch`, the app emits one ERROR `experience.unavailable` line with `reason_kind` `space_mismatch` / `embedding_model_mismatch`, both values as fields (`stored_space`/`expected_space`, `stored_model`/`expected_model`) and a mismatch-specific constant message that states the remedy (rebuild the store directory, or run Kestrel with the model that built it), and nothing is written to the mismatched store. Then it runs a probe embed; a mismatched persisted embedding function or a failed first-use model download raises a typed `ExperienceStoreError` with a clear message. In every case the app degrades to recording runs as not-written-back rather than failing cryptically mid-run.
 - **Connection tester.** `tester.py` returns a named failure step — `unreachable`, `auth_rejected`, `non_json`, `path_not_found`, `credentials_unreadable` — or `success`, and logs one `connection.test` line — the saved target's id, the step, the status and the timing only (since feature 010 no URL and no display name; never header values or reply text). A run interrupted by a shutdown is swept to "unclear" at the next start-up so the target is not left locked.
 
-## 11. Testing strategy
+## 12. Testing strategy
 
 Per Principle VII — unit tests before implementation, one end-to-end test per feature against the sacrificial target. Every feature's tests are feature-scoped for the traceability gate (a `FEATURE = "<nnn>"` marker or `<nnn>/FR-xxx` tokens), so one feature's tests never "cover" another's same-numbered requirement id.
 
@@ -188,7 +271,7 @@ pinned here — it goes stale the moment any suite gains a test; run `uv run pyt
 (offline), `uv run pytest tests/e2e -m e2e` (needs `OPENROUTER_API_KEY`), or
 `uv run --directory targets/hs_code pytest` (target) for the current one. Feature 010 adds offline log assertions over the rendered JSON lines (the `json_log` fixture), real attacker/judge clients over an offline transport (`model_transport`), and the SDK's in-process span collector (`span_collector`); `KESTREL_TEST_BLOCK_OTLP=1` runs the suite as if the `otel` extra were absent. Feature 011 adds the lexical `StubEmbeddingFunction`, a `SpyExperienceStore` that records every query text and write-back a run produces, and the recall@k fixture check. Feature 012 extends `SpyExperienceStore` to also record `write_memory` calls, and adds an AST-based structural guard that `replay.py`/`attack/graph.py` never import `kestrel.experience` at all.
 
-## 12. Feature history
+## 13. Feature history
 
 - **[001 — register a target](../specs/001-register-target/)**: the registration form, the test-connection flow and its named errors, encrypted header storage, the hosting guard, and SQLite persistence.
 - **[002 — single-turn attack](../specs/002-single-turn-attack/)**: the attack library, a single library-prompt attack, canary-first hard evidence then the optional judge, masked run storage, and the sacrificial HS-code target.
@@ -202,7 +285,7 @@ pinned here — it goes stale the moment any suite gains a test; run `uv run pyt
 - **[011 — Retrieval controls](../specs/011-retrieval-controls/)**: one retrieval path whose query is the family goal plus the attacker's own last two messages (never a reply, a judge note, a memory summary or the purpose description); a distance floor and a near-identical threshold at retrieval (nearest first, at most k, never padded, no duplicates) and the same threshold at write-back (a repeated success raises the pattern's hit count instead of cloning it); the collection created with an explicit `l2` space and stamped with the embedding model's name, both checked at start-up with a named failure; the settings and counts on the `memory.retrieval` line and the merge outcome on `memory.writeback`; a labelled recall@k fixture. No new dependency.
 - **[012 — Regression replay](../specs/012-regression-replay/)**: re-sends a past, succeeded run's recorded message(s) verbatim with no attacker-model call, scores each reply canary-then-judge exactly as a live run does, and reports `fixed`/`still_vulnerable`/`inconclusive` against the source from every replayed turn's own result (never the run's one aggregate verdict), with a side-by-side comparison; a batch action replays every currently-replayable run of a target, oldest first, under a configurable cap, honestly incomplete when it cannot finish; `scripts/check_replay.py` turns a batch result into a CI exit code; a replay never queries or writes the shared pattern pool, a target's memory, or the OWASP report (schema v10). See §7.
 
-## 13. Roadmap
+## 14. Roadmap
 
 The planned work — next features, reviewer-feedback items, and later ideas — lives in [roadmap.md](roadmap.md).
 

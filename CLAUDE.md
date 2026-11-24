@@ -328,3 +328,55 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `200`, so that alone proves nothing; the guardrail specifically excludes its *tool-capable* endpoint
   (`'failed_routing_step': 'Filter by Guardrails'` only after `'Filter by Tool Compatibility'` has already
   narrowed the candidate pool to the one that then fails ZDR).
+  **Recurred 2026-11-24** for the replacement model too: every live e2e fails at the connection-test step with
+  `{"ok": false, "step": "endpoint_error", "detail": "Status 502"}`, and the target's own log shows
+  `OpenAIModelNotFoundError: Error code: 404 ... 0 endpoints out of 20 requested are available matching your
+  guardrail restrictions and data policy ... Model blocked by guardrail` for `openai/gpt-oss-120b`. Same
+  account-side cause, same check: an untouched, pre-existing e2e (`tests/e2e/test_us1_connection.py`) fails the
+  same way, so it is never a regression in the feature under test. Treat a 502 from `targets/hs_code` at the
+  connection test as this until that check says otherwise; the offline suite covers everything the e2e does
+  except the live model call.
+- 2026-11-24 — **Behavioural evidence (013), part 1.** Deterministic proof is no longer canary-only: one
+  `EvidenceChecker` (`src/kestrel/evidence/`), built per run by `build_checker(...)`, owns every check and runs
+  them in the fixed order of FR-001 over each reply; **any** item ends the run succeeded with hard evidence and
+  no judge call for that turn, and `evidence=None` keeps `EvidenceChecker.canary_only(...)` — today's behaviour
+  exactly — so no existing caller or test changed. Items are rows of `run_evidence` (kind, turn, location, OWASP
+  class, non-secret detail, plus a pattern name and set version for unsafe output); the seven kinds and their
+  labels/locations/classes live in one table (`evidence/model.py`), and `derived_items(run, stored)` is the one
+  helper that gives a **pre-013** hard-evidence run its single canary item on every surface, so the summary, the
+  run page and the report cannot disagree. The **override token** is two 6-char parts from a 31-symbol alphabet;
+  the planted wording is a prompt file (`override_task.v1.md`) framed as the injected override, with at least one
+  alphanumeric word between the parts, so the joined form appears in nothing Kestrel composes **even after
+  normalisation** (case folded, every non-alphanumeric character dropped) — that normalised form is what both
+  the echo-proofness test and the disarm check compare, and `note_sent` disarms on every message sent, a replay's
+  re-sends included. Where the paragraph goes is a Kestrel-owned sidecar
+  (`src/kestrel/attacks/data/insertion_points.json`, offset + sha256 of the seed's verbatim library text): direct
+  seeds at the attacker-voice end, indirect seeds **interior**, inside the simulated injected content. Gotcha:
+  the sidecar is keyed to the *shipped* library, but the offline suite drives the synthetic `fixture_library()`
+  whose seeds share those ids with different text — so `insertion_point(family, id, text)` falls back to a
+  derived point of the same shape when the fingerprint does not match, and only the unit test
+  (`test_override_placement.py`) is strict; a strict runtime lookup would crash every offline run of an
+  injection family. The **unsafe-output** set is twelve named patterns in four categories at set version 1, with
+  the inert samples (3 positive + 3 negative per pattern) only in `tests/fixtures/unsafe_output_cases.json`; a
+  unit test parses `contracts/detectors.md`'s own table and set version so the contract, the module and the
+  fixture cannot drift. Gotchas while writing them: Python refuses an inline `(?i)` that is not at the start of
+  the expression (use the `flags=` argument when the pattern is an alternation), and an attribute-value class of
+  `[^"']*` stops at the *other* quote, so an `onerror="fetch('…')"` never matched until each quoting style got
+  its own branch. **FR-063** strips the run's exact filled task text and scrubs its planted values at every
+  experience-store and retrieval boundary (`writeback._winning_messages`, the judge progress notes the summary is
+  built from, `retrieval.build_query`); the checker is built **before** the provider and the write-back so both
+  receive this run's values, and `tests/support.py`'s `RepeatingStubAttacker`/`RepeatingStubJudge` (which echo the
+  run's real parts, read back from the store) are what stop that test passing vacuously. Replay derives each
+  turn's result from "any evidence item", never the canary flag (both branches), and copies the source's tokens
+  with their armed state. Logging: four `run.start` fields (omitted when they do not apply), a new per-turn
+  `evidence.check` line **before** the judge's `model.request`, and kinds/counts on `turn` and `run.end`; the
+  `callback.ignored` field is `reason_kind`, not `reason`, because `tests/unit/test_events.py` enforces a
+  deny-list of free-text-looking field names over the whole catalogue (the 013 contracts were corrected to
+  match). Schema **v11** is additive — four new tables and two nullable `runs` columns, **no rebuild** — and
+  creates every table of *both* parts, so part 2 needs no second bump. Pre-existing tests edited beyond
+  SC-008's original list (and added to it): `tests/unit/test_prompt_registry.py` (the exact id set, the
+  `version == "1"` pin and the two-line front-matter prefix, all three of which a new prompt id, two bumped
+  attacker versions and the optional `framing` key change by construction) and one assertion in
+  `tests/unit/test_attacker_client.py` that pinned a bumped family's active reference as `@1` while reading it
+  from the live registry — now compared against `prompt_registry.active_ref`, so no version literal can go stale
+  again.

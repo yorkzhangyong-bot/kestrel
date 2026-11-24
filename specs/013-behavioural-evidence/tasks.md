@@ -367,24 +367,24 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
 **Checkpoint — PART 1 CODE COMPLETE**: `uv run pytest tests/unit tests/integration` green; `uvx ruff check src ui
 tests` and `mypy src` clean; coverage ≥ 85%; `verify_lock()` clean.
 
-- [ ] T036 [US3] End-to-end `tests/e2e/test_us013_detectors.py` (`FEATURE = "013"`, marker `e2e`): API in-process
+- [X] T036 [US3] End-to-end `tests/e2e/test_us013_detectors.py` (`FEATURE = "013"`, marker `e2e`): API in-process
       (as 012's e2e) against the live HS-code target; register it, run a `direct_injection` attack, assert the
       **structure** — a new run, an override token planted and **absent in its joined form** from `prompt_text`
       and the sent request (checked on the normalised text), any items of known kinds, the judge prompt version
       recorded only when no deterministic evidence was found; never asserting the live model's behaviour on the
       day (SC-010).
-- [ ] T037 [US3] Make `tests/e2e/conftest.py`'s `kestrel_api` fixture **pop `KESTREL_CALLBACK_BASE_URL`** from the
+- [X] T037 [US3] Make `tests/e2e/conftest.py`'s `kestrel_api` fixture **pop `KESTREL_CALLBACK_BASE_URL`** from the
       environment it copies (`tests/e2e/conftest.py:122`), so a developer who exports it cannot silently change
       what the e2e tests plant; the part-2 `kestrel_api_with_listener` fixture (T061) sets it explicitly instead
       (SC-008).
-- [ ] T038 [US3] Switch `tests/e2e/test_us2_judged_run.py` from `direct_injection` to `tool_exfiltration` so
+- [X] T038 [US3] Switch `tests/e2e/test_us2_judged_run.py` from `direct_injection` to `tool_exfiltration` so
       "decided by the judge" still holds against a live model that would otherwise fulfil the planted override
       task (with the listener off, that family plants nothing) (FR-061, SC-008).
-- [ ] T039 [US3] Update `tests/e2e-browser/prompt-choice.spec.ts:60`: a direct-injection sent message is now the
+- [X] T039 [US3] Update `tests/e2e-browser/prompt-choice.spec.ts:60`: a direct-injection sent message is now the
       library text **plus** the planted paragraph, so the assertion becomes **containment** (the chosen library
       text is contained in the sent message) rather than equality, and the test still identifies which prompt was
       picked (FR-011, SC-008).
-- [ ] T040 [US3] **Part-1 documentation** (FR-062, research D24): update the evidence section of
+- [X] T040 [US3] **Part-1 documentation** (FR-062, research D24): update the evidence section of
       `docs/technical-design.md` for what part 1 ships — the evidence package and item model, the fixed check
       order, the echo-proof override token and its placement, the named/versioned unsafe-output set, the stripping
       and scrubbing, schema v11 — and add the matching `CLAUDE.md` "Learned notes" entry for part 1. A part-1-only

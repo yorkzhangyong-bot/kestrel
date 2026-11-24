@@ -57,7 +57,9 @@ test('12. picks one prompt when none is chosen and names it in the result [US3.2
 
   expect(stub.requests).toHaveLength(1);
   const sent = stub.jsonBodies[0].message as string;
-  const matches = prompts.filter((prompt) => prompt.text === sent);
+  // Feature 013 (013/SC-008): a direct-injection message is the chosen library text plus the planted override
+  // paragraph, so the chosen prompt is the one whose text the sent message contains.
+  const matches = prompts.filter((prompt) => sent.includes(prompt.text));
   expect(matches).toHaveLength(1);
   const picked = matches[0];
 
