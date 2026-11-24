@@ -403,3 +403,23 @@ same commit. Before opening any implementation PR, review this file and add anyt
   no-op `javascript:` URI is not a sink; and the tag context is an attribute-list grammar on one line, never
   a `<` comparison (a tag split across lines is a declared recall cost). Any example of a dangerous statement
   belongs in the fixture only — docs and commit messages describe the boundary behaviourally.
+- 2026-11-24 — **Graph typed state (refactor, no behaviour change).** `attack/graph.py` compiles its two graphs
+  once at import (`LIVE_GRAPH`, `REPLAY_GRAPH`) from module-level node functions —
+  `StateGraph(_State, context_schema=_LiveDeps)` / `StateGraph(_ReplayState, context_schema=_ReplayDeps)`. Every
+  per-run value (store, run id, resolved target and secrets, clients, sender, checker, caps, deadline + clock,
+  prompt references, a replay's recorded turns) is a field of a frozen dataclass context handed to
+  `compiled.ainvoke(initial, config, context=deps)` and read by a node as `runtime.context`
+  (`from langgraph.runtime import Runtime`); no node closes over a per-run value. The conversation and a
+  replay's `turn_results` are reducer-appended (`Annotated[list[...], _appended]`): a record node returns only
+  its turn's delta and an empty delta is a no-op; `judge_requests` is a state field counted *before* the request
+  is made (a `JudgeError` still counts, as the old one-item box did); the run's end is one frozen `Outcome`
+  (`failure_step` defaults to None, which is what the old dict's `.get` gave). LangGraph 1.2.17 gotchas, each
+  verified with a scratch probe under mypy: the `runtime` argument is injected by parameter **name** alone,
+  whatever its annotation (`_internal/_runnable.py::KWARGS_CONFIG_KEYS`); a dataclass context instance passes
+  through `_coerce_context` untouched (only a dict is coerced); and `Runtime[ContextT]` is **invariant**, so a
+  node shared by both graphs must be generic over the context (`Runtime[_DepsT]`, `_DepsT` bound to the common
+  `_Deps` base) or mypy rejects `add_node` for the second schema. The old hand-copied
+  `conversation.append(("agent", state["pending_reply"]))` was itself one of the baseline mypy errors (22 → 21
+  on `src`). `tests/unit/test_adaptive_graph_state.py` drives `LIVE_GRAPH` directly with a `_LiveDeps` of stubs
+  (no `run_scope` needed: outside one the events helpers emit unkept lines and return). A test module that
+  imports `TestOutcome` under its own name gets a pytest collection warning — alias it, as the other tests do.
