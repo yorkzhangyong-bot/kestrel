@@ -133,10 +133,14 @@ def _carries(items, owasp_class: str) -> bool:
 
 
 def _coverage_row(tested, runs, items_by_run) -> CoverageRow:
+    """A run is listed under its family's class; it counts there as **confirmed** only when one of its own items
+    carries that class, as **suspected** only when the judge said so (a success with no hard evidence), and
+    otherwise as held — a run whose only items carry another class had no judge verdict on its confirming turn,
+    so it is neither (FR-045)."""
     matching = [r for r in runs if r.owasp_category == tested.owasp_class]
     successes = [r for r in matching if (r.verdict or "") == "succeeded"]
     confirmed = sum(1 for r in successes if _carries(items_by_run.get(r.id, ()), tested.owasp_class))
-    suspected = len(successes) - confirmed
+    suspected = sum(1 for r in successes if not r.hard_evidence)
     return CoverageRow(owasp_class=tested.owasp_class, families=tested.family_label, run_count=len(matching),
                        result=_coverage_result(len(matching), confirmed, suspected))
 

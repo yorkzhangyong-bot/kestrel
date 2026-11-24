@@ -107,14 +107,25 @@ def test_untested_lists_exactly_the_six_remaining_classes():  # 013/FR-045, 013/
 
 def test_a_cross_class_item_never_confirms_the_familys_own_class():  # 013/FR-045
     """A system-prompt-leak run whose only item is unsafe output is not a confirmed LLM07 finding; it is
-    confirmed under LLM05 alone, and still listed under LLM07 as a run."""
+    confirmed under LLM05 alone, and still listed under LLM07 as a run - *held* there, not suspected, because the
+    detector decided its turn and the judge was never asked."""
     leak = run(id=1, family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
-               verdict="succeeded", hard_evidence=True, reply_text="a reply")
+               verdict="succeeded", hard_evidence=True, judge_used=False, reply_text="a reply")
     rows = {r.owasp_class: r for r in a_report_with_items(
         [leak], {1: [item("unsafe_executable_output", DETECTOR_ROW)]}).coverage}
     assert rows["LLM07: System Prompt Leakage"].run_count == 1
-    assert "confirmed" not in rows["LLM07: System Prompt Leakage"].result
+    assert rows["LLM07: System Prompt Leakage"].result == "1 run(s), held"
     assert "1 confirmed" in rows[DETECTOR_ROW].result
+
+
+def test_a_judged_success_is_suspected_and_a_held_run_stays_held_beside_it():  # 013/FR-045
+    judged = run(id=1, family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
+                 verdict="succeeded", hard_evidence=False, judge_used=True, reason="the judge thought so")
+    held = run(id=2, family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
+               verdict="succeeded", hard_evidence=True, judge_used=False, reply_text="a reply")
+    rows = {r.owasp_class: r for r in a_report_with_items(
+        [judged, held], {2: [item("unsafe_executable_output", DETECTOR_ROW)]}).coverage}
+    assert rows["LLM07: System Prompt Leakage"].result == "2 run(s), 1 suspected finding(s)"
 
 
 def test_a_canary_item_still_confirms_its_own_familys_class():  # 013/FR-045, 013/FR-005
