@@ -18,6 +18,15 @@ from kestrel.connection.tester import ResolvedSettings
 SESSION_TTL_SECONDS = 3600.0
 
 
+def _side_channel_fields(side_channel) -> dict:
+    """The side channel's part of the fingerprint (feature 013, FR-021): its URL, its header's name and value and
+    the honeypot name - so a save with different side-channel settings than the test that passed is refused."""
+    header = getattr(side_channel, "header", None)
+    return {"url": side_channel.url,
+            "header": None if header is None else [header[0].lower(), header[1]],
+            "honeypot_tool": side_channel.honeypot_tool}
+
+
 @dataclass
 class _Session:
     in_flight: bool = False
@@ -67,6 +76,9 @@ class FormSessions:
             "headers": sorted([name.lower(), value] for name, value in settings.headers),
             "body_template": settings.body_template,
             "response_path": settings.response_path,
+            # Feature 013 (FR-021): the side channel is part of what a passing test covers; absent for a target
+            # without one, so its fingerprint is exactly what it was before.
+            **({"side_channel": _side_channel_fields(settings.side_channel)} if settings.side_channel else {}),
         }, sort_keys=True, ensure_ascii=False)
         return hmac.new(self._key, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
 

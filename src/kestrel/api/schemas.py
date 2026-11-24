@@ -12,7 +12,10 @@ from kestrel.connection.response_path import PathSyntaxError, parse
 from kestrel.connection.template import TemplateError, validate
 
 HEADER_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
-RESERVED_HEADERS = {"host", "content-length", "transfer-encoding", "connection"}
+# Feature 013 (FR-022): the correlation header Kestrel sets itself on a target with a side channel.
+CORRELATION_HEADER = "X-Kestrel-Correlation-Id"
+RESERVED_HEADERS = {"host", "content-length", "transfer-encoding", "connection", CORRELATION_HEADER.lower()}
+HONEYPOT_TOOL = re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")   # feature 013 (FR-019): a tool name, 1-100 characters
 CREDENTIAL_WORDS = ("key", "token", "secret", "password", "auth", "api_key", "apikey", "access_token",
                     "code", "sig", "signature")
 URL_CREDENTIALS_MESSAGE = "put credentials in an auth header, not the URL"
@@ -146,12 +149,21 @@ class HeaderIn(BaseModel):
     value: str | None = Field(default=None, repr=False)  # None keeps the stored value; never in a repr
 
 
+class SideChannelIn(BaseModel):
+    """A target's optional side channel (feature 013, FR-019, contracts/api.md): its base URL, an optional auth
+    header (a null value keeps the stored one on PUT) and an optional honeypot tool name."""
+    url: str = ""
+    header: HeaderIn | None = None
+    honeypot_tool: str | None = None
+
+
 class ConnectionSettingsIn(BaseModel):
     url: str = ""
     method: Literal["POST", "GET"] = "POST"
     headers: list[HeaderIn] = Field(default_factory=list)
     body_template: str = ""
     response_path: str = ""
+    side_channel: SideChannelIn | None = None   # feature 013 (FR-019): null or absent = no side channel
 
 
 class ConnectionTestRequest(BaseModel):
@@ -170,6 +182,9 @@ class ConnectionTestResult(BaseModel):
     reply_text: str | None
     reply_truncated: bool
     duration_ms: int
+    # Feature 013 (FR-021): true when the side channel was checked too; set (and so serialised) only on a test
+    # that had a side channel to check, so a target without one keeps exactly today's result shape (SC-008).
+    side_channel_checked: bool = False
 
 
 class SaveTargetRequest(BaseModel):
@@ -329,6 +344,15 @@ class HeaderOut(BaseModel):
     readable: bool
 
 
+class SideChannelOut(BaseModel):
+    """A target's side channel as the API returns it (feature 013, FR-019): never the header value."""
+    url: str
+    header_name: str | None
+    has_value: bool
+    readable: bool
+    honeypot_tool: str | None
+
+
 class TargetSummary(BaseModel):
     id: int
     name: str
@@ -344,6 +368,7 @@ class TargetDetail(TargetSummary):
     response_path: str
     headers: list[HeaderOut]
     canaries: list[str]
+    side_channel: SideChannelOut | None = None   # feature 013 (FR-019); null when the target has none
 
 
 class FamilyCount(BaseModel):
@@ -663,5 +688,34 @@ def validate_settings(settings: ConnectionSettingsIn, *, has_target: bool) -> li
             validate(settings.method, url, settings.body_template)
         except TemplateError as error:
             add(error.field, error.message)
+
+    # Feature 013 (FR-019, FR-020, FR-041): the side channel, under `settings.side_channel.*`, with the target-URL
+    # and header rules the connection settings already use, plus the honeypot name's own shape.
+    side_channel = settings.side_channel
+    if side_channel is not None:
+        side_url = side_channel.url.strip()
+        if not side_url:
+            add("settings.side_channel.url", "Enter the side-channel URL.")
+        elif not _is_http_url(side_url):
+            add("settings.side_channel.url", "Enter a full http:// or https:// address.")
+        elif url_carries_credentials(side_url):
+            add("settings.side_channel.url", URL_CREDENTIALS_MESSAGE)
+        header = side_channel.header
+        if header is not None:
+            name = header.name.strip()
+            if not HEADER_NAME.match(name):
+                add("settings.side_channel.header.name",
+                    "Use a valid header name: letters, digits and !#$%&'*+-.^_`|~ only.")
+            elif name.lower() in RESERVED_HEADERS:
+                add("settings.side_channel.header.name", "Kestrel sets this header itself; remove it.")
+            if header.value is None:
+                if not has_target:
+                    add("settings.side_channel.header.value", "Enter a value for this header.")
+            elif len(header.value) < MIN_HEADER_VALUE_LENGTH:
+                add("settings.side_channel.header.value", "Auth header values must be at least 4 characters.")
+        honeypot = (side_channel.honeypot_tool or "").strip()
+        if honeypot and not HONEYPOT_TOOL.match(honeypot):
+            add("settings.side_channel.honeypot_tool",
+                "Use a tool name of 1 to 100 characters: letters, digits, '_', '-' and '.' only.")
 
     return [{"field": field, "message": message} for field, message in errors.items()]

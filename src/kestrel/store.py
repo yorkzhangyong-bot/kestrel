@@ -328,6 +328,33 @@ class HeaderValue:
 
 
 @dataclass(frozen=True)
+class SideChannel:
+    """A target's optional side channel as the API and the UI see it (feature 013, FR-019): the base URL, the auth
+    header's name and readability (never its value) and the honeypot tool name."""
+    url: str
+    header: StoredHeader | None = None
+    honeypot_tool: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedSideChannel:
+    """A side channel with its auth header decrypted, for the connection tester and the run's checker only
+    (feature 013, FR-019, FR-071). `header` is `(name, value)`, with the value None when the current key cannot
+    decrypt it - the tester and the checker then send nothing rather than a request without the header."""
+    url: str
+    header: tuple[str, str | None] | None = None
+    honeypot_tool: str | None = None
+
+    @property
+    def header_unreadable(self) -> bool:
+        return self.header is not None and self.header[1] is None
+
+    def __repr__(self) -> str:  # never print the header value
+        shown = None if self.header is None else (self.header[0], "<unreadable>" if self.header[1] is None else "<hidden>")
+        return f"ResolvedSideChannel(url={self.url!r}, header={shown!r}, honeypot_tool={self.honeypot_tool!r})"
+
+
+@dataclass(frozen=True)
 class Run:
     id: int
     target_id: int
@@ -498,6 +525,7 @@ class Target:
     updated_at: str
     description: str | None = None
     headers: tuple[StoredHeader, ...] = ()
+    side_channel: SideChannel | None = None   # feature 013 (FR-019); None = no side channel
 
 
 def utc_now() -> str:
@@ -744,11 +772,72 @@ class TargetStore:
                 raise TargetNotFound(target_id)
             headers = tuple(StoredHeader(name=h["name"], readable=self._vault.decrypt(h["value_encrypted"]) is not None)
                             for h in self._header_rows(db, target_id))
+            side_channel = self._side_channel(db, target_id)
         return Target(id=row["id"], name=row["name"], url=row["url"], method=row["method"],
                       body_template=row["body_template"], response_path=row["response_path"],
                       permission_confirmed_at=row["permission_confirmed_at"], terms_version=row["terms_version"],
                       created_at=row["created_at"], updated_at=row["updated_at"],
-                      description=row["description"], headers=headers)
+                      description=row["description"], headers=headers, side_channel=side_channel)
+
+    # ---- the side channel (feature 013, FR-019, FR-071) ----
+
+    def _side_channel(self, db: sqlite3.Connection, target_id: int) -> SideChannel | None:
+        row = db.execute("SELECT url, header_name, header_value_encrypted, honeypot_tool FROM target_side_channels"
+                         " WHERE target_id = ?", (target_id,)).fetchone()
+        if row is None:
+            return None
+        header = None
+        if row["header_name"]:
+            header = StoredHeader(name=row["header_name"],
+                                  readable=self._vault.decrypt(row["header_value_encrypted"] or "") is not None)
+        return SideChannel(url=row["url"], header=header, honeypot_tool=row["honeypot_tool"])
+
+    def set_side_channel(self, target_id: int, *, url: str | None, header: tuple[str, str | None] | None = None,
+                         honeypot_tool: str | None = None) -> None:
+        """Set, replace or remove a target's side channel (013/FR-019). `url=None` removes it. `header` is
+        `(name, value)`; a value of None keeps the stored value of the target's side-channel header (the
+        `update_target` convention) and is refused when there is none; `header=None` stores no header. The value
+        is encrypted with the vault on write and decrypted only by `resolve_side_channel`."""
+        now = utc_now()
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
+                raise TargetNotFound(target_id)
+            existing = db.execute("SELECT header_name, header_value_encrypted, created_at FROM target_side_channels"
+                                  " WHERE target_id = ?", (target_id,)).fetchone()
+            if url is None:
+                db.execute("DELETE FROM target_side_channels WHERE target_id = ?", (target_id,))
+                return
+            header_name = encrypted = None
+            if header is not None:
+                header_name, value = header
+                if value is None:
+                    if existing is None or not existing["header_value_encrypted"]:
+                        raise MissingStoredValue(header_name)
+                    encrypted = existing["header_value_encrypted"]
+                else:
+                    encrypted = self._vault.encrypt(value)
+            created = existing["created_at"] if existing is not None else now
+            db.execute("INSERT INTO target_side_channels (target_id, url, header_name, header_value_encrypted,"
+                       " honeypot_tool, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                       " ON CONFLICT(target_id) DO UPDATE SET url = excluded.url, header_name = excluded.header_name,"
+                       " header_value_encrypted = excluded.header_value_encrypted,"
+                       " honeypot_tool = excluded.honeypot_tool, updated_at = excluded.updated_at",
+                       (target_id, url, header_name, encrypted, honeypot_tool or None, created, now))
+
+    def resolve_side_channel(self, target_id: int) -> ResolvedSideChannel | None:
+        """The target's side channel with its header decrypted, for the tester and the checker only (013/FR-019,
+        FR-071); the value is None when the current key cannot decrypt it. None when the target has none."""
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
+                raise TargetNotFound(target_id)
+            row = db.execute("SELECT url, header_name, header_value_encrypted, honeypot_tool FROM target_side_channels"
+                             " WHERE target_id = ?", (target_id,)).fetchone()
+        if row is None:
+            return None
+        header = None
+        if row["header_name"]:
+            header = (row["header_name"], self._vault.decrypt(row["header_value_encrypted"] or ""))
+        return ResolvedSideChannel(url=row["url"], header=header, honeypot_tool=row["honeypot_tool"])
 
     def resolve_headers(self, target_id: int) -> list[HeaderValue]:
         """The decrypted header values, for the tester only; value is None when this key can't decrypt one."""

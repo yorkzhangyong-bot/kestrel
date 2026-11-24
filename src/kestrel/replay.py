@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 
 from kestrel import events, prompt_registry
 from kestrel.connection.address_guard import default_resolver
-from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
+from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test, secret_values
 from kestrel.evidence.checker import EvidenceChecker, build_checker
 from kestrel.judge.client import JudgeError
 from kestrel.runs import JUDGE_LIMIT_S, SEND_LIMIT_S, TOTAL_DEADLINE_S, judge_ref
@@ -273,12 +273,14 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
                          mode: str, judge: Any, sender: Sender = run_test, transport: Any = None,
                          resolver: Any = default_resolver, adaptive_max_turns: int, adaptive_token_budget: int,
                          adaptive_time_limit_s: int, clock: Callable[[], float] = time.monotonic,
-                         evidence: EvidenceChecker | None = None) -> Run:
+                         evidence: EvidenceChecker | None = None, target: Any = None, settings: Any = None) -> Run:
     """Dispatch on `source.mode` (research D1). The caller runs `check_replayable(source)` first, before claiming
     anything (FR-004 to FR-006) - this function raises nothing eligibility-related of its own.
 
     `evidence` (feature 013) replaces the checker the replay would build from its source's copied tokens - a
-    test seam; every real caller leaves it None (013/FR-035).
+    test seam; every real caller leaves it None (013/FR-035). `target` and `settings` (feature 013 part 2) let
+    the replay's own checker read the target's side channel and know the listener's base; the API passes both,
+    the pre-existing direct-call tests pass neither, which means "no side channel, no listener" (013/SC-008).
 
     Once a row is claimed, any exception from sending or judging closes it (`verdict="unclear",
     replay_outcome="inconclusive"`) and raises `ReplayFailed(run_id)`, chained from the original - mirroring
@@ -295,27 +297,31 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
             store, target_id=source.target_id, source=source, source_turns=source_turns, canaries=canaries,
             resolved=resolved, judge=judge, sender=sender, mode=mode, transport=transport, resolver=resolver,
             max_turns=max_turns, token_budget=adaptive_token_budget, time_limit_s=adaptive_time_limit_s,
-            clock=clock, evidence=evidence)
+            clock=clock, evidence=evidence, target=target, settings=settings)
 
     # source.mode == "single_turn": a body shaped like runs.py::execute_run - one send, the deterministic checks
     # first, then the judge only when none found evidence and a judge is configured, with no `conversation`
     # argument (FR-008).
+    # The checker is built before the claim (feature 013 part 2): a side-channel target's correlation id and
+    # `checked` status are written with the row (013/FR-022, FR-034). It verifies against the source's planted
+    # tokens, armed-state-and-all (013/FR-035), which are copied to the replay's own row right after the claim;
+    # a source that planted nothing gives it no tokens (013/FR-036). A failure here precedes the claim, so it
+    # propagates bare, as documented above.
+    checker = evidence if evidence is not None else build_checker(
+        store=store, family=source.family, canaries=canaries, mode=mode, target=target, settings=settings,
+        transport=transport, resolver=resolver, planted=store.list_planted_tokens(source.id),
+        mask=secret_values(resolved) + [resolved.url])
     run_id = store.claim_run(source.target_id, prompt_id=source.prompt_id, prompt_title=source.prompt_title,
                              prompt_text=source.prompt_text, family=source.family,
                              owasp_category=source.owasp_category, attacker_source=source.attacker_source,
                              mode="replay", source_run_id=source.id, attacker_model=None,
-                             use_prior_experience=False)
+                             use_prior_experience=False, correlation_id=checker.correlation_id,
+                             side_channel_status=checker.side_channel_status)
     # The claim and everything after it is one protected region (review round 2, item 1): a failure anywhere
     # below - judge_ref included - must still close the row, never leave it in_progress (locking the target)
     # until the start-up sweep.
     try:
-        # The source's planted tokens, copied armed-state-and-all, are what the replay verifies against
-        # (013/FR-035); a source that planted nothing gives it no tokens (013/FR-036).
         store.copy_planted_tokens(source.id, run_id)
-        checker = evidence if evidence is not None else build_checker(
-            store=store, family=source.family, canaries=canaries, mode=mode, transport=transport,
-            resolver=resolver, planted=store.list_planted_tokens(run_id),
-            mask=[value for _, value in resolved.headers] + [resolved.url])
         checker.bind_run(run_id)
         judge_prompt = judge_ref(judge) if judge.configured else None
         events.run_started(store, run_id=run_id, target_id=source.target_id, mode="replay", family=source.family,
@@ -325,11 +331,12 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
                            source_run_id=source.id, **checker.run_start_fields())
         events.turn_started(1)
         deadline = clock() + TOTAL_DEADLINE_S
-        secrets = [value for _, value in resolved.headers]
+        secrets = secret_values(resolved)   # the target's auth values and the side channel's (013/FR-071)
         send_budget = max(0.1, min(SEND_LIMIT_S, deadline - clock()))
         checker.note_sent(source.prompt_text, 1)   # the same echo check a live run applies (013/FR-012, FR-035)
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
-                               deadline_s=send_budget, prompt=source.prompt_text)
+                               deadline_s=send_budget, prompt=source.prompt_text,
+                               extra_headers=checker.extra_headers)   # the correlation header, if any (013/FR-022)
         if not outcome.ok:
             return _finish_single_turn(store, run_id, source, turn_results=[], failure_step=outcome.step,
                                        tokens_used=0)
@@ -436,7 +443,8 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
                                mode: str, judge: Any, sender: Sender = run_test, transport: Any = None,
                                resolver: Any = default_resolver, adaptive_max_turns: int,
                                adaptive_token_budget: int, adaptive_time_limit_s: int,
-                               clock: Callable[[], float] = time.monotonic) -> BatchResult:
+                               clock: Callable[[], float] = time.monotonic, target: Any = None,
+                               settings: Any = None) -> BatchResult:
     """Replay every currently-replayable run of a target, oldest first, one at a time (FR-028, FR-029). Raises
     `BatchTooLarge` before claiming anything, and before emitting any event, when the replayable count exceeds
     `cap` (FR-031). Never raises for a single entry's own failure (research D17): a `RunInProgress` collision or
@@ -473,7 +481,8 @@ async def execute_batch_replay(store: TargetStore, *, target_id: int, cap: int, 
                         store, source=source, source_turns=source_turns, resolved=resolved, mode=mode, judge=judge,
                         sender=sender, transport=transport, resolver=resolver,
                         adaptive_max_turns=adaptive_max_turns, adaptive_token_budget=adaptive_token_budget,
-                        adaptive_time_limit_s=adaptive_time_limit_s, clock=clock)
+                        adaptive_time_limit_s=adaptive_time_limit_s, clock=clock, target=target,
+                        settings=settings)
             except RunInProgress:
                 return ended(complete=False, stop_reason="run_in_progress",
                             not_replayed=[s.id for s in sources[index:]])

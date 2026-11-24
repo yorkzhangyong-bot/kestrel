@@ -10,7 +10,7 @@ import asyncio
 import json
 import time
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import httpx
@@ -44,17 +44,30 @@ MESSAGES = {
 
 @dataclass(frozen=True)
 class ResolvedSettings:
-    """Connection settings with every header value known (kept values already looked up)."""
+    """Connection settings with every header value known (kept values already looked up). `side_channel` (feature
+    013, FR-019) is the target's resolved side channel - a `kestrel.store.ResolvedSideChannel` - or None."""
     url: str
     method: str
     headers: tuple[tuple[str, str], ...]
     body_template: str
     response_path: str
+    side_channel: Any = None
 
     def __repr__(self) -> str:  # header values never appear in a repr, log or traceback (research R9)
         names = [name for name, _ in self.headers]
         return (f"ResolvedSettings(url={_loggable_url(self.url)!r}, method={self.method!r}, header_names={names!r}, "
-                f"response_path={self.response_path!r})")
+                f"response_path={self.response_path!r}, side_channel={'yes' if self.side_channel else 'no'})")
+
+
+def secret_values(settings: ResolvedSettings) -> list[str]:
+    """Every value the run must mask out of what it stores, judges, shows or reports (Principle IV): the target's
+    auth header values and, since feature 013, the side channel's decrypted auth value beside them (FR-071)."""
+    values = [value for _, value in settings.headers]
+    side_channel = settings.side_channel
+    header = getattr(side_channel, "header", None)
+    if header is not None and header[1]:
+        values.append(header[1])
+    return values
 
 
 @dataclass
@@ -67,9 +80,15 @@ class TestOutcome:
     reply_text: str | None = None
     reply_truncated: bool = False
     duration_ms: int = 0
+    # Feature 013 (FR-021): whether the side channel was checked too; None (omitted from the dict) when the test
+    # had no side channel to check, so a target without one gets exactly today's result shape (SC-008).
+    side_channel_checked: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        out = asdict(self)
+        if self.side_channel_checked is None:
+            del out["side_channel_checked"]
+        return out
 
 
 def outcome(step: str, *, detail: str | None = None, status: int | None = None) -> TestOutcome:
@@ -79,15 +98,19 @@ def outcome(step: str, *, detail: str | None = None, status: int | None = None) 
 async def run_test(settings: ResolvedSettings, *, mode: str, display_name: str = "", target_id: int | None = None,
                    transport: httpx.AsyncBaseTransport | None = None, resolver: Resolver = default_resolver,
                    deadline_s: float = 60.0, connect_timeout_s: float = 10.0, max_bytes: int = 1_048_576,
-                   max_reply_chars: int = 2000, prompt: str = GREETING) -> TestOutcome:
+                   max_reply_chars: int = 2000, prompt: str = GREETING,
+                   extra_headers: Mapping[str, str] | None = None) -> TestOutcome:
     """Send one message (the greeting by default; an attack prompt supplies its own text) and read the reply.
 
-    `display_name` stays accepted but is never logged; `target_id` names a saved target on the connection-test line."""
+    `display_name` stays accepted but is never logged; `target_id` names a saved target on the connection-test
+    line. `extra_headers` (feature 013, FR-022) are Kestrel's own per-run headers - the correlation id a run on a
+    target with a side channel carries; a target without one is sent exactly today's headers."""
     started = time.perf_counter()
     with events.child_span("kestrel.target_request") as span:   # traced only inside a traced run (FR-013)
-        result = await _run(settings, mode, transport, resolver, deadline_s, connect_timeout_s, max_bytes, prompt)
+        result = await _run(settings, mode, transport, resolver, deadline_s, connect_timeout_s, max_bytes, prompt,
+                            extra_headers or {})
 
-        secrets = [value for _, value in settings.headers]
+        secrets = secret_values(settings)
         if result.detail is not None:
             result.detail = mask_values(result.detail, secrets)
         if result.reply_text is not None:
@@ -119,12 +142,14 @@ def _log(result: TestOutcome, target_id: int | None, span: Any = None) -> None:
 
 
 async def _run(settings: ResolvedSettings, mode: str, transport: httpx.AsyncBaseTransport | None, resolver: Resolver,
-               deadline_s: float, connect_timeout_s: float, max_bytes: int, prompt: str = GREETING) -> TestOutcome:
+               deadline_s: float, connect_timeout_s: float, max_bytes: int, prompt: str = GREETING,
+               extra_headers: Mapping[str, str] | None = None) -> TestOutcome:
     if not await asyncio.to_thread(is_allowed, settings.url, mode, resolver):
         return outcome("address_not_allowed")
 
     url, body = build_request(settings.method, settings.url, settings.body_template, prompt)
     headers = dict(settings.headers)
+    headers.update(extra_headers or {})
     lower = {name.lower() for name in headers}
     if body is not None and "content-type" not in lower:
         headers["Content-Type"] = "application/json"

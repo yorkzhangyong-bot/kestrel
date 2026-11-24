@@ -401,7 +401,7 @@ test checks it; a target without one is unchanged.
 
 **Independent Test**: quickstart US4 — `tests/integration/test_side_channel_config.py`.
 
-- [ ] T041 [P] [US4] Integration test `tests/integration/test_side_channel_config.py` (`FEATURE = "013"`):
+- [x] T041 [P] [US4] Integration test `tests/integration/test_side_channel_config.py` (`FEATURE = "013"`):
       register and update a target with a side channel through the API; the header value is stored encrypted and
       never returned; the connection test checks the side channel only after the chat test passes, shows exactly
       **"Side channel checked."** on success, and returns each of the **six** exact steps and messages —
@@ -410,29 +410,29 @@ test checks it; a target without one is unchanged.
       the current key cannot decrypt, and the hosted private-address refusal; save is refused `409 not_tested`
       until a test with those side-channel settings passed; a target **without** a side channel sends exactly
       today's requests and no correlation header (FR-019, FR-020, FR-021, FR-022, FR-071, SC-008).
-- [ ] T042 [US4] Implement the side-channel store layer (store.py): the `target_side_channels` methods
+- [x] T042 [US4] Implement the side-channel store layer (store.py): the `target_side_channels` methods
       `set_side_channel` and `resolve_side_channel`, and `Target.side_channel`; the header value via the vault
       (encrypt on write, decrypt only for the tester and the checker), the `None`-keeps-stored-value convention on
       update, and a decryption failure surfaced as the `side_channel_header_unreadable` step rather than a request
       sent without the header (FR-019, FR-071).
-- [ ] T043 [US4] Implement `src/kestrel/evidence/side_channel.py`: `ResolvedSideChannel`, `SideChannelClient`
+- [x] T043 [US4] Implement `src/kestrel/evidence/side_channel.py`: `ResolvedSideChannel`, `SideChannelClient`
       (`describe`/`tool_calls`/`state`, each a bounded GET through the address guard with the configured header,
       no redirects, 1 MiB cap, the configured timeout), the six `STEPS`, `SideChannelUnavailable`, and
       `check_side_channel` returning a `TestOutcome` whose timeout message carries the configured value; the
       decrypted header value joins the run's mask list beside the target's own (FR-020, FR-021, FR-023, FR-049,
       FR-071).
-- [ ] T044 [US4] Wire the side channel into config and the connection test: `SideChannelIn`/`SideChannelOut`,
+- [x] T044 [US4] Wire the side channel into config and the connection test: `SideChannelIn`/`SideChannelOut`,
       `ConnectionSettingsIn.side_channel`, `TargetDetail.side_channel`,
       `ConnectionTestResult.side_channel_checked` in api/schemas.py; validation under `settings.side_channel.*`;
       `ResolvedSettings.side_channel` added to `FormSessions.fingerprint`; the six messages added to the tester's
       `MESSAGES`; `connection_test` runs `check_side_channel` after a passing chat test; `save_target` and
       `update_target` persist it (FR-019, FR-020, FR-021). Makes T041 pass.
-- [ ] T045 [P] [US4] Integration test for the form section (`FEATURE = "013"`, in
+- [x] T045 [P] [US4] Integration test for the form section (`FEATURE = "013"`, in
       `tests/integration/test_evidence_api_ui.py` or a sibling): the target form shows the exact labels
       **"Side-channel URL"**, **"Side-channel header name"**, **"Side-channel header value"** (masked, with the
       stored-value placeholder behaviour of the auth headers) and **"Honeypot tool name"**, all optional; the
       submitted payload carries them; the form validates nothing of its own (FR-041, FR-043).
-- [ ] T046 [US4] Add the `"Side channel"` form section to `ui/app.py` with those exact labels (FR-041, FR-043).
+- [x] T046 [US4] Add the `"Side channel"` form section to `ui/app.py` with those exact labels (FR-041, FR-043).
       Makes T045 pass.
 
 ## Phase 7: User Story 5 — Confirm tool misuse from the tool-call log (P2)

@@ -91,7 +91,9 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
     message = checker.opening_message(prompt)
     run_id = store.claim_run(target_id, prompt_id=prompt.id, prompt_title=prompt.title, prompt_text=message,
                              family=prompt.family, owasp_category=prompt.owasp_category,
-                             attacker_source=attacker_source, use_prior_experience=use_prior_experience)
+                             attacker_source=attacker_source, use_prior_experience=use_prior_experience,
+                             correlation_id=checker.correlation_id,            # 013/FR-022: a side-channel target's
+                             side_channel_status=checker.side_channel_status)   # id and status, at claim time (FR-034)
     deadline = clock() + total_s
     try:
         # Everything after the claim is one protected region: a failure anywhere below - recording the planted
@@ -108,7 +110,8 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
         send_budget = max(0.1, min(send_s, deadline - clock()))
         checker.note_sent(message, 1)   # every sent message is inspected before it goes out (013/FR-012)
         outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
-                               deadline_s=send_budget, prompt=message)
+                               deadline_s=send_budget, prompt=message,
+                               extra_headers=checker.extra_headers)   # the correlation header, if any (013/FR-022)
         if not outcome.ok:
             return _finish(store, run_id, prompt, message, failure_step=outcome.step, tokens_used=0)
 

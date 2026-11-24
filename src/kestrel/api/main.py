@@ -20,7 +20,8 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  ExperienceOut, FormDefaults, HeaderOut,
                                  JudgeOut, PlantedTokenOut, ProfileOut, ReplayComparisonOut, RunDetail, RunRequest,
                                  RunSummary,
-                                 SaveTargetRequest, TargetDetail, TargetSummary, TermsOut, TurnComparisonOut, TurnOut,
+                                 SaveTargetRequest, SideChannelOut, TargetDetail, TargetSummary, TermsOut,
+                                 TurnComparisonOut, TurnOut,
                                  AdaptiveCapsOut, ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
                                  ExperimentSummaryOut, PromptVersionOut, RateOut, ReplayOut, RunLogOut,
@@ -46,7 +47,9 @@ from kestrel.report.recommend import recommendations_for
 from kestrel.report.render import render_html, render_markdown
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.sessions import FormSessions
-from kestrel.connection.tester import MESSAGES as STEP_MESSAGES, ResolvedSettings, refused, run_test
+from kestrel.connection.tester import (MESSAGES as STEP_MESSAGES, ResolvedSettings, TestOutcome, refused, run_test,
+                                       secret_values)
+from kestrel.evidence.side_channel import check_side_channel
 from kestrel.judge.client import JudgeClient
 from kestrel.logging_setup import configure_logging
 from kestrel.replay import (REPLAY_BLOCKED_REASONS, BatchTooLarge, NotReplayable, ReplayOfReplay, build_comparison,
@@ -56,7 +59,8 @@ from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
-from kestrel.store import (ExperimentInProgress, NameTaken, Run, RunInProgress, Target, TargetNotFound,
+from kestrel.store import (ExperimentInProgress, NameTaken, ResolvedSideChannel, Run, RunInProgress, Target,
+                           TargetNotFound,
                            TargetStore, utc_now)
 
 DEFAULTS = FormDefaults(method="POST", body_template='{"message": "{{prompt}}"}', response_path="$.reply")
@@ -195,22 +199,24 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                          prompts=[PromptVersionOut(id=e.id, version=e.version)
                                   for e in prompt_registry.registry()])
 
-    @app.post("/api/connection-tests", response_model=ConnectionTestResult)
+    @app.post("/api/connection-tests", response_model=ConnectionTestResult, response_model_exclude_unset=True)
     async def connection_test(body: ConnectionTestRequest, request: Request) -> Any:
         errors = validate_settings(body.settings, has_target=body.target_id is not None)
         if errors:
             return form_errors(errors)
         stored: dict[str, str | None] | None = None
+        stored_side_channel = None
         if body.target_id is not None:
             try:
                 stored = stored_values(store, body.target_id)
+                stored_side_channel = store.resolve_side_channel(body.target_id)
             except TargetNotFound:
                 return not_found(body.target_id)
-            errors = kept_value_errors(body.settings, stored)
+            errors = kept_value_errors(body.settings, stored, stored_side_channel)
             if errors:
                 return form_errors(errors)
 
-        resolved = resolve(body.settings, stored)
+        resolved = resolve(body.settings, stored, stored_side_channel)
         display_name = body.display_name.strip()
         form_id = str(body.form_id)
         sessions: FormSessions = request.app.state.sessions
@@ -223,6 +229,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                target_id=body.target_id).as_dict()
             result = await run_test(resolved, mode=settings.mode, display_name=display_name, target_id=body.target_id,
                                     transport=request.app.state.transport, resolver=request.app.state.resolver)
+            # Feature 013 (FR-021): a configured side channel is checked only once the chat test has passed; its
+            # failure replaces the result with the side channel's own step and exact message.
+            if result.ok and resolved.side_channel is not None:
+                checked = await check_side_channel(resolved.side_channel, mode=settings.mode,
+                                                   transport=request.app.state.transport,
+                                                   resolver=request.app.state.resolver,
+                                                   timeout_s=settings.side_channel_timeout_s)
+                if checked.ok:
+                    result.side_channel_checked = True
+                else:
+                    result = TestOutcome(ok=False, step=checked.step, message=checked.message,
+                                         duration_ms=result.duration_ms, side_channel_checked=False)
             if result.ok:
                 fingerprint = sessions.fingerprint(resolved)
         finally:
@@ -250,6 +268,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                          description=_clean_description(body.description))
             if body.canaries:
                 store.set_canaries(target.id, body.canaries)
+            _store_side_channel(store, target.id, body.settings)   # feature 013 (FR-019)
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
         return detail(store.get_target(target.id), store.list_canaries(target.id))
@@ -266,17 +285,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         try:
             existing = store.get_target(target_id)
             stored = stored_values(store, target_id)
+            stored_side_channel = store.resolve_side_channel(target_id)
         except TargetNotFound:
             return not_found(target_id)
-        errors = (validate_settings(body.settings, has_target=True) + kept_value_errors(body.settings, stored)
+        errors = (validate_settings(body.settings, has_target=True)
+                  + kept_value_errors(body.settings, stored, stored_side_channel)
                   + validate_save(body, terms.version) + validate_canaries(body.canaries))
         if errors:
             return form_errors(errors)
 
-        resolved = resolve(body.settings, stored)
+        resolved = resolve(body.settings, stored, stored_side_channel)
         current = ResolvedSettings(url=existing.url, method=existing.method,
                                    headers=tuple((h.name, stored[h.name.lower()] or "") for h in existing.headers),
-                                   body_template=existing.body_template, response_path=existing.response_path)
+                                   body_template=existing.body_template, response_path=existing.response_path,
+                                   side_channel=stored_side_channel)
         sessions: FormSessions = request.app.state.sessions
         changed = sessions.fingerprint(resolved) != sessions.fingerprint(current)  # a name-only edit needs no test
         if changed and sessions.last_success(str(body.form_id)) != sessions.fingerprint(resolved):
@@ -286,6 +308,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                          headers=[(h.name.strip(), h.value) for h in body.settings.headers],
                                          body_template=resolved.body_template, response_path=resolved.response_path,
                                          terms_version=terms.version, description=_clean_description(body.description))
+            _store_side_channel(store, target_id, body.settings)   # feature 013 (FR-019): null removes it
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
         if body.canaries is not None:  # None keeps the stored canaries; [] clears them (contracts/kestrel-api.md)
@@ -332,7 +355,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             url=target.url, method=target.method,
             headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
                           for h in target.headers),
-            body_template=target.body_template, response_path=target.response_path)
+            body_template=target.body_template, response_path=target.response_path,
+            side_channel=store.resolve_side_channel(target.id))   # feature 013: its auth value joins the mask list
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
@@ -341,7 +365,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         checker = build_checker(store=store, family=prompt.family, canaries=canaries, mode=settings.mode,
                                 target=target, settings=settings, transport=request.app.state.transport,
                                 resolver=request.app.state.resolver,
-                                mask=[value for _, value in resolved.headers] + [resolved.url], seed=prompt)
+                                mask=secret_values(resolved) + [resolved.url], seed=prompt)
         # The attacker's background each turn (feature 004 FR-021): the one shared retrieval path of feature 011 —
         # the attacker-only query, the floor and the de-duplication — identical for an experiment-executed run.
         # Built after the checker, so the per-run scrubber of FR-063 is bound to this run's planted values.
@@ -490,7 +514,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             url=target.url, method=target.method,
             headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
                           for h in target.headers),
-            body_template=target.body_template, response_path=target.response_path)
+            body_template=target.body_template, response_path=target.response_path,
+            side_channel=store.resolve_side_channel(target.id))   # feature 013: its auth value joins the mask list
         # No write_back call: a replay never touches the experience store (FR-025, FR-026).
         with events.run_scope():
             try:
@@ -499,7 +524,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                     judge=request.app.state.judge, transport=request.app.state.transport,
                     resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
                     adaptive_token_budget=settings.adaptive_token_budget,
-                    adaptive_time_limit_s=settings.adaptive_time_limit_s)
+                    adaptive_time_limit_s=settings.adaptive_time_limit_s, target=target, settings=settings)
             except RunInProgress:
                 # A claim race (two requests on the same target at once) - the same precondition start_run
                 # already catches (main.py's own pre-check above is the common case; this is the rare, genuinely
@@ -536,14 +561,15 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             url=target.url, method=target.method,
             headers=tuple((h.name, stored_values(store, target.id).get(h.name.lower()) or "")
                           for h in target.headers),
-            body_template=target.body_template, response_path=target.response_path)
+            body_template=target.body_template, response_path=target.response_path,
+            side_channel=store.resolve_side_channel(target.id))   # feature 013: its auth value joins the mask list
         try:
             result = await execute_batch_replay(
                 store, target_id=target_id, cap=cap, resolved=resolved, mode=settings.mode,
                 judge=request.app.state.judge, transport=request.app.state.transport,
                 resolver=request.app.state.resolver, adaptive_max_turns=settings.adaptive_max_turns,
                 adaptive_token_budget=settings.adaptive_token_budget,
-                adaptive_time_limit_s=settings.adaptive_time_limit_s)
+                adaptive_time_limit_s=settings.adaptive_time_limit_s, target=target, settings=settings)
         except BatchTooLarge as error:
             return api_error(409, "batch_too_large", _batch_too_large_message(error.count, error.cap))
         return BatchReplayResultOut(
@@ -682,11 +708,33 @@ def stored_values(store: TargetStore, target_id: int) -> dict[str, str | None]:
     return {h.name.lower(): h.value for h in store.resolve_headers(target_id)}
 
 
-def kept_value_errors(settings: ConnectionSettingsIn, stored: dict[str, str | None]) -> list[dict[str, str]]:
-    """`value: null` only works for a header the target has stored."""
-    return [{"field": f"settings.headers.{i}.value", "message": "Enter a value for this header."}
-            for i, header in enumerate(settings.headers)
-            if header.value is None and header.name.strip().lower() not in stored]
+def kept_value_errors(settings: ConnectionSettingsIn, stored: dict[str, str | None],
+                      stored_side_channel: Any = None) -> list[dict[str, str]]:
+    """`value: null` only works for a header the target has stored - the target's own headers, and (feature 013,
+    FR-019) the side-channel header, which keeps the stored side-channel value only when the target has one."""
+    errors = [{"field": f"settings.headers.{i}.value", "message": "Enter a value for this header."}
+              for i, header in enumerate(settings.headers)
+              if header.value is None and header.name.strip().lower() not in stored]
+    side_channel = settings.side_channel
+    if side_channel is not None and side_channel.header is not None and side_channel.header.value is None:
+        kept = getattr(stored_side_channel, "header", None)
+        if kept is None or kept[0].lower() != side_channel.header.name.strip().lower():
+            errors.append({"field": "settings.side_channel.header.value", "message": "Enter a value for this header."})
+    return errors
+
+
+def _store_side_channel(store: TargetStore, target_id: int, settings: ConnectionSettingsIn) -> None:
+    """Persist the request's side channel on the target (feature 013, FR-019): absent or null removes it; a null
+    header value keeps the stored one (the `update_target` convention, checked by `kept_value_errors` first)."""
+    side_channel = settings.side_channel
+    if side_channel is None:
+        store.set_side_channel(target_id, url=None)
+        return
+    header = None
+    if side_channel.header is not None:
+        header = (side_channel.header.name.strip(), side_channel.header.value)
+    store.set_side_channel(target_id, url=side_channel.url.strip(), header=header,
+                           honeypot_tool=(side_channel.honeypot_tool or "").strip() or None)
 
 
 def needs_unreadable_value(settings: ConnectionSettingsIn, stored: dict[str, str | None]) -> bool:
@@ -703,16 +751,33 @@ def _batch_too_large_message(count: int, cap: int) -> str:
            "KESTREL_REPLAY_BATCH_MAX_RUNS to allow a larger batch.")
 
 
-def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None = None) -> ResolvedSettings:
-    """Connection settings with every header value known; `value: null` takes the stored value (FR-017)."""
+def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None = None,
+            stored_side_channel: Any = None) -> ResolvedSettings:
+    """Connection settings with every header value known; `value: null` takes the stored value (FR-017). The side
+    channel (feature 013, FR-019) resolves the same way: a null header value takes the target's stored
+    side-channel value - None when the current key cannot read it, which the tester and the checker refuse to
+    send (FR-071)."""
     stored = stored or {}
     headers = []
     for header in settings.headers:
         name = header.name.strip()
         value = header.value if header.value is not None else stored.get(name.lower())
         headers.append((name, value or ""))
+    side_channel = None
+    if settings.side_channel is not None:
+        header_pair = None
+        if settings.side_channel.header is not None:
+            name = settings.side_channel.header.name.strip()
+            value = settings.side_channel.header.value
+            if value is None:
+                kept = getattr(stored_side_channel, "header", None)
+                value = kept[1] if kept is not None else None
+            header_pair = (name, value)
+        side_channel = ResolvedSideChannel(url=settings.side_channel.url.strip(), header=header_pair,
+                                           honeypot_tool=(settings.side_channel.honeypot_tool or "").strip() or None)
     return ResolvedSettings(url=settings.url.strip(), method=settings.method, headers=tuple(headers),
-                            body_template=settings.body_template, response_path=settings.response_path.strip())
+                            body_template=settings.body_template, response_path=settings.response_path.strip(),
+                            side_channel=side_channel)
 
 
 def summary(target: Target) -> TargetSummary:
@@ -722,10 +787,18 @@ def summary(target: Target) -> TargetSummary:
 
 
 def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
+    side_channel = None
+    if target.side_channel is not None:   # feature 013 (FR-019): never the header value
+        header = target.side_channel.header
+        side_channel = SideChannelOut(url=target.side_channel.url,
+                                      header_name=None if header is None else header.name,
+                                      has_value=header is not None,
+                                      readable=True if header is None else header.readable,
+                                      honeypot_tool=target.side_channel.honeypot_tool)
     return TargetDetail(**summary(target).model_dump(), body_template=target.body_template,
                         response_path=target.response_path,
                         headers=[HeaderOut(name=h.name, has_value=True, readable=h.readable) for h in target.headers],
-                        canaries=canaries if canaries is not None else [])
+                        canaries=canaries if canaries is not None else [], side_channel=side_channel)
 
 
 def _clean_description(description: str | None) -> str | None:

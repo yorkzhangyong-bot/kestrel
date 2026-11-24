@@ -13,7 +13,7 @@ from typing import Callable
 from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerClient
 from kestrel.connection.address_guard import default_resolver
-from kestrel.connection.tester import ResolvedSettings
+from kestrel.connection.tester import ResolvedSettings, secret_values
 from kestrel.evidence.checker import build_checker
 from kestrel.experience.retrieval import background_provider
 from kestrel.experience.writeback import write_back
@@ -134,7 +134,7 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
         # an experiment-executed run cannot drift from a user-started one (013/FR-037).
         checker = build_checker(store=store, family=seed.family, canaries=canaries, mode=settings.mode,
                                 target=target, settings=settings, transport=transport, resolver=resolver,
-                                mask=[value for _, value in resolved.headers] + [resolved.url], seed=seed)
+                                mask=secret_values(resolved) + [resolved.url], seed=seed)
         try:
             if experiment.mode == "adaptive":
                 run = await execute_adaptive_run(
@@ -171,8 +171,10 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
 
 
 def _resolve(store: TargetStore, target) -> ResolvedSettings:
-    """Build the target's connection settings with header values resolved, exactly as POST /api/runs does."""
+    """Build the target's connection settings with header values resolved, exactly as POST /api/runs does - the
+    side channel included (feature 013), so its auth value joins every arm's mask list (013/FR-071)."""
     stored = {h.name.lower(): h.value for h in store.resolve_headers(target.id)}
     headers = tuple((h.name, stored.get(h.name.lower()) or "") for h in target.headers)
     return ResolvedSettings(url=target.url, method=target.method, headers=headers,
-                            body_template=target.body_template, response_path=target.response_path)
+                            body_template=target.body_template, response_path=target.response_path,
+                            side_channel=store.resolve_side_channel(target.id))

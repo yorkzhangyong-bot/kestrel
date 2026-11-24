@@ -126,14 +126,19 @@ def fill_form(target: dict | None) -> None:
     if target is None:
         state.update(display_name="", url="", method=defaults["method"], body_template=defaults["body_template"],
                      response_path=defaults["response_path"], permission=False, description="", headers=[],
-                     canaries=[], loaded_target=None)
+                     canaries=[], loaded_target=None, side_channel_url="", side_channel_header_name="",
+                     side_channel_header_value="", side_channel_honeypot="")
     else:
+        side_channel = target.get("side_channel") or {}   # feature 013 (FR-041): the value is never loaded
         state.update(display_name=target["name"], url=target["url"], method=target["method"],
                      body_template=target["body_template"], response_path=target["response_path"], permission=True,
                      description=target.get("description") or "", loaded_target=target,
                      headers=[{"name": h["name"], "value": "", "stored": True, "readable": h["readable"]}
                               for h in target["headers"]],
-                     canaries=[{"value": c} for c in target.get("canaries", [])])
+                     canaries=[{"value": c} for c in target.get("canaries", [])],
+                     side_channel_url=side_channel.get("url") or "",
+                     side_channel_header_name=side_channel.get("header_name") or "",
+                     side_channel_header_value="", side_channel_honeypot=side_channel.get("honeypot_tool") or "")
     state["result"] = None
     state["run_result"] = None
     state["runs"] = None  # reload the runs list for the newly selected target
@@ -241,8 +246,31 @@ def current_settings() -> dict:
             continue  # an untouched empty row
         # An empty stored value means "keep the stored one" (FR-017).
         headers.append({"name": name, "value": None if row.get("stored") and value == "" else value})
-    return {"url": (state.get("url") or "").strip(), "method": state.get("method") or "POST", "headers": headers,
-            "body_template": state.get("body_template") or "", "response_path": (state.get("response_path") or "").strip()}
+    settings = {"url": (state.get("url") or "").strip(), "method": state.get("method") or "POST", "headers": headers,
+                "body_template": state.get("body_template") or "",
+                "response_path": (state.get("response_path") or "").strip()}
+    side_channel = current_side_channel()
+    if side_channel is not None:   # feature 013: absent, not null, so a form without one sends exactly today's payload
+        settings["side_channel"] = side_channel
+    return settings
+
+
+def current_side_channel() -> dict | None:
+    """The form's side-channel section as the API takes it (feature 013, FR-041): None when the URL is empty; a
+    header only when it has a name, its empty value meaning "keep the stored one" for a loaded target that has a
+    stored side-channel value (the auth headers' convention), else the typed value as is - unvalidated."""
+    state = st.session_state
+    url = (state.get("side_channel_url") or "").strip()
+    if not url:
+        return None
+    loaded = (state.get("loaded_target") or {}).get("side_channel") or {}
+    header = None
+    name = (state.get("side_channel_header_name") or "").strip()
+    if name:
+        value = state.get("side_channel_header_value") or ""
+        header = {"name": name, "value": None if loaded.get("has_value") and value == "" else value}
+    honeypot = (state.get("side_channel_honeypot") or "").strip()
+    return {"url": url, "header": header, "honeypot_tool": honeypot or None}
 
 
 def loaded_id() -> int | None:
@@ -448,6 +476,25 @@ def render_form(config: dict, targets: list[dict]) -> None:
                           args=(i,))
         show_error(f"canaries.{i}")
     st.button("Add canary", key="add_canary", on_click=add_canary_row)
+
+    # Feature 013 (FR-041, FR-043): a cooperating target's side channel - four optional fields with these exact
+    # labels; the form validates nothing of its own, the API's messages land under each field.
+    st.markdown("**Side channel**")
+    st.caption("optional: a cooperating agent's tool-call log and protected-state snapshot, read by Kestrel only")
+    st.text_input("Side-channel URL", key="side_channel_url", placeholder="https://my-agent.example.com/side-channel")
+    show_error("settings.side_channel.url")
+    name_col, value_col = st.columns([4, 5])
+    name_col.text_input("Side-channel header name", key="side_channel_header_name", placeholder="Header name")
+    loaded_side_channel = (st.session_state.get("loaded_target") or {}).get("side_channel") or {}
+    placeholder = "Value"
+    if loaded_side_channel.get("has_value"):
+        placeholder = STORED_PLACEHOLDER if loaded_side_channel.get("readable", True) else UNREADABLE_PLACEHOLDER
+    value_col.text_input("Side-channel header value", key="side_channel_header_value", type="password",
+                         placeholder=placeholder)
+    show_error("settings.side_channel.header.name")
+    show_error("settings.side_channel.header.value")
+    st.text_input("Honeypot tool name", key="side_channel_honeypot", placeholder="e.g. approve_duty_refund")
+    show_error("settings.side_channel.honeypot_tool")
 
     st.text_input("Request body template", key="body_template")
     show_error("settings.body_template")
@@ -864,6 +911,8 @@ def render_result() -> None:
         return
     if result["ok"]:
         st.success(f"Connection works · status {result['status_code']} · {result['duration_ms'] / 1000:.1f} s")
+        if result.get("side_channel_checked"):   # feature 013 (FR-021): the API's own flag, displayed as is
+            st.caption("Side channel checked.")
         if result["reply_text"]:
             st.code(result["reply_text"], language=None, wrap_lines=True)
         else:

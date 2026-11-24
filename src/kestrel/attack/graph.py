@@ -22,7 +22,7 @@ from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerError
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
-from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
+from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test, secret_values
 from kestrel.evidence.checker import EvidenceChecker, TurnEvidence, build_checker
 from kestrel.judge.client import JudgeError
 from kestrel.runs import attacker_ref, judge_ref
@@ -126,7 +126,8 @@ async def _send_turn(state: _State, *, resolved: ResolvedSettings, mode: str, se
     through - so the override token is disarmed by the text actually sent (013/FR-012, FR-035)."""
     evidence.note_sent(state["pending_message"], state["turns_used"] + 1)
     outcome = await sender(resolved, mode=mode, display_name="", transport=transport, resolver=resolver,
-                           deadline_s=max(0.1, min(SEND_LIMIT_S, remaining())), prompt=state["pending_message"])
+                           deadline_s=max(0.1, min(SEND_LIMIT_S, remaining())), prompt=state["pending_message"],
+                           extra_headers=evidence.extra_headers)   # the correlation header, if any (013/FR-022)
     if not outcome.ok:
         return {"pending_reply": None, "pending_truncated": False,
                 "outcome": {"verdict": None, "hard_evidence": False, "reason": outcome.message,
@@ -196,10 +197,12 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                              owasp_category=seed_prompt.owasp_category, attacker_source=attacker_source,
                              mode="adaptive", attacker_model=attacker.model, turn_budget=max_turns,
                              token_budget=token_budget, time_limit_s=int(time_limit_s),
-                             use_prior_experience=use_prior_experience)
+                             use_prior_experience=use_prior_experience,
+                             correlation_id=checker.correlation_id,            # 013/FR-022, FR-034: a side-channel
+                             side_channel_status=checker.side_channel_status)   # target's id and status at claim time
     checker.bind_run(run_id)   # records what the run planted, right after the claim (013/FR-008)
     deadline = clock() + time_limit_s
-    secrets = [value for _, value in resolved.headers]
+    secrets = secret_values(resolved)   # the target's auth values and the side channel's (013/FR-071)
     # Prompt-version provenance (feature 009, FR-003): the attacker (per family) and judge prompt versions are
     # constant for the run. Feature 010 (FR-007, D15): they are the references the clients actually send — a pinned
     # A/B arm's version, not the active one — the same source the log lines use; judge provenance is recorded only
@@ -342,7 +345,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                               mode: str = "local", transport: Any = None, resolver: Any = default_resolver,
                               max_turns: int, token_budget: int, time_limit_s: float,
                               clock: Callable[[], float] = time.monotonic,
-                              evidence: EvidenceChecker | None = None) -> Run:
+                              evidence: EvidenceChecker | None = None, target: Any = None,
+                              settings: Any = None) -> Run:
     """Replay an adaptive source, turn by turn, with no attacker-model call (feature 012, FR-001, FR-002,
     FR-007 to FR-011). `run_adaptive`'s six-node shape, minus `hint_provider` (a replay never calls the
     experience store, FR-025), sharing `_judge_turn`/`_send_turn`/`_check_evidence`/`_decide_next` (above) and
@@ -362,23 +366,28 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
     that turn produced any evidence item, never from the canary flag alone (013/FR-035, research D23)."""
     from kestrel.replay import ReplayFailed, compute_outcome   # lazy: avoids a module-level cycle (research D14)
 
+    # The checker is built before the claim (feature 013 part 2): a side-channel target's correlation id and
+    # `checked` status are written with the row (013/FR-022, FR-034). It verifies against the source's planted
+    # tokens (copied to the replay's own row right after the claim); a failure here precedes the claim and
+    # propagates bare, like any other pre-claim failure (`kestrel.replay.execute_replay`).
+    checker = evidence if evidence is not None else build_checker(
+        store=store, family=source.family, canaries=canaries, mode=mode, target=target, settings=settings,
+        transport=transport, resolver=resolver, planted=store.list_planted_tokens(source.id),
+        mask=secret_values(resolved) + [resolved.url])
     run_id = store.claim_run(target_id, prompt_id=source.prompt_id, prompt_title=source.prompt_title,
                              prompt_text=source.prompt_text, family=source.family,
                              owasp_category=source.owasp_category, attacker_source=source.attacker_source,
                              mode="replay", attacker_model=None, turn_budget=max_turns, token_budget=token_budget,
-                             time_limit_s=int(time_limit_s), use_prior_experience=False, source_run_id=source.id)
+                             time_limit_s=int(time_limit_s), use_prior_experience=False, source_run_id=source.id,
+                             correlation_id=checker.correlation_id, side_channel_status=checker.side_channel_status)
     # The claim and everything after it is one protected region (review round 2, item 1): a failure anywhere
     # below - judge_ref, building or compiling the graph included - must still close the row, never leave it
     # in_progress (locking the target) until the start-up sweep. The try wraps the whole rest of the function,
     # including the final finish_run on the success path.
     try:
         deadline = clock() + time_limit_s
-        secrets = [value for _, value in resolved.headers]
+        secrets = secret_values(resolved)   # the target's auth values and the side channel's (013/FR-071)
         store.copy_planted_tokens(source.id, run_id)
-        checker = evidence if evidence is not None else build_checker(
-            store=store, family=source.family, canaries=canaries, mode=mode, transport=transport,
-            resolver=resolver, planted=store.list_planted_tokens(run_id),
-            mask=[value for _, value in resolved.headers] + [resolved.url])
         checker.bind_run(run_id)
         judge_prompt = judge_ref(judge) if judge.configured else None
         judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
