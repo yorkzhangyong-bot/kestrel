@@ -23,6 +23,13 @@ Planned next, not yet specified.
 
 ## Housekeeping
 
+- **Traceability gate: an honest path for refactor and bug-fix PRs** (next, once the graph refactor PR merges). The
+  gate (`scripts/check_traceability.py`) requires a `Spec-PR: #<n>` line on every PR that touches `src/` or `ui/`,
+  on any branch, and checks only the line's syntax — so a refactor or a bug fix that implements no spec has no
+  truthful way to pass it: the graph refactor PR was admin-merged with the check red, and every bug-to-pr run will
+  fail it the same way. Proposal: accept `Spec-PR: none` only together with a reason line (`refactor`, or
+  `bugfix: #<issue>`) and a matching PR label; the gate stays fail-closed for everything else. This amends
+  006/FR-009, so it needs a small spec change (a 006 spec PR) before the gate itself changes.
 - **Remove `SKIP_AI_REVIEW` once API credit is topped up.** The repository variable bypasses the Claude Code review gate while the reviewer account's `ANTHROPIC_API_KEY` has no API credit ([qa-pipeline.md](qa-pipeline.md)). When the credit is topped up, delete the variable so the `review` job fails closed again, and remove the bypass notes from `CLAUDE.md`, [qa-pipeline.md](qa-pipeline.md) and [branch-protection.md](branch-protection.md).
 - **HS-code target model (low priority).** Find out why `openai/gpt-oss-120b` needs replacing — as of 2026-11-24 the OpenRouter account's guardrail no longer lists it, so the target's own chat call 502s and every live e2e scenario fails at the connection test (`CLAUDE.md` gotcha). Any replacement must have a zero-data-retention endpoint that supports tool calls, probed with a `tools` array and the target's `json_schema` output, not a plain chat completion (candidate: `openai/gpt-4.1-mini`). Only the live e2e scenarios need it — the offline suite and the browser QA use stubs — so do it as a separate chore PR that changes `DEFAULT_CHAT_MODEL` in `targets/hs_code/agent/config.py` and the pin in `playwright.config.ts` together.
 
