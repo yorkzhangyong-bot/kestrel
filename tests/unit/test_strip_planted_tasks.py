@@ -33,6 +33,19 @@ def test_stripping_removes_the_task_from_inside_an_indirect_seeds_injected_conte
     assert override.strip_planted_tasks(sent, [paragraph()]) == INDIRECT_SEED
 
 
+def test_stripping_removes_a_framed_task_whole_from_inside_an_indirect_seed():  # FR-063, FR-064
+    """A shipped indirect seed's task text is its quoting frame and the paragraph as one string: stripping that
+    string restores the seed byte-identical, while the bare paragraph alone would leave the frame behind."""
+    point = override.InsertionPoint(offset=len("First sentence of a placeholder seed. "),
+                                    fingerprint=override.fingerprint(INDIRECT_SEED),
+                                    frame_prefix='<the placeholder content reads> "', frame_suffix='"')
+    framed = point.frame(paragraph())
+    sent = override.place_task(INDIRECT_SEED, point, paragraph())
+    assert sent == f"{INDIRECT_SEED[:point.offset]}{framed} {INDIRECT_SEED[point.offset:]}"
+    assert override.strip_planted_tasks(sent, [framed]) == INDIRECT_SEED
+    assert override.strip_planted_tasks(sent, [paragraph()]) != INDIRECT_SEED
+
+
 def test_stripping_removes_a_callback_task_appended_in_the_users_voice():  # FR-063
     sent = f"<a placeholder tool-exfiltration seed>\n\n{CALLBACK_TASK}"
     assert override.strip_planted_tasks(sent, [CALLBACK_TASK]) == "<a placeholder tool-exfiltration seed>"

@@ -100,8 +100,7 @@ def test_a_direct_injection_run_plants_an_echo_proof_token_and_reports_its_evide
         assert detail["evidence"] == run["evidence"] and detail["override_disarmed_notice"] is None
 
         # The run's own stored message keeps the planted task; the pattern pool never sees it (FR-063).
-        for write in experience.pattern_writes:
-            document = getattr(write, "document", "") or ""
+        for document in experience.pattern_documents:
             assert parts.first not in document and parts.second not in document
         for query in experience.queries:
             assert parts.first not in query["query_text"] and parts.second not in query["query_text"]

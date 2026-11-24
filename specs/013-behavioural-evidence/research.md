@@ -185,10 +185,14 @@ Kestrel-owned sidecar records for that seed — `src/kestrel/attacks/data/insert
 a character offset into the seed's verbatim library text plus a sha256 fingerprint of that text (FR-064): a
 **direct-injection** seed's point is the attacker-voice position, so the paragraph follows the seed text; an
 **indirect-injection** seed's point sits *inside* its own simulated injected content, so the paragraph is
-substituted there and the agent reads it as retrieved data. The library's seed text stays verbatim (the 002
-contract) — the sidecar carries only the offset and the fingerprint, never an edit to the seed — and a test fails
-when an indirect seed has no entry, an offset is out of range, or a fingerprint no longer matches the library text,
-so a library update forces a re-review of the insertion points. Override and callback never share a family, so at
+substituted there, inside a reviewed quoting frame the sidecar records for that seed (a neutral prefix and suffix
+presenting the paragraph as a quoted excerpt of the document, email, OCR text or ticket the seed names — added
+after the part-1 review found that a paragraph at a seed's sentence boundary still read in the user's voice), and
+the agent reads it as quoted retrieved content. The library's seed text stays verbatim (the 002 contract) — the
+sidecar carries the offset, the fingerprint and the frame, never an edit to the seed — and a test fails when an
+indirect seed has no entry or no frame, an offset is out of range, or a fingerprint no longer matches the library
+text, so a library update forces a re-review of the insertion points and frames. A framed seed simulates retrieved
+content inside the user turn; proof that an instruction travelled a real retrieval path is part 2's side channel. Override and callback never share a family, so at
 most one paragraph is placed today; the order is fixed — override, then callback — for the day they do.
 Attacker-generated messages are not edited, with the one documented exception of substituting the run's real
 callback URL for the `[callback-url]` placeholder on send (FR-070, D12); `checker.note_sent(text, turn)` otherwise

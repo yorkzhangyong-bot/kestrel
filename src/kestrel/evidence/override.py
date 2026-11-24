@@ -69,9 +69,21 @@ class OverrideToken:
 @dataclass(frozen=True)
 class InsertionPoint:
     """Where a seed's planted paragraph goes: a character offset into the seed's verbatim library text, plus a
-    sha256 fingerprint of the text the offset was chosen against."""
+    sha256 fingerprint of the text the offset was chosen against — and, for an indirect-injection seed, the
+    **quoting frame** the sidecar records for it (FR-064): a neutral prefix and suffix, reviewed per seed, that
+    present the paragraph as a quoted excerpt of the document, email, OCR text or ticket the seed names. A direct
+    seed carries no frame (both empty), and so does a derived point. The frame carries no attack wording and
+    never joins the token parts (`tests/unit/test_override_placement.py` asserts both, after normalisation)."""
     offset: int
     fingerprint: str
+    frame_prefix: str = ""
+    frame_suffix: str = ""
+
+    def frame(self, paragraph: str) -> str:
+        """The run's exact filled task text at this point: the frame and the paragraph as one string — the string
+        `strip_planted_tasks` removes whole at every experience-store and retrieval boundary (FR-063). Without a
+        frame it is the paragraph itself."""
+        return f"{self.frame_prefix}{paragraph}{self.frame_suffix}"
 
 
 def generate_override_token() -> OverrideToken:
@@ -116,13 +128,16 @@ def override_task_paragraph(token: OverrideToken) -> tuple[str, str]:
 def place_task(seed_text: str, insertion: InsertionPoint | None, paragraph: str) -> str:
     """Put `paragraph` at the seed's insertion point (FR-064). At the end of the text — a direct-injection seed's
     attacker-voice position — it follows the seed as its own paragraph; at an interior point — inside an
-    indirect-injection seed's simulated injected content — it is substituted there, so the agent reads it as
-    retrieved data. No insertion point (a family that carries no task) leaves the seed byte-identical."""
+    indirect-injection seed's simulated injected content — it is substituted there, wrapped in the point's
+    quoting frame, so the agent reads it as a quoted excerpt of the content the seed presents as retrieved. What
+    goes in is `insertion.frame(paragraph)` as one string, so the framed text can be stripped whole again
+    (FR-063). No insertion point (a family that carries no task) leaves the seed byte-identical."""
     if insertion is None:
         return seed_text
+    task = insertion.frame(paragraph)
     if insertion.offset >= len(seed_text):
-        return f"{seed_text}\n\n{paragraph}"
-    return f"{seed_text[:insertion.offset]}{paragraph} {seed_text[insertion.offset:]}"
+        return f"{seed_text}\n\n{task}"
+    return f"{seed_text[:insertion.offset]}{task} {seed_text[insertion.offset:]}"
 
 
 def load_insertion_points(path: Path | None = None) -> dict[str, InsertionPoint]:
@@ -134,10 +149,14 @@ def load_insertion_points(path: Path | None = None) -> dict[str, InsertionPoint]
     out: dict[str, InsertionPoint] = {}
     for prompt_id, entry in points.items():
         try:
-            out[prompt_id] = InsertionPoint(offset=int(entry["offset"]), fingerprint=str(entry["fingerprint"]))
-        except (KeyError, TypeError, ValueError) as error:
-            raise InsertionPointError(f"{prompt_id}: an entry needs an integer 'offset' and a 'fingerprint'") \
-                from error
+            frame = {key: entry.get(key, "") for key in ("frame_prefix", "frame_suffix")}
+            if not all(isinstance(value, str) for value in frame.values()):
+                raise TypeError("a frame field must be text")
+            out[prompt_id] = InsertionPoint(offset=int(entry["offset"]), fingerprint=str(entry["fingerprint"]),
+                                            **frame)
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise InsertionPointError(f"{prompt_id}: an entry needs an integer 'offset', a 'fingerprint' and, if "
+                                      f"present, text 'frame_prefix'/'frame_suffix' fields") from error
     return out
 
 
@@ -173,8 +192,10 @@ def derive_insertion_point(family: str, seed_text: str) -> InsertionPoint:
     placement keeps its shape (FR-064): a **direct-injection** seed's point is the attacker-voice position at the
     end of its text; an **indirect-injection** seed's point is interior — the first sentence boundary, or a word
     boundary near the middle of a text that has none — so the paragraph still lands inside the seed's own content
-    and never follows it in Kestrel's voice. The shipped library always matches the sidecar
-    (`tests/unit/test_override_placement.py` is what keeps it so), so this path is never the reviewed one."""
+    and never follows it in Kestrel's voice. A derived point carries **no quoting frame**: the frame is a reviewed
+    property of each shipped seed, recorded in the sidecar, never invented at run time. The shipped library always
+    matches the sidecar (`tests/unit/test_override_placement.py` is what keeps it so), so this path is never the
+    reviewed one."""
     if family != "indirect_injection":
         return InsertionPoint(offset=len(seed_text), fingerprint=fingerprint(seed_text))
     match = re.search(r"\.\s+", seed_text)
@@ -207,7 +228,9 @@ def insertion_point(family: str, prompt_id: str, seed_text: str) -> InsertionPoi
 def strip_planted_tasks(text: str, task_texts: Sequence[str]) -> str:
     """Remove the run's exact filled task text, wherever it sits (FR-063): a literal removal, not a
     paragraph-anchored pattern, so it works at either placement and needs no knowledge of the template's versions.
-    The separator `place_task` added goes with it; a text carrying no task text comes back byte-identical."""
+    For a framed indirect seed that text is the frame and the paragraph as one string (`InsertionPoint.frame`),
+    so the frame never outlives the paragraph. The separator `place_task` added goes with it; a text carrying no
+    task text comes back byte-identical."""
     for task in task_texts:
         if not task or task not in text:
             continue

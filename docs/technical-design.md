@@ -159,11 +159,22 @@ read. (Part 2 adds the target side channel, the honeypot tool and the canary cal
 - **Where the task goes (`attacks/data/insertion_points.json`).** A Kestrel-owned sidecar, keyed by prompt id,
   records each injection seed's insertion point as a character offset into its **verbatim** library text plus a
   sha256 of that text. A direct-injection seed's point is the attacker-voice position (the paragraph follows the
-  seed); an indirect-injection seed's is interior, inside the content the seed presents as retrieved, so the
-  instruction reaches the agent as data rather than as a request from its user. The library file stays verbatim;
-  a seed whose fingerprint no longer matches fails the suite, which is what forces a re-review after a library
-  edit. A seed the sidecar does not describe (an edited library, or the synthetic one the offline suite uses)
-  gets a derived point of the same shape, so a live run never breaks on it.
+  seed); an indirect-injection seed's is interior, inside the content the seed presents as retrieved, and its
+  entry also carries a reviewed **quoting frame** (`frame_prefix`/`frame_suffix`): a neutral prefix and suffix
+  that present the paragraph as a quoted excerpt of the document, email, OCR text or ticket the seed names, so
+  the instruction reaches the agent as quoted retrieved content rather than as a request from its user. The
+  run's exact filled task text is the frame and the paragraph as **one string** (`InsertionPoint.frame`): the
+  run starters hand the seed to `build_checker(seed=...)` so `planted_task_texts()` is that string before the
+  retrieval provider is built, and `strip_planted_tasks` removes it whole at every experience-store and
+  retrieval boundary; the stored message still equals the sent message. What the frame proves: the agent
+  followed an instruction presented as retrieved content inside the user turn. What it does not prove: that an
+  instruction travelled a real retrieval path (a tool result or a document the agent fetched itself) — that is
+  part 2's side channel. The frame wording is a reviewed property (`traceability.md`, SC-014); the tests assert
+  only its structure. The library file stays verbatim; a seed whose fingerprint no longer matches fails the
+  suite, which is what forces a re-review after a library edit. A seed the sidecar does not describe (an edited
+  library, or the synthetic one the offline suite uses) gets a derived point of the same shape — interior, but
+  with no frame, since a frame is reviewed per seed and never invented at run time — so a live run never breaks
+  on it.
 - **The unsafe-output detector (`evidence/unsafe_output.py`).** A named, versioned pattern set (set version `1`,
   twelve patterns across four categories: destructive shell, fetch-and-execute, destructive SQL, script
   injection), standard library only. `specs/013-behavioural-evidence/contracts/detectors.md` is the review

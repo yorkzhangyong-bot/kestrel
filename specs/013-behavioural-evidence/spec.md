@@ -45,6 +45,20 @@ stay suspected. Follow the Spec Kit flow and open a spec-only PR for my review f
   existing tool-exfiltration mapping), the canary-in-reply item keeping the run's family class, listener
   placement and exact side-channel shapes left to the plan, and no per-target switch to disable a detector.
 
+### Session 2026-11-24
+
+- Q: An indirect-injection seed's own text is a meta-instruction *about* retrieved content, not the content
+  itself, so a paragraph substituted at its sentence boundary still reaches the agent in the user's voice — how
+  does the placement present the planted task as retrieved content (implementation review of part 1, finding 7)?
+  → A: Through a reviewed **quoting frame** recorded per seed in the Kestrel-owned sidecar beside its insertion
+  point: a neutral prefix and suffix that present the paragraph as a quoted excerpt of the document, email, OCR
+  text or ticket the seed names, carrying no attack wording and never joining the token parts (echo-proofness
+  after normalisation holds). Only a run that plants the task carries the frame; the library seed stays
+  byte-identical; the stored message still equals the sent message; the run's exact filled task text is the frame
+  and the paragraph as one string, which every experience-store write and the retrieval query strip whole
+  (FR-063). A framed seed simulates retrieved content inside the user turn; proof that an instruction travelled a
+  real retrieval path comes with the part-2 side channel (FR-064, US1-AS8, SC-014).
+
 ## User Scenarios & Testing *(mandatory)*
 
 Today Kestrel has exactly one kind of deterministic proof: a declared canary string appearing in the target's
@@ -113,8 +127,9 @@ own voice.
    the run's own stored message still carries them exactly as sent.
 8. **Given** a run of the indirect-injection family, **When** the message Kestrel sends is inspected, **Then** the
    override task sits inside the seed's simulated injected content (the insertion point the sidecar records for
-   that seed), not appended in Kestrel's own voice, so the agent reads it as content it retrieved rather than as a
-   request from its user.
+   that seed), inside the quoting frame the sidecar records for it — presented as a quoted excerpt of the
+   document, email, OCR text or ticket the seed names — not appended in Kestrel's own voice, so the agent reads
+   it as content it retrieved rather than as a request from its user.
 
 ---
 
@@ -865,8 +880,14 @@ one attack, asserting the structure of the result.
   insertion point a Kestrel-owned sidecar records for that seed, and MUST NOT be appended in Kestrel's own voice —
   otherwise the request arrives as a direct instruction from the user and proves no indirect follow-through. The
   wording lives in a versioned prompt file; the insertion point lives in a Kestrel-owned sidecar keyed by prompt id
-  — a character offset into the seed's verbatim library text plus a fingerprint of that text — never in code and
-  never in the generated attack library.
+  — a character offset into the seed's verbatim library text, a fingerprint of that text and, for an
+  indirect-injection seed, a reviewed **quoting frame**: a neutral prefix and suffix that present the paragraph as
+  a quoted excerpt of the document, email, OCR text or ticket the seed names, carrying no attack wording and never
+  joining the token parts — never in code and never in the generated attack library. A framed seed simulates
+  retrieved content inside the user turn — only a run that plants the task carries the frame, the library seed
+  stays byte-identical, the stored message still equals the sent message, and the run's exact filled task text is
+  the frame and the paragraph as one string, which FR-063 strips whole — while proof that an instruction travelled
+  a real retrieval path comes with the part-2 side channel.
 - **FR-068**: Kestrel MUST plant a callback URL only when the configured base URL is usable for the target being
   attacked: a loopback base URL MUST NOT be planted into a run against any non-loopback target, and a
   private-network base URL MUST NOT be planted into a run against a public target. This MUST be checked when the
@@ -973,10 +994,12 @@ one attack, asserting the structure of the result.
   stored opening messages and turn rows still contain them.
 - **SC-014**: For 100% of indirect-injection runs the offline suite drives, the planted instruction is located
   inside the seed's simulated injected content and 0 are appended in Kestrel's own voice (asserted structurally
-  against the sidecar's insertion points); for 100% of runs of both planted families, the override prompt file
-  carries a `framing: override` front-matter field that a test asserts, and the wording that realises that framing
-  is a reviewed property listed in `traceability.md` for the implementation pull request's reviewer — never judged
-  by reading model behaviour.
+  against the sidecar's insertion points); for 100% of the shipped indirect-injection seeds, the sidecar's quoting
+  frame is present, the paragraph sits inside its quoted span and the joined form is absent from the framed
+  message after normalisation (asserted structurally); for 100% of runs of both planted families, the override
+  prompt file carries a `framing: override` front-matter field that a test asserts, and the wording that realises
+  that framing — and each indirect seed's frame wording — is a reviewed property listed in `traceability.md` for
+  the implementation pull request's reviewer — never judged by reading model behaviour.
 - **SC-015**: Across the sacrificial target's offline tests, the outbound tool sends 0 requests to any host and
   port outside its configured allow-list and 100% of refused URLs produce no request at all; with the tools' flag
   unset it offers exactly today's tool set; and across the offline suite 0 runs plant a callback URL whose base is

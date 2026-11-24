@@ -341,7 +341,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         checker = build_checker(store=store, family=prompt.family, canaries=canaries, mode=settings.mode,
                                 target=target, settings=settings, transport=request.app.state.transport,
                                 resolver=request.app.state.resolver,
-                                mask=[value for _, value in resolved.headers] + [resolved.url])
+                                mask=[value for _, value in resolved.headers] + [resolved.url], seed=prompt)
         # The attacker's background each turn (feature 004 FR-021): the one shared retrieval path of feature 011 —
         # the attacker-only query, the floor and the de-duplication — identical for an experiment-executed run.
         # Built after the checker, so the per-run scrubber of FR-063 is bound to this run's planted values.

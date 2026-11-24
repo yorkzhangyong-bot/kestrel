@@ -79,6 +79,9 @@ class _Planted:
     token: override_module.OverrideToken
     prompt_ref: str
     paragraph: str | None = None      # None for a replay's copy: the source's text is what gets re-sent
+    task_text: str | None = None      # the exact text placed: the seed's quoting frame and the paragraph as one
+    #                                   string (FR-064), known once the seed is - at build time, or at the opening
+    #                                   message; None until then, when the bare paragraph stands in (FR-063)
     disarmed_turn: int | None = None
     recorded: bool = True             # False for a replay's copy, whose row is already on its own run
 
@@ -147,10 +150,13 @@ class EvidenceChecker:
 
     def opening_message(self, seed: AttackPrompt) -> str:
         """The run's opening message: the seed's text, with the planted task placed at the sidecar's insertion
-        point for that seed (FR-011, FR-064). A run that planted nothing returns the seed byte-identical."""
+        point for that seed (FR-011, FR-064) — inside the seed's quoting frame when the sidecar records one — and
+        the exact text placed recorded as the run's task text, so `planted_task_texts()` returns it whether or
+        not the builder knew the seed. A run that planted nothing returns the seed byte-identical."""
         if self._override is None or self._override.paragraph is None:
             return seed.text
         insertion = override_module.insertion_point(seed.family, seed.id, seed.text)
+        self._override.task_text = _task_text(insertion, self._override.paragraph)
         return override_module.place_task(seed.text, insertion, self._override.paragraph)
 
     def run_start_fields(self) -> dict[str, Any]:
@@ -180,10 +186,11 @@ class EvidenceChecker:
         return [self._override.token.joined, self._override.token.first, self._override.token.second]
 
     def planted_task_texts(self) -> list[str]:
-        """The run's exact filled task text(s), which FR-063's `strip_planted_tasks` removes."""
+        """The run's exact filled task text(s), which FR-063's `strip_planted_tasks` removes: for a framed
+        indirect seed the frame and the paragraph as one string (FR-064), else the paragraph itself."""
         if self._override is None or self._override.paragraph is None:
             return []
-        return [self._override.paragraph]
+        return [self._override.task_text or self._override.paragraph]
 
     def note_sent(self, text: str, turn: int) -> bool:
         """Called with EVERY message a path sends (the opening message, an attacker-generated one, a replay's
@@ -283,13 +290,24 @@ class EvidenceChecker:
         self._kinds_found = order_kinds([*self._kinds_found, *(item.kind for item in items)])
 
 
-def _plant_override(family: str) -> _Planted | None:
-    """A live run of a family that carries the override task gets its own token and filled paragraph (FR-011)."""
+def _task_text(insertion: override_module.InsertionPoint | None, paragraph: str) -> str:
+    """The exact text `place_task` puts into the seed at this point: the frame and the paragraph as one string
+    (FR-064), the paragraph alone where there is no point or no frame."""
+    return paragraph if insertion is None else insertion.frame(paragraph)
+
+
+def _plant_override(family: str, seed: AttackPrompt | None = None) -> _Planted | None:
+    """A live run of a family that carries the override task gets its own token and filled paragraph (FR-011).
+    Given the run's seed, the task text is framed now, so the retrieval provider built before the opening message
+    already strips the framed text (FR-063); without it, `opening_message` records the text when it composes it."""
     if family not in OVERRIDE_FAMILIES:
         return None
     token = override_module.generate_override_token()
     paragraph, ref = override_module.override_task_paragraph(token)
-    return _Planted(token=token, prompt_ref=ref, paragraph=paragraph)
+    task_text = None
+    if seed is not None:
+        task_text = _task_text(override_module.insertion_point(seed.family, seed.id, seed.text), paragraph)
+    return _Planted(token=token, prompt_ref=ref, paragraph=paragraph, task_text=task_text)
 
 
 def _copied_override(planted: Sequence[PlantedToken]) -> _Planted | None:
@@ -305,16 +323,20 @@ def _copied_override(planted: Sequence[PlantedToken]) -> _Planted | None:
 
 def build_checker(*, store: Any, family: str, canaries: Sequence[str], mode: str = "local", target: Any = None,
                   settings: Any = None, transport: Any = None, resolver: Any = default_resolver,
-                  planted: Sequence[PlantedToken] | None = None, mask: Sequence[str] = ()) -> EvidenceChecker:
+                  planted: Sequence[PlantedToken] | None = None, mask: Sequence[str] = (),
+                  seed: AttackPrompt | None = None) -> EvidenceChecker:
     """The one builder every run starter calls (research D2): `planted=None` is a live run, which plants per
     family (FR-011, FR-028); `planted=[...]` is a replay, which verifies against its source's copied tokens and
     plants nothing (FR-035, FR-036). `target`/`settings` are optional: a replay builds its checker inside the
     replay path, where neither is known (SC-008); None means no side channel and no listener. `mask` is the
     run's mask list — the target URL and its auth values — scrubbed from every reply-derived detail (FR-007).
+    `seed` is the live run's opening seed when the starter already knows it: the planted task text is then the
+    seed's framed text from the start, so a retrieval provider built before the opening message strips exactly
+    what will be sent (FR-063, FR-064); without it the opening message records the text when it is composed.
 
     The unsafe-output check runs on every reply of every family and both modes (FR-014) — "canary-only" is only
     the `evidence=None` legacy default of the *live* run functions; both replay paths always build this full
     checker (FR-035)."""
-    override_planted = _copied_override(planted) if planted is not None else _plant_override(family)
+    override_planted = _copied_override(planted) if planted is not None else _plant_override(family, seed)
     return EvidenceChecker(canaries=canaries, family=family, store=store, unsafe_output=True,
                            override_planted=override_planted, mask=mask)

@@ -351,7 +351,16 @@ same commit. Before opening any implementation PR, review this file and add anyt
   the echo-proofness test and the disarm check compare, and `note_sent` disarms on every message sent, a replay's
   re-sends included. Where the paragraph goes is a Kestrel-owned sidecar
   (`src/kestrel/attacks/data/insertion_points.json`, offset + sha256 of the seed's verbatim library text): direct
-  seeds at the attacker-voice end, indirect seeds **interior**, inside the simulated injected content. Gotcha:
+  seeds at the attacker-voice end, indirect seeds **interior**, inside the simulated injected content, wrapped in
+  the seed's reviewed **quoting frame** (`frame_prefix`/`frame_suffix`, review round 1 item 7: a seed's own text is
+  a meta-instruction *about* retrieved content, so an unframed paragraph at its sentence boundary still read in the
+  user's voice). The run's exact filled task text is therefore frame + paragraph as **one string**
+  (`InsertionPoint.frame`); the run starters pass `seed=` to `build_checker` so `planted_task_texts()` is that
+  string *before* the retrieval provider is built (the provider captures the list eagerly), and `opening_message`
+  records it for a checker built without its seed. A derived point (fixture library) carries no frame — the frame
+  is reviewed per seed, never invented at run time — so only the shipped library exercises it offline
+  (`test_override_placement.py`, one `test_evidence_store_isolation.py` run). A `PatternWrite` carries no document:
+  `SpyExperienceStore.pattern_documents` is what a test inspects for pool text. Gotcha:
   the sidecar is keyed to the *shipped* library, but the offline suite drives the synthetic `fixture_library()`
   whose seeds share those ids with different text — so `insertion_point(family, id, text)` falls back to a
   derived point of the same shape when the fingerprint does not match, and only the unit test

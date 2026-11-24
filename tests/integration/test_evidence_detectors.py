@@ -184,7 +184,9 @@ def test_an_indirect_run_carries_the_task_inside_the_seeds_injected_content(make
     paragraph = override.override_task_paragraph(override.OverrideToken(values["first"], values["second"]))[0]
     # The expected position comes from the documented rule applied to the seed text itself, never from the
     # implementation: a seed with no sentence boundary (the fixture's placeholder) is split at the first word
-    # boundary at or after its middle, so the paragraph lands inside the seed, between two of its own words.
+    # boundary at or after its middle, so the paragraph lands inside the seed, between two of its own words. A
+    # fixture seed is not in the sidecar, so its derived point carries no quoting frame; the shipped seeds' frames
+    # are proved by tests/unit/test_override_placement.py and test_evidence_store_isolation.py (FR-064).
     middle = len(seed) // 2
     expected = seed.index(" ", middle) + 1
     assert 0 < expected < len(seed)

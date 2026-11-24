@@ -174,6 +174,13 @@ def generate_override_token() -> OverrideToken
 class InsertionPoint:                                                   # parsed from the sidecar insertion_points.json
     offset: int                                                          #   character offset into the seed's verbatim text
     fingerprint: str                                                     #   sha256 of the library text it was set against
+    frame_prefix: str = ""                                               #   an indirect seed's reviewed quoting frame: a
+    frame_suffix: str = ""                                               #   neutral prefix/suffix presenting the paragraph
+                                                                          #   as a quoted excerpt of the document, email,
+                                                                          #   OCR text or ticket the seed names (FR-064);
+                                                                          #   both empty for a direct or a derived point
+    def frame(self, paragraph: str) -> str                               #   prefix + paragraph + suffix: the run's exact
+                                                                          #   filled task text as ONE string (FR-063)
 def override_task_paragraph(token: OverrideToken) -> tuple[str, str]      # (paragraph, "override_task@N"); the template
                                                                           #   is framed as the injected override (FR-064)
                                                                           #   and keeps >= 1 alphanumeric word between
@@ -181,13 +188,14 @@ def override_task_paragraph(token: OverrideToken) -> tuple[str, str]      # (par
 def place_task(seed_text: str, insertion: InsertionPoint | None, paragraph: str) -> str
 #   puts the paragraph at the insertion point the Kestrel-owned sidecar records for that seed (FR-064): a
 #   direct-injection seed's point is the attacker-voice position (the paragraph follows the seed text); an
-#   indirect-injection seed's point is a character offset INSIDE its simulated injected content (the paragraph is
-#   substituted there, never appended in Kestrel's own voice)
+#   indirect-injection seed's point is a character offset INSIDE its simulated injected content (the framed text
+#   insertion.frame(paragraph) is substituted there, never appended in Kestrel's own voice)
 def normalise(text: str) -> str                                           # letter case folded, every non-alphanumeric removed
 def reply_confirms(reply: str, joined: str) -> bool                       # case-insensitive, nothing between the parts
 def text_contains_joined(text: str, joined: str) -> bool                  # the disarm check, on normalise(text) (FR-012)
-def strip_planted_tasks(text: str, task_text: str) -> str                 # removes the run's exact filled task text,
-                                                                          #   wherever it sits (FR-063)
+def strip_planted_tasks(text: str, task_texts: Sequence[str]) -> str      # removes the run's exact filled task text(s),
+                                                                          #   wherever it sits (FR-063): for a framed
+                                                                          #   indirect seed the frame + paragraph string
 def scrub_planted_values(text: str, values: Sequence[str]) -> str         # each part, the joined form and the callback URL
                                                                           #   -> a fixed placeholder, wherever they appear (FR-063)
 ```

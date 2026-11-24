@@ -134,7 +134,7 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
         # an experiment-executed run cannot drift from a user-started one (013/FR-037).
         checker = build_checker(store=store, family=seed.family, canaries=canaries, mode=settings.mode,
                                 target=target, settings=settings, transport=transport, resolver=resolver,
-                                mask=[value for _, value in resolved.headers] + [resolved.url])
+                                mask=[value for _, value in resolved.headers] + [resolved.url], seed=seed)
         try:
             if experiment.mode == "adaptive":
                 run = await execute_adaptive_run(

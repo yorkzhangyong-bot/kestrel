@@ -137,7 +137,8 @@ class SpyExperienceStore(ExperienceStore):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.queries: list[dict] = []
-        self.pattern_writes: list = []
+        self.pattern_writes: list = []          # each write's PatternWrite (outcome, id, hit count, distance)
+        self.pattern_documents: list[str] = []  # the document text each write was handed (a PatternWrite has none)
         self.memory_writes: list[dict] = []
 
     def query_patterns(self, *, family: str, query_text: str, n: int):
@@ -147,6 +148,7 @@ class SpyExperienceStore(ExperienceStore):
     def write_pattern(self, **kwargs):
         result = super().write_pattern(**kwargs)
         self.pattern_writes.append(result)
+        self.pattern_documents.append(kwargs.get("document") or "")
         return result
 
     def write_memory(self, **kwargs):

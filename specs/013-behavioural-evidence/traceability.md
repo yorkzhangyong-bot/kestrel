@@ -14,7 +14,7 @@ with the last pull request.
 | FR-004, FR-039 | `tests/unit/test_evidence_model.py` (the seven kinds, labels, locations and classes; the exact evidence line); `tests/integration/test_evidence_api_ui.py` (the headline, the Evidence section, the notices) |
 | FR-007 | `tests/unit/test_evidence_model.py` (no detail the model builds carries the run's own token parts or a URL); `tests/integration/test_evidence_detectors.py` (an excerpt carrying a token part is scrubbed before it is stored) |
 | FR-008, FR-009, FR-012, FR-013, FR-051, SC-001 | `tests/unit/test_override_detector.py` (the token, the joined-form check, the normalised disarm check, 1,000 opening messages never carry the joined form); `tests/integration/test_evidence_detectors.py` (confirmed without the judge, the parts apart confirm nothing, the joined form in no sent message, a disarmed run records no item and the exact notice) |
-| FR-010, FR-011, FR-064, SC-014 | `tests/unit/test_override_placement.py` (the sidecar: every shipped seed, fingerprints, direct at the attacker-voice end, indirect interior, the runtime lookup returns the reviewed point, the `framing: override` field); `tests/integration/test_evidence_detectors.py` (a family that carries no task sends today's message) |
+| FR-010, FR-011, FR-064, SC-014 | `tests/unit/test_override_placement.py` (the sidecar: every shipped seed, fingerprints, direct at the attacker-voice end with no frame, indirect interior with its quoting frame present, the paragraph inside the frame's quoted span, the joined form absent from the framed message after normalisation, the run's task text is the framed text as one string, the runtime lookup returns the reviewed point, the `framing: override` field); `tests/integration/test_evidence_detectors.py` (a family that carries no task sends today's message); `tests/integration/test_evidence_store_isolation.py` (a shipped indirect seed's framed text is stripped whole) |
 | FR-014, FR-017, FR-018, FR-065, SC-002, SC-003 | `tests/unit/test_unsafe_output.py` (the fixture's coverage rule, 100% positive / 0% negative per named pattern, one match per category, the echo rule, the contract's own table and set version); `tests/integration/test_evidence_detectors.py` (confirmed under LLM05 with the pattern name and set version, benign shapes record nothing, a Kestrel-sent message is never scanned) |
 | FR-015, FR-016, FR-059 | `tests/unit/test_unsafe_output.py` (the contract, the module and the fixture cannot drift; the inert note) |
 | FR-034 | `tests/unit/test_store_evidence.py` (the status written at claim time, the one in-run update, never nulled by the sweep) |
@@ -25,9 +25,29 @@ with the last pull request.
 | FR-050, SC-012 | `tests/integration/test_evidence_detectors.py` (a confirmed run makes no model request at all; a judged run makes the one it made before) |
 | FR-057 | `tests/unit/test_store_migration_v11.py` (additive, no rebuild, every row readable) |
 | FR-061 | `tests/integration/test_evidence_store_isolation.py` (a family that plants nothing writes exactly what it did before); `tests/unit/test_retrieval_query_scrub.py` (the query without planted values is unchanged) |
-| FR-063, SC-013 | `tests/unit/test_strip_planted_tasks.py`; `tests/unit/test_retrieval_query_scrub.py`; `tests/integration/test_evidence_store_isolation.py` (repeating attacker and judge doubles, confirmed on turn 3) |
+| FR-063, SC-013 | `tests/unit/test_strip_planted_tasks.py` (a framed task stripped whole, the bare paragraph alone would leave the frame); `tests/unit/test_retrieval_query_scrub.py`; `tests/integration/test_evidence_store_isolation.py` (repeating attacker and judge doubles, confirmed on turn 3; the shipped indirect seed's frame never reaches the pool or a query) |
 | FR-021, FR-027, FR-030, FR-068 | `tests/unit/test_settings_evidence.py` (the three settings and the start-up validation of the base URL; the listener and the per-run check themselves are part 2) |
 | SC-010 | `tests/e2e/test_us013_detectors.py` (part 1's live scenario; part 2 adds its own) |
+
+## Reviewed properties (SC-014) — for the implementation pull request's reviewer
+
+SC-014 keeps two wording properties out of the tests on purpose: a test asserts their structure, never their
+meaning, and the meaning is reviewed here by a person.
+
+- **The override framing** — `src/kestrel/prompts/override_task.v1.md` must read as the injected override itself:
+  an instruction that claims to supersede the agent's own operating instructions and, on that claimed authority,
+  requires the joined token (FR-064). Asserted structurally: the file's `framing: override` front-matter field and
+  at least one alphanumeric word between the two parts (`tests/unit/test_override_placement.py`,
+  `tests/unit/test_override_detector.py`). Reviewed: that the wording realises that framing.
+- **Each indirect seed's quoting frame** — the `frame_prefix`/`frame_suffix` of every `iin-*` entry in
+  `src/kestrel/attacks/data/insertion_points.json` must be a neutral prefix and suffix that present the planted
+  paragraph as a quoted excerpt of the document, email, OCR text or ticket that seed names, carrying no attack
+  wording of its own (FR-064). Asserted structurally: the frame is present, the paragraph sits inside its quoted
+  span, the joined form is absent from the framed message after normalisation, and the library seed is
+  byte-identical (`tests/unit/test_override_placement.py`). Reviewed: that each frame is neutral and names the
+  content its seed presents as retrieved. What the frame proves is that the agent followed an instruction
+  presented as retrieved content inside the user turn; proof that an instruction travelled a real retrieval path
+  is part 2's side channel.
 
 ## Justified outside tests — part 1
 
