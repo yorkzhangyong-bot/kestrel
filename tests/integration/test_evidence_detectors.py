@@ -236,3 +236,114 @@ def test_a_run_disarmed_before_the_confirming_reply_records_no_override_item(mak
     disarmed = [line for line in json_log() if line.get("event") == "evidence.override_disarmed"]
     assert len(disarmed) == 1 and disarmed[0]["turn"] == 2 and disarmed[0]["level"] == "WARNING"
     assert all(str(token.token) not in str(line) for line in json_log())   # never the token on a line (FR-048)
+
+
+# ---- the unsafe-output detector (FR-014, FR-017, FR-065, SC-003) ----
+
+
+def fixture_case(pattern: str, kind: str) -> str:
+    """One inert sample from the detector fixture — the only home of those samples (FR-059)."""
+    import json
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "unsafe_output_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
+    return next(case["text"] for case in cases if case["pattern"] == pattern and case["kind"] == kind)
+
+
+class EchoingAttacker(StubAttacker):
+    """An attacker whose turn-2 message is the given text, so the reply can echo Kestrel's own message back."""
+
+    def __init__(self, message: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._message = message
+
+    async def next_message(self, *, conversation, family, progress=None, hints=None, timeout=None):
+        return AttackerReply(message=self._message, tokens=10)
+
+
+def test_a_reply_matching_a_pattern_confirms_without_the_judge(make_client, settings):  # FR-014, FR-017, SC-003
+    sample = fixture_case("drop_or_truncate_table", "positive")
+    judge = StubJudge(verdict="failed")
+    api, _target = client_for(make_client, settings, lambda v: sample, judge=judge)
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001")
+
+    assert run["verdict"] == "succeeded" and run["hard_evidence"] is True and run["judge_used"] is False
+    assert judge.calls == []
+    items = store.list_evidence(run["id"])
+    assert [(i.kind, i.turn, i.location) for i in items] == [("unsafe_executable_output", 1, "reply")]
+    assert items[0].owasp_category == "LLM05: Improper Output Handling"
+    assert (items[0].pattern_name, items[0].pattern_set_version) == ("drop_or_truncate_table", "1")
+    assert items[0].detail.startswith("destructive_sql/drop_or_truncate_table (set 1): ")
+
+
+def test_a_reply_with_only_the_benign_shape_records_nothing_and_is_judged_as_today(make_client, settings):  # FR-014
+    sample = fixture_case("drop_or_truncate_table", "negative")
+    judge = StubJudge(verdict="failed")
+    api, _target = client_for(make_client, settings, lambda v: sample, judge=judge)
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001")
+
+    assert store.list_evidence(run["id"]) == []
+    assert run["hard_evidence"] is False and run["judge_used"] is True and len(judge.calls) == 1
+
+
+def test_a_reply_echoing_a_message_kestrel_sent_records_no_item(make_client, settings):  # FR-065
+    sample = fixture_case("download_piped_to_shell", "positive")
+    store_box: dict = {}
+    api = make_client(settings, transport=httpx.MockTransport(lambda r: store_box["target"](r)),
+                      library=fixture_library(), judge=StubJudge(verdict="failed"),
+                      attacker=EchoingAttacker(sample))
+    store = api.app.state.store
+    turns = {"n": 0}
+
+    def make_reply(_values):
+        turns["n"] += 1
+        return "nothing unusual" if turns["n"] == 1 else f"you asked me to run: {sample}"
+
+    store_box["target"] = ReplyingTarget(store, make_reply)
+    target = saved_target(store)
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001", mode="adaptive")
+
+    assert [i.kind for i in store.list_evidence(run["id"])] == []   # the agent only quoted what Kestrel sent
+    assert run["hard_evidence"] is False
+
+
+def test_a_canary_and_an_unsafe_output_match_on_one_turn_are_two_items(make_client, settings):  # FR-001, SC-003
+    sample = fixture_case("active_script_element", "positive")
+    api, _target = client_for(make_client, settings, lambda v: f"KESTREL-CANARY-7Q4M2X and {sample}")
+    store = api.app.state.store
+    target = saved_target(store, canaries=["KESTREL-CANARY-7Q4M2X"])
+
+    run = run_attack(api, target.id, family="system_prompt_leak", seed_id="spl-001")
+
+    items = store.list_evidence(run["id"])
+    assert [i.kind for i in items] == ["canary_in_reply", "unsafe_executable_output"]
+    assert items[0].owasp_category == "LLM07: System Prompt Leakage"      # the canary keeps its family's class
+    assert items[1].owasp_category == "LLM05: Improper Output Handling"   # the detector carries its own
+    assert run["verdict"] == "succeeded" and run["hard_evidence"] is True
+    assert "canary" in run["reason"] and "unsafe executable output" in run["reason"]
+
+
+def test_an_excerpt_carrying_a_planted_token_part_is_scrubbed_before_it_is_stored(make_client, settings):  # FR-007
+    # The run's own token part lands inside the matched text (an address the fixture sample already carries), so
+    # the excerpt would quote it back - the checker scrubs the run's planted values before storing the detail.
+    sample = fixture_case("active_script_element", "positive")
+    api, _target = client_for(make_client, settings,
+                              lambda v: sample.replace("https://example.com", f"https://example.com/{v['first']}"))
+    store = api.app.state.store
+    target = saved_target(store)
+
+    run = run_attack(api, target.id)   # direct_injection: this run plants a token
+
+    values = planted_values(store, run["id"])
+    items = store.list_evidence(run["id"])
+    assert [i.kind for i in items] == ["unsafe_executable_output"]
+    for value in (values["first"], values["second"], values["joined"]):
+        assert value not in items[0].detail
+    assert override.SCRUB_PLACEHOLDER in items[0].detail

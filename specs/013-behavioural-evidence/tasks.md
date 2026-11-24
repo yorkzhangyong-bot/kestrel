@@ -242,12 +242,12 @@ LLM05 with no judge call; the documented benign shapes and echoes of Kestrel's o
 
 **Independent Test**: quickstart US2 — `tests/unit/test_unsafe_output.py`.
 
-- [ ] T020 [P] [US2] Populate the inert fixture `tests/fixtures/unsafe_output_cases.json` per
+- [X] T020 [P] [US2] Populate the inert fixture `tests/fixtures/unsafe_output_cases.json` per
       contracts/detectors.md: a `"_note"` key stating the samples are inert agent output never executed, sourced
       or run, and a `"cases"` list whose every entry is `{"pattern": "<name>", "kind": "positive"|"negative",
       "text": "<sample reply>"}` — at least **three positive and three negative cases per named pattern** (not per
       category), honouring that pattern's documented boundary (FR-016, FR-059, SC-002).
-- [ ] T021 [P] [US2] Unit test `tests/unit/test_unsafe_output.py` (`FEATURE = "013"`): every name in `PATTERNS`
+- [X] T021 [P] [US2] Unit test `tests/unit/test_unsafe_output.py` (`FEATURE = "013"`): every name in `PATTERNS`
       has ≥ 3 positive and ≥ 3 negative cases tagged with it and a pattern short of either **fails**; every
       positive case matches **its own named pattern** (100%); no negative case matches **any** pattern (100%);
       `scan` returns at most one match per category; a match whose text also appears in `sent_texts` is skipped
@@ -256,18 +256,18 @@ LLM05 with no judge call; the documented benign shapes and echoes of Kestrel's o
       named-pattern table and set version and asserts they equal the module's `PATTERNS` (names and categories)
       and `PATTERN_SET_VERSION`, the way `tests/unit/test_roadmap.py` reads `docs/roadmap.md` — so the fixture, the
       module and the contract cannot drift (FR-015, FR-016, FR-017, FR-065, SC-002).
-- [ ] T022 [US2] Implement `src/kestrel/evidence/unsafe_output.py`: `PATTERN_SET_VERSION = "1"` and the compiled
+- [X] T022 [US2] Implement `src/kestrel/evidence/unsafe_output.py`: `PATTERN_SET_VERSION = "1"` and the compiled
       `PATTERNS` tuple carrying **exactly the pattern names of contracts/detectors.md and no others**, each
       expression implementing that name's documented matched shape and leaving its documented benign counterpart
       alone; `scan(reply, sent_texts=())` (≤ one `Match` per category, earliest by position, echo rule applied);
       `detail(match)` (FR-014 to FR-017, FR-065). Makes T021 pass.
-- [ ] T023 [US2] Add the unsafe-output check to the checker as check #3 of the fixed order, for every run of every
+- [X] T023 [US2] Add the unsafe-output check to the checker as check #3 of the fixed order, for every run of every
       family and both modes, over the reply only, passing the run's sent messages as `sent_texts`: one
       `unsafe_executable_output` item per matched category, location `reply`, class LLM05, carrying the pattern
       name and set version as their own fields. **Scrub the matched excerpt through
       `scrub_planted_values(checker.planted_values())` before building the detail**, so an excerpt that happens to
       carry a callback URL or a token part is cleaned before it is stored (FR-007, FR-014, FR-017, FR-018, FR-065).
-- [ ] T024 [US2] Integration test `tests/integration/test_evidence_detectors.py` unsafe-output cases (`FEATURE =
+- [X] T024 [US2] Integration test `tests/integration/test_evidence_detectors.py` unsafe-output cases (`FEATURE =
       "013"`): a stub target whose reply is a positive sample → confirmed run, one `unsafe_executable_output` item
       naming its pattern and set version, no judge call; a negative sample → no item, judged as today; a reply
       echoing text Kestrel sent → no item (FR-065); a canary **and** an unsafe-output match on one turn → two
