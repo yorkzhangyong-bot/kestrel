@@ -1,9 +1,11 @@
 {
   "attacker:direct_injection": {
-    "1": "ca62f66b8b4a0e3a92353e3b55e714c9258917ddf97290d4bb33ce778eb79f5c"
+    "1": "ca62f66b8b4a0e3a92353e3b55e714c9258917ddf97290d4bb33ce778eb79f5c",
+    "2": "fa4bd9d40ce3925f3ffe04b1d1357d04e144c3ca25fc4d0557e2c40b8ed22014"
   },
   "attacker:indirect_injection": {
-    "1": "17ec0151cc2ad73ae940a013feaa25ceea7f30e49772f814fb7a7da4e052e6f2"
+    "1": "17ec0151cc2ad73ae940a013feaa25ceea7f30e49772f814fb7a7da4e052e6f2",
+    "2": "b0873685b6ea3bd60870cb730c9e63be4ac5feccf74f5955c1d7ea8e29e23878"
   },
   "attacker:system_prompt_leak": {
     "1": "998d2b81f146e8de451a5534a9be5a1330c7bc1abe133f0c800c0701672d7b73"
@@ -13,6 +15,9 @@
   },
   "judge": {
     "1": "bb60324992b86113c3ebce09dc1d3c9726cef9bc43e127a8640ab20a45a3a9fc"
+  },
+  "override_task": {
+    "1": "6406d9d9204a9e77fb95f7f2e7c18407104723d20ddc1d42faf3938024d3b9a9"
   },
   "recommender": {
     "1": "31952867a15bd2c4e6ff79e6983e73e7f8c349371347c70cfd78a8bf489bdc81"

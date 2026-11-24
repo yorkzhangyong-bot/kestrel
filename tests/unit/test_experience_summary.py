@@ -16,7 +16,9 @@ def test_summary_falls_back_to_metadata_when_no_notes():
     s = build_summary([], family="direct_injection", verdict="succeeded", hard_evidence=True,
                       turns_used=1, stopping_condition="succeeded")
     assert "direct_injection" in s and "succeeded" in s
-    assert "canary" in s.lower()  # hard evidence is noted in the fallback
+    # Hard evidence is noted in the fallback; since feature 013 it is any deterministic proof, so the line names
+    # no kind in particular (013/FR-004, 013/SC-008).
+    assert "hard evidence" in s.lower() and "canary" not in s.lower()
 
 
 def test_summary_ignores_empty_notes_and_uses_fallback():

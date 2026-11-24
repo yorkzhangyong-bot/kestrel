@@ -28,12 +28,18 @@ Rules the files and their use honour:
   sidecar file `src/kestrel/attacks/data/insertion_points.json` keys each direct-injection and indirect-injection
   seed's prompt id to an insertion point: a character offset into the seed's verbatim library text plus a sha256
   fingerprint of that text. A direct seed's point is the attacker-voice position (the paragraph follows its text);
-  an indirect seed's point sits **inside its own simulated injected content**, so the instruction reaches the agent
-  as retrieved data rather than as a request from its user. `place_task(seed_text, insertion, paragraph)` performs
-  the substitution, and adaptive turn 1 uses the same seed and therefore the same insertion point. The library text
-  stays verbatim (the 002 contract); a test fails when an indirect seed has no entry, an offset is out of range, or
-  a fingerprint no longer matches the library text. A seed of a family that carries no task has no entry and is
-  sent unchanged. The callback task is the exception: it is **appended to the opening message in the user's voice**
+  an indirect seed's point sits **inside its own simulated injected content**, and its entry also carries a reviewed
+  **quoting frame** (`frame_prefix`/`frame_suffix`): a neutral prefix and suffix that present the paragraph as a
+  quoted excerpt of the document, email, OCR text or ticket the seed names, carrying no attack wording and never
+  joining the token parts, so the instruction reaches the agent as quoted retrieved content rather than as a
+  request from its user. `place_task(seed_text, insertion, paragraph)` performs the substitution of
+  `insertion.frame(paragraph)` — the frame and the paragraph as one string, which is the run's exact filled task
+  text — and adaptive turn 1 uses the same seed and therefore the same insertion point. The library text stays
+  verbatim (the 002 contract); a test fails when an indirect seed has no entry or no frame, an offset is out of
+  range, a fingerprint no longer matches the library text, or the paragraph does not sit inside the frame's quoted
+  span. A seed of a family that carries no task has no entry and is sent unchanged. A framed seed simulates
+  retrieved content inside the user turn; proof that an instruction travelled a real retrieval path comes with the
+  part-2 side channel. The callback task is the exception: it is **appended to the opening message in the user's voice**
   (no insertion point), because it is a request to the agent, not simulated retrieved data.
 - Because the template guarantees a word between the two parts, no normalisation of a sent message (stripping
   whitespace, punctuation or formatting) can produce the joined form; the echo-proofness test and the disarm check
@@ -42,10 +48,11 @@ Rules the files and their use honour:
   override_task --lock` (and the same for `callback_task`); `verify_lock()` / `tests/unit/test_prompt_guard.py`
   fail the suite until the lock pins them. A brand-new id is recordable because `scripts/bump_prompt.py`'s
   `record()` does `lock.setdefault(prompt_id, {})`.
-- `strip_planted_tasks(text, task_text)` removes the run's **exact filled task text** — the one known string that
-  run planted, wherever it sits — by literal removal rather than a paragraph-anchored regex, from any text bound
-  for the experience store or the retrieval query (FR-063). Because it is keyed on the run's own filled string, it
-  works wherever the task was placed and needs no knowledge of the template's versions.
+- `strip_planted_tasks(text, task_texts)` removes the run's **exact filled task text** — the one known string that
+  run planted, wherever it sits; for a framed indirect seed that is the frame and the paragraph as one string — by
+  literal removal rather than a paragraph-anchored regex, from any text bound for the experience store or the
+  retrieval query (FR-063). Because it is keyed on the run's own filled string, it works wherever the task was
+  placed and needs no knowledge of the template's versions.
 - Stripping the template is **not sufficient on its own**: `scrub_planted_values(text, values)` additionally
   replaces the run's own planted values — each token part, the joined form and the callback URL — wherever else
   they appear, because a later attacker message or a judge progress note can repeat them (FR-063, research D11).

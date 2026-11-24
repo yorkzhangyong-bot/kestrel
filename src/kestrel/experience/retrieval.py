@@ -17,6 +17,7 @@ from typing import Any, Callable, Sequence
 
 from kestrel import events
 from kestrel.attacks.library import family_label
+from kestrel.evidence.override import scrub_planted_values, strip_planted_tasks
 from kestrel.experience.hints import format_hints
 from kestrel.experience.store import Candidate
 
@@ -49,13 +50,18 @@ class Selection:
         return [round(candidate.distance, 4) for candidate in self.selected]
 
 
-def build_query(family: str, conversation: Sequence[tuple[str, str]]) -> tuple[str, int]:
+def build_query(family: str, conversation: Sequence[tuple[str, str]], *, planted_values: Sequence[str] = (),
+                task_texts: Sequence[str] = ()) -> tuple[str, int]:
     """The retrieval query and how many attacker messages it holds: the family label, then the last
     `QUERY_MESSAGES` messages whose role is exactly `attacker`, in conversation order (FR-001). An empty
     conversation yields the label alone (never reached in a run: the first retrieval is on turn 2, after the seed).
     Accepted residual (spec assumption): an attacker message may itself echo a fragment of a reply — that text is
-    the attacker's own and is not filtered."""
-    messages = [text for role, text in conversation if role == ATTACKER_ROLE][-QUERY_MESSAGES:]
+    the attacker's own and is not filtered.
+
+    Feature 013 (FR-063): each message is first stripped of the run's exact filled task text and scrubbed of its
+    own planted values, so no per-run token part, joined form or callback URL is ever used to search."""
+    messages = [scrub_planted_values(strip_planted_tasks(text, task_texts), planted_values)
+                for role, text in conversation if role == ATTACKER_ROLE][-QUERY_MESSAGES:]
     label = family_label(family)
     return " ".join([label, *messages]), len(messages)
 
@@ -96,7 +102,8 @@ def _near_identical(candidate: Candidate, selected: Sequence[Candidate], thresho
 
 
 def background_provider(experience: Any, *, target_id: int, purpose: str | None, family: str, settings: Any,
-                        use_prior_experience: bool) -> Callable[[list], str | None]:
+                        use_prior_experience: bool, planted_values: Sequence[str] = (),
+                        task_texts: Sequence[str] = ()) -> Callable[[list], str | None]:
     """The attacker's background each turn (feature 004 FR-021, feature 011): purpose always; on a warm run with a
     usable store, this target's memory (exact id, unchanged) plus the patterns selected for the attacker-only query
     under the controls in `settings.retrieval`, with one `memory.retrieval` line per call — zero counts when nothing
@@ -107,7 +114,8 @@ def background_provider(experience: Any, *, target_id: int, purpose: str | None,
             return format_hints(purpose=purpose, patterns=[], memory=[])   # cold: purpose only
         retrieval = settings.retrieval
         memory = experience.retrieve_memory(target_id=target_id, family=family, cap=settings.experience_memory_cap)
-        query_text, used = build_query(family, conversation)
+        query_text, used = build_query(family, conversation, planted_values=planted_values,
+                                       task_texts=task_texts)
         pool = min(retrieval.k * CANDIDATE_MULTIPLIER, experience.count("pattern", family=family))
         candidates = experience.query_patterns(family=family, query_text=query_text, n=pool)
         selection = select_patterns(candidates, k=retrieval.k, distance_floor=retrieval.distance_floor,

@@ -174,6 +174,13 @@ def generate_override_token() -> OverrideToken
 class InsertionPoint:                                                   # parsed from the sidecar insertion_points.json
     offset: int                                                          #   character offset into the seed's verbatim text
     fingerprint: str                                                     #   sha256 of the library text it was set against
+    frame_prefix: str = ""                                               #   an indirect seed's reviewed quoting frame: a
+    frame_suffix: str = ""                                               #   neutral prefix/suffix presenting the paragraph
+                                                                          #   as a quoted excerpt of the document, email,
+                                                                          #   OCR text or ticket the seed names (FR-064);
+                                                                          #   both empty for a direct or a derived point
+    def frame(self, paragraph: str) -> str                               #   prefix + paragraph + suffix: the run's exact
+                                                                          #   filled task text as ONE string (FR-063)
 def override_task_paragraph(token: OverrideToken) -> tuple[str, str]      # (paragraph, "override_task@N"); the template
                                                                           #   is framed as the injected override (FR-064)
                                                                           #   and keeps >= 1 alphanumeric word between
@@ -181,13 +188,14 @@ def override_task_paragraph(token: OverrideToken) -> tuple[str, str]      # (par
 def place_task(seed_text: str, insertion: InsertionPoint | None, paragraph: str) -> str
 #   puts the paragraph at the insertion point the Kestrel-owned sidecar records for that seed (FR-064): a
 #   direct-injection seed's point is the attacker-voice position (the paragraph follows the seed text); an
-#   indirect-injection seed's point is a character offset INSIDE its simulated injected content (the paragraph is
-#   substituted there, never appended in Kestrel's own voice)
+#   indirect-injection seed's point is a character offset INSIDE its simulated injected content (the framed text
+#   insertion.frame(paragraph) is substituted there, never appended in Kestrel's own voice)
 def normalise(text: str) -> str                                           # letter case folded, every non-alphanumeric removed
 def reply_confirms(reply: str, joined: str) -> bool                       # case-insensitive, nothing between the parts
 def text_contains_joined(text: str, joined: str) -> bool                  # the disarm check, on normalise(text) (FR-012)
-def strip_planted_tasks(text: str, task_text: str) -> str                 # removes the run's exact filled task text,
-                                                                          #   wherever it sits (FR-063)
+def strip_planted_tasks(text: str, task_texts: Sequence[str]) -> str      # removes the run's exact filled task text(s),
+                                                                          #   wherever it sits (FR-063): for a framed
+                                                                          #   indirect seed the frame + paragraph string
 def scrub_planted_values(text: str, values: Sequence[str]) -> str         # each part, the joined form and the callback URL
                                                                           #   -> a fixed placeholder, wherever they appear (FR-063)
 ```
@@ -300,8 +308,10 @@ class EvidenceChecker:
     @property
     def extra_headers(self) -> dict[str, str]                                 # {"X-Kestrel-Correlation-Id": ...} or {}
 
-def build_checker(*, store, target, settings, family, mode, canaries, transport=None, resolver=default_resolver,
-                  planted: Sequence[PlantedToken] | None = None) -> EvidenceChecker
+def build_checker(*, store, family, canaries, mode="local", target=None, settings=None, transport=None,
+                  resolver=default_resolver, planted: Sequence[PlantedToken] | None = None) -> EvidenceChecker
+#   target/settings default to None: a replay builds its checker inside execute_replay/run_replay_adaptive, whose
+#   pre-existing direct-call tests pass neither (SC-008); None means "no side channel" and "no listener" there
 #   planted=None  -> a live run: plant per family (FR-011, FR-028); planted=[...] -> a replay: verify against these,
 #   plant nothing (FR-035, FR-036). The side channel comes from target.side_channel (None -> not_configured).
 ```
@@ -310,7 +320,7 @@ def build_checker(*, store, target, settings, family, mode, canaries, transport=
 
 | Variable | Setting | Default | Rule |
 |----------|---------|---------|------|
-| `KESTREL_CALLBACK_BASE_URL` | `callback_base_url: str \| None` | unset → `None` (listener disabled, nothing planted) | an http/https URL without credentials; anything else refuses to start |
+| `KESTREL_CALLBACK_BASE_URL` | `callback_base_url: str \| None` | unset → `None` (listener disabled, nothing planted) | an http/https URL without credentials whose path ends in the listener's own `/callback` prefix (FR-027, `contracts/callback-listener.md`); anything else refuses to start |
 | `KESTREL_CALLBACK_WAIT_S` | `callback_wait_s: float` | `2` | a finite number ≥ 0 (`0` = check once, never sleep) |
 | `KESTREL_SIDE_CHANNEL_TIMEOUT_S` | `side_channel_timeout_s: int` | `10` | a positive integer (the existing `positive_int` helper) |
 

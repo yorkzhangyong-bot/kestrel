@@ -23,7 +23,9 @@ def build_summary(progress_notes: Iterable[str | None], *, family: str, verdict:
         if stopping_condition:  # omit the clause entirely when there is no stopping condition (never "n/a")
             text += f"; stopped at {stopping_condition}"
         if hard_evidence:
-            text += "; canary hard evidence"
+            # Feature 013: hard evidence is any deterministic proof (a canary, the override token, unsafe output,
+            # a side-channel check), so the summary names none in particular (FR-004: no kind reported as more).
+            text += "; hard evidence"
     return _sanitise(text)
 
 

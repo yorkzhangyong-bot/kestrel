@@ -36,6 +36,10 @@ ATTACKER_PREFIX = "attacker:"
 _VERSION_RE = re.compile(r"^[1-9]\d*$")
 _FILE_RE = re.compile(r"^(?P<stem>[A-Za-z0-9_.-]+)\.v(?P<version>[1-9]\d*)\.md$")
 _FRONT_MATTER_KEYS = ("id", "version")
+# Feature 013: one optional extra key. `framing` records what a planting template is framed as (the override
+# template's `framing: override`, SC-014) — a structural property a test can assert without reading the wording.
+# It is never required: every existing two-line file stays valid, and no other key is accepted.
+_OPTIONAL_FRONT_MATTER_KEYS = ("framing",)
 _FENCE = "---"
 
 
@@ -60,12 +64,16 @@ class PromptEntry:
 
 @dataclass(frozen=True)
 class PromptFile:
-    """One parsed prompt file: the id and version its front-matter declares, and the text below the front-matter."""
+    """One parsed prompt file: the id and version its front-matter declares, and the text below the front-matter.
+
+    `framing` (feature 013) is the optional third front-matter key: `None` for every ordinary prompt, `"override"`
+    on the override-task template, whose paragraph must read as the injected override itself (013/SC-014)."""
 
     id: str
     version: str
     text: str
     path: Path
+    framing: str | None = None
 
 
 def attacker_id(family: str) -> str:
@@ -90,15 +98,18 @@ def prompt_path(prompt_id: str, version: str, directory: Path | None = None) -> 
     return (directory or PROMPTS_DIR) / f"{file_stem(prompt_id)}.v{version}.md"
 
 
-def format_prompt_file(prompt_id: str, version: str, text: str) -> str:
-    """The on-disk form of a prompt: the two-line front-matter, then the text, ending with one newline."""
-    return f"{_FENCE}\nid: {prompt_id}\nversion: {version}\n{_FENCE}\n{text.strip(chr(10))}\n"
+def format_prompt_file(prompt_id: str, version: str, text: str, framing: str | None = None) -> str:
+    """The on-disk form of a prompt: the two-line front-matter — plus the optional `framing` line when one is
+    given (feature 013) — then the text, ending with one newline."""
+    extra = f"framing: {framing}\n" if framing else ""
+    return f"{_FENCE}\nid: {prompt_id}\nversion: {version}\n{extra}{_FENCE}\n{text.strip(chr(10))}\n"
 
 
 def parse_prompt_file(path: Path) -> PromptFile:
-    """Read one `<file id>.v<N>.md`: the front-matter must name exactly `id` and `version`, and they must agree with
-    the file name. The text is everything below the front-matter, minus leading and trailing newlines (so a
-    checkout's line-ending or trailing-newline convention cannot move a fingerprint)."""
+    """Read one `<file id>.v<N>.md`: the front-matter must name `id` and `version` — and may name the optional
+    `framing` (feature 013) — and they must agree with the file name. The text is everything below the
+    front-matter, minus leading and trailing newlines (so a checkout's line-ending or trailing-newline convention
+    cannot move a fingerprint, and the optional key cannot move one either)."""
     match = _FILE_RE.match(path.name)
     if match is None:
         raise PromptFileError(f"{path.name}: a prompt file is named '<id>.v<N>.md'")
@@ -109,10 +120,12 @@ def parse_prompt_file(path: Path) -> PromptFile:
     if end is None:
         raise PromptFileError(f"{path.name}: the front-matter is not closed with '---'")
     meta: dict[str, str] = {}
+    allowed = _FRONT_MATTER_KEYS + _OPTIONAL_FRONT_MATTER_KEYS
     for line in lines[1:end]:
         key, sep, value = line.partition(":")
-        if not sep or key.strip() not in _FRONT_MATTER_KEYS:
-            raise PromptFileError(f"{path.name}: the front-matter allows only 'id' and 'version', not {line.strip()!r}")
+        if not sep or key.strip() not in allowed:
+            raise PromptFileError(f"{path.name}: the front-matter allows only 'id' and 'version' (and an optional "
+                                  f"'framing'), not {line.strip()!r}")
         meta[key.strip()] = value.strip()
     missing = [key for key in _FRONT_MATTER_KEYS if key not in meta]
     if missing:
@@ -124,7 +137,7 @@ def parse_prompt_file(path: Path) -> PromptFile:
     text = "\n".join(lines[end + 1:]).strip("\n")
     if not text:
         raise PromptFileError(f"{path.name}: the prompt text is empty")
-    return PromptFile(id=prompt_id, version=version, text=text, path=path)
+    return PromptFile(id=prompt_id, version=version, text=text, path=path, framing=meta.get("framing") or None)
 
 
 @lru_cache(maxsize=64)

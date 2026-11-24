@@ -100,14 +100,14 @@ def a_succeeded_run(store) -> int:
 def test_a_fresh_database_is_created_at_the_current_version(tmp_path, vault):
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "10"   # current version (bumped to 8 for 010, to 9 for 011, to 10 for 012)
+    assert version(path) == SCHEMA_VERSION == "11"   # current version (bumped to 8 for 010, to 9 for 011, to 10 for 012)
     assert "report_recommendations" in tables(path)
 
 
 def test_a_v4_database_gains_the_table_and_migrates_to_current(v4_db, vault):
     assert version(v4_db) == "4"
     store = TargetStore(v4_db, vault)
-    assert version(v4_db) == SCHEMA_VERSION == "10"   # a very old db migrates all the way to current
+    assert version(v4_db) == SCHEMA_VERSION == "11"   # a very old db migrates all the way to current
     assert "report_recommendations" in tables(v4_db)
     assert store.list_runs(1)[0].verdict == "succeeded"   # the existing run survived the migration
 
@@ -126,7 +126,7 @@ def test_recommendation_round_trips_and_is_replaced_per_run(tmp_path, vault):
 def test_opening_twice_is_harmless(v4_db, vault):
     TargetStore(v4_db, vault)
     TargetStore(v4_db, vault)
-    assert version(v4_db) == "10"
+    assert version(v4_db) == "11"
 
 
 def test_a_newer_version_is_refused(tmp_path, vault):

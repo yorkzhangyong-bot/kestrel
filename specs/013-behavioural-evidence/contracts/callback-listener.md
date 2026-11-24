@@ -38,8 +38,8 @@ from the access token.
 | Condition | Status | Body | Side effects |
 |-----------|--------|------|--------------|
 | `{token}` is carried by a run that is `in_progress` (its own planting, or the copy a replay in progress holds) and that run holds fewer than `CALLBACK_HITS_CAP` (100) hit rows | `204` | empty | one `callback_hits` row (`run_id` = that in-progress run, `method`, `received_at`); one `callback.hit` log line bound to that run |
-| `{token}` is carried by a run in progress that already holds `CALLBACK_HITS_CAP` hit rows (consumed or not) | `204` | empty | **nothing stored**; one `callback.ignored` warning with `reason` `hit_cap_reached`, bound to that run, once per run per process (FR-072) |
-| any other token, or a token whose runs are all finished | `404` | empty | nothing recorded; one `callback.ignored` warning per `reason` per process (`unknown_token` / `run_not_in_progress`) |
+| `{token}` is carried by a run in progress that already holds `CALLBACK_HITS_CAP` hit rows (consumed or not) | `204` | empty | **nothing stored**; one `callback.ignored` warning with `reason_kind` `hit_cap_reached`, bound to that run, once per run per process (FR-072) |
+| any other token, or a token whose runs are all finished | `404` | empty | nothing recorded; one `callback.ignored` warning per `reason_kind` per process (`unknown_token` / `run_not_in_progress`) |
 
 - The route **never reads the request body** and never echoes any part of the request (FR-029).
 - The route is exempt from the hosted-mode access token (`require_token` returns early for `/callback/` paths):
@@ -87,6 +87,6 @@ something that works. Without it, a stateless target could only ever be given th
 
 ## What the log carries (`contracts/log-records-delta.md`)
 
-`callback.hit` carries `method` and the run's scope fields; `callback.ignored` carries `reason` (`unknown_token`,
+`callback.hit` carries `method` and the run's scope fields; `callback.ignored` carries `reason_kind` (`unknown_token`,
 `run_not_in_progress`, or `hit_cap_reached` — the last bound to its run, once per run per process). Neither carries
 the token, the URL, the caller's address or any header (FR-048).

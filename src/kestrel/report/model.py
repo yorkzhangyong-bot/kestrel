@@ -6,7 +6,9 @@ store); it does no I/O of its own. The renderers in `render.py` consume only the
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping, Sequence
 
+from kestrel.evidence.model import EvidenceItem, derived_items, kind_label, location_label
 from kestrel.report import owasp
 
 
@@ -48,6 +50,20 @@ class UntestedClass:
 
 
 @dataclass(frozen=True)
+class EvidenceLine:
+    """One of a finding's evidence items, as the report prints it (feature 013, FR-044)."""
+    label: str
+    turn: int
+    location_label: str
+    owasp_class: str
+    detail: str
+
+    @property
+    def line(self) -> str:
+        return f"{self.label} · turn {self.turn} · {self.location_label} · {self.owasp_class}"
+
+
+@dataclass(frozen=True)
 class Finding:
     family: str
     owasp_class: str
@@ -55,6 +71,7 @@ class Finding:
     evidence: str | None = None             # verbatim canary evidence (hard evidence), as stored
     judge_note: str | None = None           # the judge's note when the success was judged (suspected)
     recommendation: Recommendation | None = None
+    evidence_items: tuple[EvidenceLine, ...] = ()   # feature 013 (FR-044): every deterministic item of this run
 
 
 @dataclass(frozen=True)
@@ -84,31 +101,62 @@ LIMITATIONS_BASE = (
     "and patterns, so outcomes vary between runs.")
 
 
-def build_report(*, target, runs, turns_by_run, recommendations=None, experience_summary=None, now) -> ReportModel:
+def build_report(*, target, runs, turns_by_run, recommendations=None, experience_summary=None, now,
+                 evidence_by_run: Mapping[int, Sequence[EvidenceItem]] | None = None) -> ReportModel:
     """Assemble the report model from already-fetched data. Pure: no database, model, store or clock of its own.
 
     `runs` is newest-first; `turns_by_run` maps an adaptive run id to its Turns; `recommendations` maps a
-    succeeded run id to a Recommendation; `experience_summary` is {memory_count, pattern_count} or None."""
+    succeeded run id to a Recommendation; `experience_summary` is {memory_count, pattern_count} or None;
+    `evidence_by_run` (feature 013) maps a run id to its stored evidence items - a run with none that carries
+    hard evidence from before that feature is given its one derived canary item here, the same way the API does
+    it (FR-005)."""
     if not runs:
         return ReportModel(header=Header(target_name=target.name, purpose=target.description, generated_at=now,
                                          run_count=0), is_empty=True)
     recommendations = recommendations or {}
+    items_by_run = {run.id: derived_items(run, (evidence_by_run or {}).get(run.id, ())) for run in runs}
     header = _header(target, runs, turns_by_run, now)
-    coverage = tuple(_coverage_row(tested, runs) for tested in owasp.TESTED)
+    coverage = tuple(_coverage_row(tested, runs, items_by_run) for tested in owasp.TESTED)
+    coverage += tuple(_detected_row(detected, runs, turns_by_run, items_by_run) for detected in owasp.DETECTED)
     untested = tuple(UntestedClass(owasp_class=name, reason=reason) for name, reason in owasp.UNTESTED)
-    findings = tuple(_finding(run, turns_by_run.get(run.id, ()), recommendations)
+    findings = tuple(_finding(run, turns_by_run.get(run.id, ()), recommendations, items_by_run.get(run.id, ()))
                      for run in runs if (run.verdict or "") == "succeeded")
     other_runs = tuple(_other_run(run) for run in runs if (run.verdict or "") != "succeeded")
     return ReportModel(header=header, coverage=coverage, untested=untested, findings=findings,
                        other_runs=other_runs, limitations=_limitations(experience_summary), is_empty=False)
 
 
-def _coverage_row(tested, runs) -> CoverageRow:
+def _carries(items, owasp_class: str) -> bool:
+    """Whether this run's own evidence carries that class (FR-045): a cross-class item never makes a run a
+    confirmed finding for its family's class, and a `canary_in_reply` item always carries its family's."""
+    return any(item.owasp_category == owasp_class for item in items)
+
+
+def _coverage_row(tested, runs, items_by_run) -> CoverageRow:
+    """A run is listed under its family's class; it counts there as **confirmed** only when one of its own items
+    carries that class, as **suspected** only when the judge said so (a success with no hard evidence), and
+    otherwise as held — a run whose only items carry another class had no judge verdict on its confirming turn,
+    so it is neither (FR-045)."""
     matching = [r for r in runs if r.owasp_category == tested.owasp_class]
-    confirmed = sum(1 for r in matching if (r.verdict or "") == "succeeded" and r.hard_evidence)
-    suspected = sum(1 for r in matching if (r.verdict or "") == "succeeded" and not r.hard_evidence)
+    successes = [r for r in matching if (r.verdict or "") == "succeeded"]
+    confirmed = sum(1 for r in successes if _carries(items_by_run.get(r.id, ()), tested.owasp_class))
+    suspected = sum(1 for r in successes if not r.hard_evidence)
     return CoverageRow(owasp_class=tested.owasp_class, families=tested.family_label, run_count=len(matching),
                        result=_coverage_result(len(matching), confirmed, suspected))
+
+
+def _received_a_reply(run, turns) -> bool:
+    return run.reply_text is not None or any(t.reply_text is not None for t in turns)
+
+
+def _detected_row(detected, runs, turns_by_run, items_by_run) -> CoverageRow:
+    """The detector's own row (FR-045): every run that received at least one reply was scanned, and the
+    confirmed count is the runs that carry an item of its kind - whatever family they belong to."""
+    scanned = [r for r in runs if _received_a_reply(r, turns_by_run.get(r.id, ()))]
+    confirmed = sum(1 for r in scanned
+                    if any(item.kind == detected.kind for item in items_by_run.get(r.id, ())))
+    return CoverageRow(owasp_class=detected.owasp_class, families=detected.label, run_count=len(scanned),
+                       result=_coverage_result(len(scanned), confirmed, 0))
 
 
 def _coverage_result(count: int, confirmed: int, suspected: int) -> str:
@@ -144,10 +192,14 @@ def proof(run, turns) -> tuple[str | None, str | None]:
     return None, _judge_note(run, turns)
 
 
-def _finding(run, turns, recommendations) -> Finding:
+def _finding(run, turns, recommendations, items=()) -> Finding:
     evidence, judge_note = proof(run, turns)
     return Finding(family=run.family, owasp_class=run.owasp_category, winning_message=winning_message(run, turns),
-                   evidence=evidence, judge_note=judge_note, recommendation=recommendations.get(run.id))
+                   evidence=evidence, judge_note=judge_note, recommendation=recommendations.get(run.id),
+                   evidence_items=tuple(EvidenceLine(label=kind_label(item.kind), turn=item.turn,
+                                                     location_label=location_label(item.location),
+                                                     owasp_class=item.owasp_category, detail=item.detail)
+                                        for item in items))
 
 
 def _turn_at(turns, position):

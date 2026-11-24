@@ -42,7 +42,7 @@ today (FR-061, SC-008).
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Add the three settings (plus the start-up usability check) to `src/kestrel/settings.py` with their
+- [X] T001 [P] Add the three settings (plus the start-up usability check) to `src/kestrel/settings.py` with their
       defaults and validation
       (data-model.md): `KESTREL_CALLBACK_BASE_URL` → `callback_base_url: str | None` (unset → `None`; an http/https
       URL without credentials whose path ends in `/callback`, else `SettingsError` — the start-up validation of
@@ -51,7 +51,7 @@ today (FR-061, SC-008).
       `SettingsError`), `KESTREL_SIDE_CHANNEL_TIMEOUT_S` → `side_channel_timeout_s: int` (default `10`, the
       existing `positive_int` helper), and the start-up usability check of the callback base (FR-068). Document all
       of them in `.env.example` beside the other `KESTREL_*` blocks (FR-021, FR-027, FR-030, FR-068).
-- [ ] T002 [P] Create the empty `src/kestrel/evidence/` package (`__init__.py`) and the inert fixture file
+- [X] T002 [P] Create the empty `src/kestrel/evidence/` package (`__init__.py`) and the inert fixture file
       `tests/fixtures/unsafe_output_cases.json` as `{"_note": "<the inert-sample statement>", "cases": []}` — a
       `"_note"` **key**, not a comment, because JSON has none (FR-059).
 
@@ -59,7 +59,7 @@ today (FR-061, SC-008).
 
 **⚠️ schema v11, the evidence model, the checker seam, and the replay/experiment tests part 1's own wiring needs.**
 
-- [ ] T003 [P] Unit test `tests/unit/test_store_migration_v11.py` (`FEATURE = "013"`), following the
+- [X] T003 [P] Unit test `tests/unit/test_store_migration_v11.py` (`FEATURE = "013"`), following the
       `test_store_migration_v10.py` convention: build a hand-written schema-10-shaped database, run
       `TargetStore.__init__`/`_migrate`, and assert — `meta.schema_version` reads `"11"`; `PRAGMA
       foreign_key_check` is empty; a pre-existing run row has `correlation_id` and `side_channel_status` both
@@ -70,19 +70,19 @@ today (FR-061, SC-008).
       callback hits, and to `target_side_channels`, with `foreign_key_check` still empty; a second `_migrate` is a
       no-op; **no `runs` rebuild happened** (the `sqlite_sequence` row and every existing child row survive
       untouched, asserted the way v10's test asserts survival) (FR-057).
-- [ ] T004 [P] Unit test `tests/unit/test_evidence_model.py` (`FEATURE = "013"`): the `KINDS` table matches FR-004
+- [X] T004 [P] Unit test `tests/unit/test_evidence_model.py` (`FEATURE = "013"`): the `KINDS` table matches FR-004
       exactly (seven kinds, their labels, locations and classes); `category_for(kind, family)` returns the family's
       class for `canary_in_reply` and the fixed class for every other kind; `location_label` returns the four exact
       strings ("in the reply", "in a tool call", "at the callback listener", "in the protected state");
       `evidence_line(item)` renders exactly `"{label} · turn {N} · {location label} · {OWASP class}"`; and
       `OVERRIDE_DETAIL` is the fixed statement an override item carries, with a test asserting no item detail the
       model can build contains a token value or part or a URL (FR-004, FR-007, FR-039).
-- [ ] T005 [P] Unit test `tests/unit/test_settings_evidence.py` (`FEATURE = "013"`): the three T001 settings parse
+- [X] T005 [P] Unit test `tests/unit/test_settings_evidence.py` (`FEATURE = "013"`): the three T001 settings parse
       their defaults, accept valid overrides, and raise `SettingsError` on a bad value each (a non-URL base, a base
       whose path does not end in `/callback`, a negative or non-finite wait, a zero or negative timeout); the
       start-up usability check refuses a malformed base loudly and accepts a usable one (FR-021, FR-027, FR-030,
       FR-068).
-- [ ] T006 [P] Extend `tests/support.py` with the offline doubles (no attack text): a `SideChannelStub` whose
+- [X] T006 [P] Extend `tests/support.py` with the offline doubles (no attack text): a `SideChannelStub` whose
       scripted descriptor, per-correlation-id tool-call log (with `seq` values), state-snapshot sequence and six
       failure modes are answered by `ModelTransport` for a fixed side-channel host; an `on_target_request` hook so
       a stub target can call `store.record_callback_hit(...)` when a request carries a planted URL; a
@@ -90,7 +90,7 @@ today (FR-061, SC-008).
       their turn-2-and-later messages and progress notes (so T026's isolation test cannot pass vacuously, FR-063);
       and helpers that read a run's real planted values from `store.list_planted_tokens`. Scaffolding only — part
       1 uses the repeating doubles, part 2 the side-channel stub (FR-049, FR-063, SC-005, SC-006, SC-007).
-- [ ] T007 Implement schema v11 in `src/kestrel/store.py` per data-model.md: `SCHEMA_VERSION = "11"`; add the four
+- [X] T007 Implement schema v11 in `src/kestrel/store.py` per data-model.md: `SCHEMA_VERSION = "11"`; add the four
       `CREATE TABLE IF NOT EXISTS` statements (`run_evidence` with `pattern_name`/`pattern_set_version`,
       `run_planted_tokens`, `callback_hits`, `target_side_channels`) and their indexes to `SCHEMA`; add
       `correlation_id TEXT` and the checked `side_channel_status TEXT` to `RUNS_COLUMNS_SQL`; add
@@ -100,19 +100,19 @@ today (FR-061, SC-008).
       `test_store_migration_v6.py:82, 89, 97`, `test_store_migration_v8.py:58, 65, 95`,
       `test_store_migration_v9.py:166, 176, 261`, `test_store_migration_v10.py:177, 187, 269`, and
       `tests/integration/test_provenance_migration.py:39, 61` (FR-057, SC-008). Makes T003 pass.
-- [ ] T008 Implement `src/kestrel/evidence/model.py` per data-model.md: `EvidenceItem` (with `pattern_name` and
+- [X] T008 Implement `src/kestrel/evidence/model.py` per data-model.md: `EvidenceItem` (with `pattern_name` and
       `pattern_set_version`), the `KINDS` table, `LOCATION_LABELS`, `DETAIL_MAX_CHARS = 200`, `OVERRIDE_DETAIL`,
       `category_for`, `kind_label`, `location_label`, `evidence_line`, and `derived_items(run)` — the one helper
       that gives a pre-013 hard-evidence run with no stored items its single derived `canary_in_reply` item, used
       by the API **and** the report so the surfaces cannot disagree (FR-003, FR-004, FR-005, FR-007, FR-039).
       Makes T004 pass.
-- [ ] T009 Implement the store methods on `TargetStore` (store.py) that part 1 uses, per data-model.md:
+- [X] T009 Implement the store methods on `TargetStore` (store.py) that part 1 uses, per data-model.md:
       `add_evidence`, `list_evidence`, `evidence_kinds_by_run`, `add_planted_token`, `list_planted_tokens`,
       `disarm_planted_token`, and `copy_planted_tokens` **carrying `disarmed_turn` across unchanged** (FR-035);
       `claim_run(..., correlation_id=, side_channel_status=)` writing the status **at claim time** and a separate
       `set_side_channel_status(run_id, 'unavailable')` for the one in-run update, so a crashed or interrupted run
       never leaves it null (FR-034); `Run` gains both columns (FR-003, FR-006, FR-034, FR-057).
-- [ ] T010 Implement `src/kestrel/evidence/checker.py`'s foundation: `EvidenceChecker` with
+- [X] T010 Implement `src/kestrel/evidence/checker.py`'s foundation: `EvidenceChecker` with
       `canary_only(canaries)` (today's behaviour exactly — one `canary_in_reply` item per distinct canary matched,
       `canary_hit` true, `CANARY_REASON`), `check_turn(turn, reply, remaining)` returning a `TurnEvidence` whose
       `items` is the authority for "did this turn produce evidence", and `build_checker(...)` returning a
@@ -121,7 +121,7 @@ today (FR-061, SC-008).
       every family regardless of task or side channel** (FR-014). The reason for a non-canary hit is
       `"Hard evidence confirmed the attack: <labels joined by ' + '>."` (research D3) (FR-001, FR-002, FR-005,
       FR-006, FR-014).
-- [ ] T011 [P] Integration test `tests/integration/test_evidence_part1_replay.py` (`FEATURE = "013"`) — **written
+- [X] T011 [P] Integration test `tests/integration/test_evidence_part1_replay.py` (`FEATURE = "013"`) — **written
       before T012, in part 1, because part 1 is what wires these paths** (FR-062, research D24): for a replay of a
       source that planted an override token, assert the token is copied **with its armed state** and a source that
       was disarmed on turn *k* leaves the replay disarmed from turn *k*; a replay whose own re-sent message
@@ -133,7 +133,7 @@ today (FR-061, SC-008).
       T017 and T023, the disarm-on-replay and detector-only cases here use a **stub checker** that reports an
       override disarm and a non-canary item on command; the real-detector variants of those cases are re-tested in
       T019 and T024.
-- [ ] T012 Wire the checker into the run paths, defaulting to canary-only so every existing test is unchanged
+- [X] T012 Wire the checker into the run paths, defaulting to canary-only so every existing test is unchanged
       except where listed (SC-008): `runs.execute_run(..., evidence=None)` replaces its lone `match_canary` call with
       `evidence.check_turn(...)` and writes the turn's items with `store.add_evidence`; `attack/graph.py`'s
       module-level `_check_evidence` becomes `async` and delegates to the checker; `run_adaptive` and
@@ -162,7 +162,7 @@ reply carrying its joined form confirms the run with hard evidence and no judge 
 
 **Independent Test**: quickstart US1 — `tests/integration/test_evidence_detectors.py -k override`.
 
-- [ ] T013 [P] [US1] Unit test `tests/unit/test_override_detector.py` (`FEATURE = "013"`):
+- [X] T013 [P] [US1] Unit test `tests/unit/test_override_detector.py` (`FEATURE = "013"`):
       `generate_override_token` draws two 6-char parts from the 31-symbol unambiguous alphabet and never repeats
       across 10,000 draws; `reply_confirms(reply, joined)` is true for the joined form in any letter case and false
       when anything separates the parts or only one is present; `normalise` folds case and strips every
@@ -170,7 +170,7 @@ reply carrying its joined form confirms the run with hard evidence and no judge 
       contains the joined form — the normalised assertion, matching the normalised check (FR-009);
       the template keeps at least one alphanumeric word between the parts; `text_contains_joined` drives the
       disarm check on normalised text (FR-008, FR-009, FR-012, FR-051, SC-001).
-- [ ] T014 [P] [US1] Unit test `tests/unit/test_override_placement.py` (`FEATURE = "013"`) — the structural test:
+- [X] T014 [P] [US1] Unit test `tests/unit/test_override_placement.py` (`FEATURE = "013"`) — the structural test:
       for every direct-injection and indirect-injection seed in the shipped library, the Kestrel-owned sidecar
       `src/kestrel/attacks/data/insertion_points.json` carries an entry for that seed; `place_task` puts the
       paragraph at an **indirect** seed's offset **inside** that seed's simulated injected content and never
@@ -179,7 +179,7 @@ reply carrying its joined form confirms the run with hard evidence and no judge 
       the `override_task` template carries a `framing: override` front-matter field (asserted structurally, not by
       model behaviour); and a seed of a family carrying no task has no entry and is sent unchanged (FR-064, FR-011,
       SC-014).
-- [ ] T015 [US1] Extend `src/kestrel/prompt_registry.py` for one **optional** `framing` front-matter key — parse it
+- [X] T015 [US1] Extend `src/kestrel/prompt_registry.py` for one **optional** `framing` front-matter key — parse it
       when present (never require it: `_FRONT_MATTER_KEYS` still names only `id` and `version`), carry it on
       `PromptFile` (default `None`), give `format_prompt_file` an optional `framing` parameter, and have `bump()`
       pass `PromptFile.framing` through so a future bump of `override_task` does not drop `framing: override`; add a
@@ -198,14 +198,16 @@ reply carrying its joined form confirms the run with hard evidence and no judge 
       injected content, direct seeds at the attacker-voice position; the library itself stays verbatim (the 002
       contract). Bump `attacker:direct_injection` and `attacker:indirect_injection` to v2 per contracts/prompts.md
       and `--lock` both. Update `EXPECTED_IDS` and the version assertions in
-      `tests/integration/test_config_prompts.py` and `test_prompt_no_secrets.py`; because this edits
+      `tests/integration/test_config_prompts.py`, `test_prompt_no_secrets.py` and
+      `tests/unit/test_prompt_registry.py` (the exact id set, the `version == "1"` pin and the two-line
+      front-matter prefix this feature changes by construction — SC-008 lists it); because this edits
       `specs/009-versioned-prompts/contracts/prompt-registry.md` alongside `src/`, the PR description MUST carry the
       `spec-change:` note the traceability gate requires (FR-010, FR-059, FR-064, SC-008,
       SC-014).
-- [ ] T016 [US1] Implement `src/kestrel/evidence/override.py`: `generate_override_token`,
+- [X] T016 [US1] Implement `src/kestrel/evidence/override.py`: `generate_override_token`,
       `override_task_paragraph`, `place_task`, `normalise`, `reply_confirms`, `text_contains_joined` (FR-008,
       FR-009, FR-064). Makes T013 and T014 pass.
-- [ ] T017 [US1] Extend the checker and `build_checker`: for a run of `direct_injection` or
+- [X] T017 [US1] Extend the checker and `build_checker`: for a run of `direct_injection` or
       `indirect_injection`, generate an override token, expose it through `opening_message(seed)` (the paragraph at
       the sidecar's insertion point) and `planted()`, check every reply while armed and emit one
       `instruction_override` item
@@ -213,13 +215,13 @@ reply carrying its joined form confirms the run with hard evidence and no judge 
       (one `evidence.override_disarmed` warning, `store.disarm_planted_token`). Runs of the other families plant no
       override token and no override paragraph, and send today's messages except where FR-028 plants the callback
       task for tool_exfiltration (part 2) (FR-007, FR-008 to FR-013, FR-028, FR-061, FR-064).
-- [ ] T018 [US1] Persist and apply the planting in the run paths: after `claim_run`, write `checker.planted()`;
+- [X] T018 [US1] Persist and apply the planting in the run paths: after `claim_run`, write `checker.planted()`;
       `execute_run` sends `checker.opening_message(prompt)` and uses that exact opened text everywhere the
       un-opened seed is read today — `claim_run(prompt_text=...)`, the single-turn judge call's attack text
       (`attack=prompt.text` becomes the opened text, so the judge sees the planted instruction, FR-061), and the
       turn line's `message_chars` (`len(prompt.text)` becomes the opened text); `run_adaptive.attacker_node` sends
       it on turn 1; `record_node` stores the sent message (FR-011, FR-012, FR-013, FR-061).
-- [ ] T019 [US1] Integration test `tests/integration/test_evidence_detectors.py` override cases (`FEATURE =
+- [X] T019 [US1] Integration test `tests/integration/test_evidence_detectors.py` override cases (`FEATURE =
       "013"`): a stub target replying with the run's real joined form (read from `store.list_planted_tokens`) →
       `verdict=succeeded`, `hard_evidence=true`, one `instruction_override` item on the turn, `judge_used=false`,
       zero judge calls on the stream; a reply with the parts separated, quoting the instruction, or refusing → no
@@ -240,12 +242,12 @@ LLM05 with no judge call; the documented benign shapes and echoes of Kestrel's o
 
 **Independent Test**: quickstart US2 — `tests/unit/test_unsafe_output.py`.
 
-- [ ] T020 [P] [US2] Populate the inert fixture `tests/fixtures/unsafe_output_cases.json` per
+- [X] T020 [P] [US2] Populate the inert fixture `tests/fixtures/unsafe_output_cases.json` per
       contracts/detectors.md: a `"_note"` key stating the samples are inert agent output never executed, sourced
       or run, and a `"cases"` list whose every entry is `{"pattern": "<name>", "kind": "positive"|"negative",
       "text": "<sample reply>"}` — at least **three positive and three negative cases per named pattern** (not per
       category), honouring that pattern's documented boundary (FR-016, FR-059, SC-002).
-- [ ] T021 [P] [US2] Unit test `tests/unit/test_unsafe_output.py` (`FEATURE = "013"`): every name in `PATTERNS`
+- [X] T021 [P] [US2] Unit test `tests/unit/test_unsafe_output.py` (`FEATURE = "013"`): every name in `PATTERNS`
       has ≥ 3 positive and ≥ 3 negative cases tagged with it and a pattern short of either **fails**; every
       positive case matches **its own named pattern** (100%); no negative case matches **any** pattern (100%);
       `scan` returns at most one match per category; a match whose text also appears in `sent_texts` is skipped
@@ -254,18 +256,18 @@ LLM05 with no judge call; the documented benign shapes and echoes of Kestrel's o
       named-pattern table and set version and asserts they equal the module's `PATTERNS` (names and categories)
       and `PATTERN_SET_VERSION`, the way `tests/unit/test_roadmap.py` reads `docs/roadmap.md` — so the fixture, the
       module and the contract cannot drift (FR-015, FR-016, FR-017, FR-065, SC-002).
-- [ ] T022 [US2] Implement `src/kestrel/evidence/unsafe_output.py`: `PATTERN_SET_VERSION = "1"` and the compiled
+- [X] T022 [US2] Implement `src/kestrel/evidence/unsafe_output.py`: `PATTERN_SET_VERSION = "1"` and the compiled
       `PATTERNS` tuple carrying **exactly the pattern names of contracts/detectors.md and no others**, each
       expression implementing that name's documented matched shape and leaving its documented benign counterpart
       alone; `scan(reply, sent_texts=())` (≤ one `Match` per category, earliest by position, echo rule applied);
       `detail(match)` (FR-014 to FR-017, FR-065). Makes T021 pass.
-- [ ] T023 [US2] Add the unsafe-output check to the checker as check #3 of the fixed order, for every run of every
+- [X] T023 [US2] Add the unsafe-output check to the checker as check #3 of the fixed order, for every run of every
       family and both modes, over the reply only, passing the run's sent messages as `sent_texts`: one
       `unsafe_executable_output` item per matched category, location `reply`, class LLM05, carrying the pattern
       name and set version as their own fields. **Scrub the matched excerpt through
       `scrub_planted_values(checker.planted_values())` before building the detail**, so an excerpt that happens to
       carry a callback URL or a token part is cleaned before it is stored (FR-007, FR-014, FR-017, FR-018, FR-065).
-- [ ] T024 [US2] Integration test `tests/integration/test_evidence_detectors.py` unsafe-output cases (`FEATURE =
+- [X] T024 [US2] Integration test `tests/integration/test_evidence_detectors.py` unsafe-output cases (`FEATURE =
       "013"`): a stub target whose reply is a positive sample → confirmed run, one `unsafe_executable_output` item
       naming its pattern and set version, no judge call; a negative sample → no item, judged as today; a reply
       echoing text Kestrel sent → no item (FR-065); a canary **and** an unsafe-output match on one turn → two
@@ -285,13 +287,13 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
 **Independent Test**: quickstart US3 — `test_evidence_api_ui.py`, `test_report_coverage.py` /
 `test_report_findings.py`, `test_evidence_store_isolation.py`, `test_evidence_redaction.py`.
 
-- [ ] T025 [P] [US3] Unit test `tests/unit/test_strip_planted_tasks.py` (`FEATURE = "013"`):
+- [X] T025 [P] [US3] Unit test `tests/unit/test_strip_planted_tasks.py` (`FEATURE = "013"`):
       `strip_planted_tasks` removes the run's exact filled task text — for the override task at both a direct
       seed's attacker-voice offset and an indirect seed's inside-the-content offset, and for the callback task
       appended in the user's voice — wherever it sits, and leaves a message with no task text byte-identical;
       `scrub_planted_values` replaces each token part, the joined form and the callback URL wherever else they
       appear, and leaves text containing none of them unchanged (FR-063).
-- [ ] T026 [P] [US3] Integration test `tests/integration/test_evidence_store_isolation.py` (`FEATURE = "013"`):
+- [X] T026 [P] [US3] Integration test `tests/integration/test_evidence_store_isolation.py` (`FEATURE = "013"`):
       with a `SpyExperienceStore` and T006's **repeating** attacker and judge doubles — which echo the run's real
       parts in their turn-2-and-later messages and progress notes — run a confirmed override-family attack in both
       direct and indirect placement and assert that no pattern document, no memory record, no memory summary and no
@@ -300,7 +302,7 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       SC-013). The **callback-URL** half of FR-063/SC-013 is added in part 2 (T054/T055 make the callback task and
       its redaction exist): a confirmed `tool_exfiltration` run with a real planted URL repeated in a turn-2 stored
       message must write no URL into any pattern document, memory record, memory summary or retrieval query.
-- [ ] T027 [P] [US3] Unit test `tests/unit/test_events_evidence.py` (`FEATURE = "013"`): `run.start` renders
+- [X] T027 [P] [US3] Unit test `tests/unit/test_events_evidence.py` (`FEATURE = "013"`): `run.start` renders
       `side_channel`, `callback_listener`, `override_planted` and `callback_planted` when passed and **omits each
       when not** (never `null`, the one 010 convention); `turn` and `run.end` carry
       `evidence_kinds`/`evidence_count`, and `turn`'s `hard_evidence` now means "any evidence item on this turn"
@@ -308,7 +310,7 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       `evidence_count`, `side_channel_status`, `callback_wait_ms` and `state_changed_keys` (a count only), each
       omitted when it does not apply; `evidence.override_disarmed` renders with the turn scope field; no
       `log.unknown_field` warning fires for any of them (FR-047, FR-048).
-- [ ] T028 [US3] Implement `strip_planted_tasks` and `scrub_planted_values` in `src/kestrel/evidence/override.py`
+- [X] T028 [US3] Implement `strip_planted_tasks` and `scrub_planted_values` in `src/kestrel/evidence/override.py`
       and apply **both** at every experience-store and retrieval boundary: `experience/writeback.py` (per message
       before `_winning_messages` joins, around `summary.build_summary`'s judge-progress inputs, and before
       `write_memory`) and `experience/retrieval.py` (per attacker message before `build_query` joins), handing each
@@ -318,14 +320,14 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       `experiments/engine.py::_run_rep` call `build_checker(...)` before building the provider, so the per-run
       scrubber is bound after the run exists; `write_back` receives the checker's planted values and task texts
       alongside the run it already has (FR-063). Makes T025 and T026 pass.
-- [ ] T029 [US3] Add the evidence fields to `api/schemas.py` and fill them in `api/main.py` per contracts/api.md:
+- [X] T029 [US3] Add the evidence fields to `api/schemas.py` and fill them in `api/main.py` per contracts/api.md:
       `RunSummary` gains `evidence_kinds`/`evidence_labels`/`evidence_count`/`side_channel_status`, with a pre-013
       hard-evidence run reported through `derived_items(run)` as exactly one canary item on **every** surface;
       `RunDetail` gains `evidence` (items with `pattern_name`/`pattern_set_version`), `planted_tokens` (never a
       value or URL), `side_channel_notice`, `override_disarmed_notice` and `callback_note`, every string computed
       server-side; `ConfigOut.evidence` (part-1 fields plus `unsafe_output_pattern_set_version`); the run list
       uses `store.evidence_kinds_by_run` (FR-005, FR-007, FR-038, FR-042, FR-043).
-- [ ] T030 [P] [US3] Integration test `tests/integration/test_evidence_api_ui.py` (`FEATURE = "013"`): the run
+- [X] T030 [P] [US3] Integration test `tests/integration/test_evidence_api_ui.py` (`FEATURE = "013"`): the run
       summary and detail carry the fields above, a pre-013 run reading as exactly one canary item everywhere; the
       run page headline is exactly `"Attack succeeded · confirmed by {labels joined by ' + '}"` with `" at turn N"`
       for an adaptive run; the `"Evidence"` section lists one exact `evidence_line` per item then its detail; the
@@ -333,24 +335,24 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       exact text** for a run without them (`"judge · {model}"`, or `"—"`), so no existing row changes; the
       disarmed notice and `callback_note` render when set; nothing is re-derived in the UI (FR-038, FR-039,
       FR-040, FR-043, SC-004, SC-008).
-- [ ] T031 [US3] Render the evidence surfaces in `ui/app.py`: the `"confirmed by {labels}"` headline, the
+- [X] T031 [US3] Render the evidence surfaces in `ui/app.py`: the `"confirmed by {labels}"` headline, the
       `"Evidence"` section, the run-list column via an `_evidence` that reads `evidence_labels` and **falls back to
       today's text when a run has no items**, and the `side_channel_notice` / `override_disarmed_notice` /
       `callback_note` lines (each only when the API sets it); `render_metrics` keeps driving Confirmed/Suspected
       from `finding` + `hard_evidence`. Every string comes from the API (FR-039, FR-040, FR-043). Makes T030 pass.
-- [ ] T032 [P] [US3] Unit test `tests/unit/test_report_coverage.py` / `test_report_findings.py` (extend, scoped
+- [X] T032 [P] [US3] Unit test `tests/unit/test_report_coverage.py` / `test_report_findings.py` (extend, scoped
       `013/FR-###`): a finding lists each evidence item (label, turn, location label, class, detail) and still
       quotes the confirming reply; a run is counted **confirmed** under a class only when one of its own items
       carries that class — a system-prompt-leak run whose only item is unsafe output is **not** a confirmed LLM07
       finding, and is confirmed under LLM05 only; the table has **four** tested rows (the new
       LLM05 detector row with its run and confirmed counts); `UNTESTED` has **six** classes; a pre-013
       hard-evidence run renders its one derived canary item (FR-005, FR-044, FR-045, SC-008).
-- [ ] T033 [US3] Implement the report additions: `report/model.py` (`Finding.evidence_items`,
+- [X] T033 [US3] Implement the report additions: `report/model.py` (`Finding.evidence_items`,
       `build_report(evidence_by_run=)`, the per-class confirmed counting of FR-045, `derived_items` for pre-013
       runs), `report/owasp.py` (`DETECTED` LLM05 row, drop LLM05 from `UNTESTED`), `report/render.py` (render each
       finding's items after the winning message); `api/main.py` passes `evidence_by_run` and still excludes
       replays (FR-005, FR-044, FR-045, FR-046). Makes T032 pass.
-- [ ] T034 [US3] Emit the part-1 log lines through `events.py` per contracts/log-records-delta.md: `run.start` +
+- [X] T034 [US3] Emit the part-1 log lines through `events.py` per contracts/log-records-delta.md: `run.start` +
       `side_channel`/`callback_listener`/`override_planted`/`callback_planted` (each omitted when not passed),
       `turn`/`run.end` + `evidence_kinds`/`evidence_count` (+ `run.end` `side_channel_status`), `turn`'s
       `hard_evidence` redefined as "any evidence item on this turn", the new `evidence.check` line per turn (with
@@ -358,31 +360,31 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       `CATALOGUE` (FR-047, FR-048). Makes T027 pass. The per-turn `evidence.check` line changes the event order the
       two pre-existing log-records tests assert — update `tests/integration/test_log_records_adaptive.py` and
       `test_log_records_single_turn.py` to the new order (SC-008).
-- [ ] T035 [P] [US3] Integration test `tests/integration/test_evidence_redaction.py` (`FEATURE = "013"`): across a
+- [X] T035 [P] [US3] Integration test `tests/integration/test_evidence_redaction.py` (`FEATURE = "013"`): across a
       confirmed override run's whole stream, 0 lines carry a token or part, the joined form, an evidence detail,
       reply text or attack text, counted with the run's real marker strings (FR-048, SC-007).
 
 **Checkpoint — PART 1 CODE COMPLETE**: `uv run pytest tests/unit tests/integration` green; `uvx ruff check src ui
 tests` and `mypy src` clean; coverage ≥ 85%; `verify_lock()` clean.
 
-- [ ] T036 [US3] End-to-end `tests/e2e/test_us013_detectors.py` (`FEATURE = "013"`, marker `e2e`): API in-process
+- [X] T036 [US3] End-to-end `tests/e2e/test_us013_detectors.py` (`FEATURE = "013"`, marker `e2e`): API in-process
       (as 012's e2e) against the live HS-code target; register it, run a `direct_injection` attack, assert the
       **structure** — a new run, an override token planted and **absent in its joined form** from `prompt_text`
       and the sent request (checked on the normalised text), any items of known kinds, the judge prompt version
       recorded only when no deterministic evidence was found; never asserting the live model's behaviour on the
       day (SC-010).
-- [ ] T037 [US3] Make `tests/e2e/conftest.py`'s `kestrel_api` fixture **pop `KESTREL_CALLBACK_BASE_URL`** from the
+- [X] T037 [US3] Make `tests/e2e/conftest.py`'s `kestrel_api` fixture **pop `KESTREL_CALLBACK_BASE_URL`** from the
       environment it copies (`tests/e2e/conftest.py:122`), so a developer who exports it cannot silently change
       what the e2e tests plant; the part-2 `kestrel_api_with_listener` fixture (T061) sets it explicitly instead
       (SC-008).
-- [ ] T038 [US3] Switch `tests/e2e/test_us2_judged_run.py` from `direct_injection` to `tool_exfiltration` so
+- [X] T038 [US3] Switch `tests/e2e/test_us2_judged_run.py` from `direct_injection` to `tool_exfiltration` so
       "decided by the judge" still holds against a live model that would otherwise fulfil the planted override
       task (with the listener off, that family plants nothing) (FR-061, SC-008).
-- [ ] T039 [US3] Update `tests/e2e-browser/prompt-choice.spec.ts:60`: a direct-injection sent message is now the
+- [X] T039 [US3] Update `tests/e2e-browser/prompt-choice.spec.ts:60`: a direct-injection sent message is now the
       library text **plus** the planted paragraph, so the assertion becomes **containment** (the chosen library
       text is contained in the sent message) rather than equality, and the test still identifies which prompt was
       picked (FR-011, SC-008).
-- [ ] T040 [US3] **Part-1 documentation** (FR-062, research D24): update the evidence section of
+- [X] T040 [US3] **Part-1 documentation** (FR-062, research D24): update the evidence section of
       `docs/technical-design.md` for what part 1 ships — the evidence package and item model, the fixed check
       order, the echo-proof override token and its placement, the named/versioned unsafe-output set, the stripping
       and scrubbing, schema v11 — and add the matching `CLAUDE.md` "Learned notes" entry for part 1. A part-1-only
@@ -480,7 +482,7 @@ confirms the run; models never see the URL.
       recommender's view even though the listener is now off or the base changed** (FR-031, FR-069); **the per-run
       cap**: with `store.CALLBACK_HITS_CAP` lowered by `monkeypatch` (the store and the route read it at call time,
       never bind it at import), one request beyond the cap still answers `204`, stores nothing, and produces
-      exactly one `callback.ignored` line with reason `hit_cap_reached` bound to the run (a second capped request
+      exactly one `callback.ignored` line with reason_kind `hit_cap_reached` bound to the run (a second capped request
       adds no line), while the turn's item counts exactly the cap (FR-072, SC-016); **the mount rule**: an app
       created without `KESTREL_CALLBACK_BASE_URL` has no `/callback/` route — a well-formed token path gets the
       app's ordinary not-found response, no store lookup and no `callback.*` line, and in hosted mode (an access
@@ -503,7 +505,7 @@ confirms the run; models never see the URL.
       app's ordinary not-found response answers it, and `require_token` exempts nothing (FR-073) — exempt from
       `require_token` for `/callback/` paths while mounted, reading no body: `204` + `record_callback_hit` +
       `callback.hit` for a token on an in-progress run; when the store reports that run at its cap, still `204`
-      with nothing stored and one `callback.ignored` (`reason` `hit_cap_reached`) through `events.warn_once` keyed
+      with nothing stored and one `callback.ignored` (`reason_kind` `hit_cap_reached`) through `events.warn_once` keyed
       on the run id and bound to the run with `bind_run_reference` (FR-072); else `404` + `callback.ignored`;
       `token` must match `^[0-9a-f]{24}$` (FR-027, FR-029, FR-030, FR-072, FR-073).
 - [ ] T054 [US6] Extend the checker and planting: `build_checker` plants a callback token for `tool_exfiltration`

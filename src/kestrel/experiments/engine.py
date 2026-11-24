@@ -14,6 +14,7 @@ from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerClient
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings
+from kestrel.evidence.checker import build_checker
 from kestrel.experience.retrieval import background_provider
 from kestrel.experience.writeback import write_back
 from kestrel.judge.client import JudgeClient
@@ -129,6 +130,11 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
     The run's scope encloses the run and its write-back (feature 010): the write-back line belongs to the run, and
     run.end is the run's last line."""
     with events.run_scope():
+        # Feature 013: the same deterministic checker POST /api/runs builds, so both arms detect identically and
+        # an experiment-executed run cannot drift from a user-started one (013/FR-037).
+        checker = build_checker(store=store, family=seed.family, canaries=canaries, mode=settings.mode,
+                                target=target, settings=settings, transport=transport, resolver=resolver,
+                                mask=[value for _, value in resolved.headers] + [resolved.url], seed=seed)
         try:
             if experiment.mode == "adaptive":
                 run = await execute_adaptive_run(
@@ -140,12 +146,16 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
                     # Feature 011: the same retrieval path as POST /api/runs, so the two cannot drift apart.
                     hint_provider=background_provider(experience, target_id=target.id, purpose=target.description,
                                                       family=seed.family, settings=settings,
-                                                      use_prior_experience=arm.use_prior_experience))
+                                                      use_prior_experience=arm.use_prior_experience,
+                                                      planted_values=checker.planted_values(),
+                                                      task_texts=checker.planted_task_texts()),
+                    evidence=checker)
             else:
                 run = await execute_run(store, target_id=experiment.target_id, prompt=seed,
                                         attacker_source=library.attacker_source, canaries=canaries,
                                         resolved=resolved, mode=settings.mode, judge=judge, transport=transport,
-                                        resolver=resolver, use_prior_experience=arm.use_prior_experience)
+                                        resolver=resolver, use_prior_experience=arm.use_prior_experience,
+                                        evidence=checker)
         except RunInProgress:
             # Could not claim a run row (another run is active on the target); record it, never drop it (FR-015).
             store.add_experiment_run(experiment_id=experiment.id, arm_id=arm.id, rep_index=rep, family=family,
@@ -155,7 +165,8 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
                                  run_id=run.id, send_ok=run.failure_step is None)
         if arm.write_back:   # a cold arm skips write-back so the other arm is not warmed by it (FR-005);
             write_back(experience, store, run, store.list_turns(run.id),   # otherwise learn from the run (Principle V)
-                       dedupe_threshold=settings.experience_dedupe_threshold)
+                       dedupe_threshold=settings.experience_dedupe_threshold,
+                       planted_values=checker.planted_values(), task_texts=checker.planted_task_texts())
         return run
 
 

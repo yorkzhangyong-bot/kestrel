@@ -1,11 +1,13 @@
 """Kestrel's settings, read from KESTREL_* environment variables (research R5, R6, R8)."""
 from __future__ import annotations
 
+import ipaddress
 import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping
+from urllib.parse import urlsplit
 
 # src/kestrel/settings.py -> the folder holding pyproject.toml
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +42,12 @@ DEFAULT_EXPERIMENT_WALL_CLOCK_S = 3600
 # Regression replay (feature 012): the most replayable runs one batch replay processes for a target (FR-031),
 # confirmed with the product owner (spec.md Clarifications, 2026-11-19).
 DEFAULT_REPLAY_BATCH_MAX_RUNS = 20
+# Behavioural evidence (feature 013): the canary callback listener's bounded wait after each reply of a run that
+# planted a URL (FR-030), and the side-channel request timeout (FR-021); the listener's public base URL has no
+# default (unset = disabled, FR-027). The base URL's path must end in the listener route's own prefix.
+DEFAULT_CALLBACK_WAIT_S = 2.0
+DEFAULT_SIDE_CHANNEL_TIMEOUT_S = 10
+CALLBACK_PATH_SUFFIX = "/callback"
 
 Mode = Literal["local", "hosted"]
 LogFormat = Literal["json", "text"]
@@ -87,6 +95,11 @@ class Settings:
     experiment_wall_clock_s: int = DEFAULT_EXPERIMENT_WALL_CLOCK_S
     # Feature 012 (regression replay).
     replay_batch_max_runs: int = DEFAULT_REPLAY_BATCH_MAX_RUNS
+    # Feature 013 (behavioural evidence): the callback listener's base URL (None = disabled), its bounded wait, and
+    # the side-channel request timeout. The URL names Kestrel's own listener, never a target: not a secret.
+    callback_base_url: str | None = None
+    callback_wait_s: float = DEFAULT_CALLBACK_WAIT_S
+    side_channel_timeout_s: int = DEFAULT_SIDE_CHANNEL_TIMEOUT_S
     # Feature 010: the stream's format (JSON Lines by default) and the optional OpenTelemetry tracing flag.
     log_format: LogFormat = "json"
     tracing: bool = False
@@ -128,6 +141,54 @@ def _parse_prices(raw: str) -> dict[str, float]:
             raise SettingsError(f"KESTREL_MODEL_PRICES price for {name!r} must not be negative.")
         prices[name] = price
     return prices
+
+
+def callback_base_class(url: str) -> str:
+    """How the listener's host would look to a target (feature 013, FR-068): `loopback`, `private` (a private,
+    link-local or otherwise non-routable address, or a name under `.localhost`) or `public` (a public address, or a
+    host name Kestrel does not resolve here — the per-run check compares it with the target's own host). Pure:
+    never resolves a name, so loading the settings costs no network call."""
+    host = (urlsplit(url).hostname or "").rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return "loopback"
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return "public"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_loopback:
+        return "loopback"
+    if ip.is_private or ip.is_link_local or ip.is_unspecified or ip.is_reserved or ip.is_multicast:
+        return "private"
+    return "private" if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10") else "public"
+
+
+def validate_callback_base(url: str) -> str:
+    """The start-up check of `KESTREL_CALLBACK_BASE_URL` (feature 013, FR-027, FR-068): an http or https URL with
+    a host, no credentials, no query or fragment, whose path ends in the listener route's own `/callback` prefix
+    (Kestrel appends `/<token>` to it). Returns the base with any trailing slash removed; raises SettingsError
+    loudly for anything else, so a base that could never reach the route is never accepted silently."""
+    name = "KESTREL_CALLBACK_BASE_URL"
+    malformed = SettingsError(f"{name} must be a full http:// or https:// URL ending in {CALLBACK_PATH_SUFFIX}.")
+    if any(ch.isspace() or ord(ch) < 32 for ch in url):
+        raise malformed
+    try:
+        parts = urlsplit(url)
+        parts.port   # raises ValueError for an invalid port
+    except ValueError:
+        raise malformed from None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise malformed
+    if "@" in parts.netloc:
+        raise SettingsError(f"{name} must not carry credentials; the listener needs none.")
+    if parts.query or parts.fragment:
+        raise SettingsError(f"{name} must not carry a query or fragment; Kestrel appends the token to its path.")
+    base = url.rstrip("/")
+    if not base.endswith(CALLBACK_PATH_SUFFIX):
+        raise SettingsError(f"{name} must end in {CALLBACK_PATH_SUFFIX}, the listener route's own prefix.")
+    callback_base_class(base)   # classifiable now, so the per-run usability check (FR-068) never surprises later
+    return base
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -186,6 +247,22 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             raise SettingsError(f"{name} must be a non-negative number or 'off', not {raw!r}.")
         return value
 
+    def non_negative_float(name: str, default: float) -> float:
+        """A bounded wait (feature 013): unset → the default; else a finite number >= 0 (`0` = check once)."""
+        raw = setting(name)
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            raise SettingsError(f"{name} must be a non-negative number, not {raw!r}.") from None
+        if not (math.isfinite(value) and value >= 0):
+            raise SettingsError(f"{name} must be a non-negative number, not {raw!r}.")
+        return value
+
+    raw_callback_base = setting("KESTREL_CALLBACK_BASE_URL")
+    callback_base_url = validate_callback_base(raw_callback_base) if raw_callback_base else None
+
     raw_format = setting("KESTREL_LOG_FORMAT", "json")
     if raw_format not in ("json", "text"):
         raise SettingsError(f"KESTREL_LOG_FORMAT must be 'json' or 'text', not {raw_format!r}.")
@@ -221,4 +298,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     experiment_wall_clock_s=positive_int("KESTREL_EXPERIMENT_WALL_CLOCK_S",
                                                          DEFAULT_EXPERIMENT_WALL_CLOCK_S),
                     replay_batch_max_runs=positive_int("KESTREL_REPLAY_BATCH_MAX_RUNS",
-                                                       DEFAULT_REPLAY_BATCH_MAX_RUNS))
+                                                       DEFAULT_REPLAY_BATCH_MAX_RUNS),
+                    callback_base_url=callback_base_url,
+                    callback_wait_s=non_negative_float("KESTREL_CALLBACK_WAIT_S", DEFAULT_CALLBACK_WAIT_S),
+                    side_channel_timeout_s=positive_int("KESTREL_SIDE_CHANNEL_TIMEOUT_S",
+                                                        DEFAULT_SIDE_CHANNEL_TIMEOUT_S))

@@ -26,7 +26,9 @@ def test_a_run_with_no_canary_is_decided_by_the_judge_which_is_named(
     at = save_plain_target(ui, fill_form)       # no canary declared, so the judge decides
     at.selectbox(key="target_select").select(1).run()
 
-    at.selectbox(key="attack_family").select("direct_injection").run()
+    # Feature 013 (013/SC-008): direct injection now plants an override task a compliant live model may fulfil,
+    # which would confirm the run without a judge. tool_exfiltration plants nothing while the listener is off.
+    at.selectbox(key="attack_family").select("tool_exfiltration").run()
     at.button(key="run_button").click().run()
     assert not at.exception
 

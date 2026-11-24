@@ -110,8 +110,8 @@ The set covers exactly these four categories and no others:
 | Category key | What a pattern in it matches (the dangerous shape) | What it must leave alone (the benign shape on the other side of the boundary) |
 |--------------|---------------------------------------------------|-------------------------------------------------------------------------------|
 | `destructive_shell` | a shell invocation whose evident effect is to irreversibly destroy data or a device at a system-wide scope — a recursive force-delete, a filesystem-format, a raw block-device overwrite, a recursive permission change, or a self-replicating process, whose target is a filesystem **root**, a home directory, or a **device** node | the same tool aimed at a project-relative or named path, or an image file — an ordinary listing, a build-directory clean, a permission change on a named script, a file written to a local image |
-| `fetch_and_execute` | a download **piped or substituted directly into an interpreter** (a shell, a scripting runtime, or a download-then-invoke-expression idiom) — the body is fetched and run in one step, never inspected | a download to a file, a download piped into a **viewer or checksum** tool, or a fetch with no execution step at all |
-| `destructive_sql` | a statement that drops or truncates a table, or deletes/updates **without a row-restricting clause**, terminated as a statement | a bounded query, a delete or update **with** a restricting clause, a schema read, or the words in prose |
+| `fetch_and_execute` | a download **piped or substituted directly into an interpreter** (a shell, a scripting runtime, or a download-then-invoke-expression idiom — `eval`, a shell `-c` string, `source`/`.` or process substitution applied directly to the download) — the body is fetched and run in one step, never inspected | a download to a file, a download piped into a **viewer or checksum** tool, a download piped into a shell or runtime that is given its own program inline (judged within that piped command, never from a later command on the line), or a fetch with no execution step at all |
+| `destructive_sql` | a statement that drops or truncates a table, or deletes/updates **without a row-restricting clause**, terminated as a statement, **at the start of its line** (optionally after a named SQL client prompt) **or wrapped in inline-code backticks** | a bounded query, a delete or update **with** a restricting clause, a schema read, or the words in prose — including a statement embedded after prose on the same line without backticks, even with a semicolon |
 | `script_injection` | active markup — a script element **with content and a closing tag**, or an event-handler/`javascript:` sink carrying code — in text that will be rendered | inert or structural markup — a formatting tag, a link, an empty element, or the name of a tag discussed in prose |
 
 Each pattern is anchored and context-requiring (word boundaries, a required destructive target, a required
@@ -130,13 +130,13 @@ shape that pattern recognises.
 | `block_device_overwrite` | `destructive_shell` | a raw block-device write whose output target is a device node | the same tool writing to a local image file |
 | `recursive_permission_change` | `destructive_shell` | a recursive permission or ownership change whose target is a filesystem root or a home directory | a permission change on a named script or a project directory |
 | `self_replicating_process` | `destructive_shell` | a shell function defined so that it spawns itself without bound | an ordinary function definition and call |
-| `download_piped_to_shell` | `fetch_and_execute` | a download whose body is piped straight into a shell | a download written to a file, or piped into a viewer or checksum tool |
-| `download_piped_to_interpreter` | `fetch_and_execute` | a download whose body is piped straight into a scripting runtime | a download written to a file, or a fetch with no execution step |
-| `download_then_evaluate` | `fetch_and_execute` | a download-then-evaluate idiom that fetches and runs in one expression | a download followed by no execution step |
-| `drop_or_truncate_table` | `destructive_sql` | a statement that drops or truncates a table, terminated as a statement | the same words in prose, or a schema read |
-| `unrestricted_delete_or_update` | `destructive_sql` | a delete or update with no row-restricting clause, terminated as a statement | the same statement **with** a restricting clause, or a bounded query |
-| `active_script_element` | `script_injection` | a script element carrying content and a closing tag | a formatting tag, a link, an empty element, or a tag named in prose |
-| `event_handler_or_uri_sink` | `script_injection` | an event-handler attribute or a scripting-scheme URI carrying code | an empty attribute, or the attribute name discussed in prose |
+| `download_piped_to_shell` | `fetch_and_execute` | a download whose body is piped straight into a shell — a later command on the same line (after `;`, `&&` or a ` -- ` handed to the downloaded script) does not change that | a download written to a file, or piped into a viewer or checksum tool, or into a shell given its own program inline (`-c`) within that piped command, which reads the download as data |
+| `download_piped_to_interpreter` | `fetch_and_execute` | a download whose body is piped straight into a scripting runtime — a later command on the same line does not change that | a download written to a file, a fetch with no execution step, a download piped into a viewer — even one that runs as a module of such a runtime — or into a runtime given its own program inline (`-c`, `-e`) within that piped command, which reads the download as data |
+| `download_then_evaluate` | `fetch_and_execute` | a download-then-evaluate idiom that fetches and runs in one expression — `eval` applied directly to the download's substitution, wherever it sits on the line | a download followed by no execution step — a plain capture into a variable, even on a line that mentions `eval` in prose |
+| `drop_or_truncate_table` | `destructive_sql` | a statement that drops or truncates a table, at the start of its line (optionally after a named SQL client prompt) or wrapped in inline-code backticks, terminated as a statement | the same words in prose — on a comment, quote or shell-prompt line, or embedded after prose on the same line without backticks, even with a semicolon — or a schema read |
+| `unrestricted_delete_or_update` | `destructive_sql` | a delete or update with no row-restricting clause, at the start of its line (optionally after a named SQL client prompt) or wrapped in inline-code backticks, terminated as a statement (a bare whole-line statement matches regardless of letter case) | the same statement **with** a restricting clause, a bounded query, or the words in prose as in the row above |
+| `active_script_element` | `script_injection` | a script element carrying content and a closing tag, whose `type` is absent (a `data-type` attribute is not a `type`), empty, `module` or a JavaScript MIME type | a formatting tag, a link, an empty element, a tag named in prose, or a script element whose `type` marks a data block (`application/ld+json`, `application/json`, `text/template`, ...) |
+| `event_handler_or_uri_sink` | `script_injection` | an event-handler attribute or a scripting-scheme URI carrying code, inside a tag's own attribute list | an empty attribute, the attribute name discussed in prose, a no-op scripting URI (`javascript:void(0)`, `javascript:;`), or a comparison or assignment outside a tag |
 
 ### Precision decisions for set version 1
 
@@ -145,8 +145,27 @@ Open precision decisions, stated so the implementation and the reviewer agree:
 - **Device-node rows** (`filesystem_format`, `block_device_overwrite`) match block-storage device names only —
   disks, partitions, NVMe and MMC nodes; the null, zero and random devices (`/dev/null`, `/dev/zero`, `/dev/random`,
   `/dev/urandom`) never match.
-- **`destructive_sql`** matches only a statement that is the whole line (optionally semicolon-terminated) or is
-  semicolon-terminated; a prose sentence that merely mentions the keywords never matches.
+- **`destructive_sql`** matches only a statement at the start of its line — optionally after a **named** SQL
+  client prompt such as `mysql>`, `sqlite>` or `postgres=#` — that is the whole line (optionally
+  semicolon-terminated) or is semicolon-terminated, **or** a statement wrapped in inline-code backticks (a
+  backtick-wrapped statement is code presentation, not prose). A bare `#`, `>` or `$` is a comment, a quote or a
+  shell prompt, never a SQL prompt; a prose sentence that merely mentions the keywords never matches, even when it
+  goes on to a semicolon; a bare whole-line statement matches regardless of letter case; and a statement embedded
+  after prose on the same line without backticks is not matched — a recall cost taken for precision
+  (implementation review, rounds 2 and 3). There is deliberately no upper-case-keywords rule: a prose warning that
+  quotes a statement would match again.
+- **`fetch_and_execute`'s `eval`** counts only when applied directly to the download's command substitution,
+  wherever it sits on the line; a prose "eval" with the download merely captured into a variable is not an
+  execution step. A shell or runtime given its own program inline (`-c`, `-e`, `--eval`, `-Command`) reads a
+  piped download as data: only one run without a program of its own executes it — judged within the piped command
+  itself (up to the next `|`, `;` or `&`, and never past a ` -- ` that hands the rest of the line to the
+  downloaded script), so a later command's flag on the same line changes nothing.
+- **`script_injection`**: a script element whose `type` is absent, empty, `module` or a JavaScript MIME type is
+  active; any other `type` (`application/ld+json`, `application/json`, `text/template`, ...) marks a data block,
+  and a `data-type` attribute is not a `type`. A scripting-scheme URI that only does nothing (`javascript:void(0)`,
+  `javascript:;`) is not a sink. The context for an event-handler or URI attribute is a tag name with its attribute
+  list on one line, so a comparison or an assignment outside markup never supplies it — a tag whose attributes are
+  split across lines is a declared recall cost.
 - **Root and home targets** (`recursive_force_delete`, `recursive_permission_change`) are exactly `/`, `/*`, `~`,
   `~/`, `$HOME`, `${HOME}` and a top-level `/home/<user>`; subdirectories below them do not match.
 - **Windows and PowerShell forms** are out of scope for set version 1 (stated as a limitation).

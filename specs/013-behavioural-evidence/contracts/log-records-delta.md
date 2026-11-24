@@ -43,10 +43,14 @@ no `model.request kind=judge` line, exactly as a canary-decided turn has none to
 | `evidence.side_channel_unavailable` | WARNING | a side-channel request failed during a run (inside the run's scope) | `step` (one of the six `side_channel_*` steps, including `side_channel_header_unreadable`) |
 | `evidence.override_disarmed` | WARNING | the joined override form appeared (after normalisation) in a message Kestrel sent — the opening message, an attacker-generated one, or one a replay re-sent — so the token was disarmed (inside the run's scope) | `turn` (already a scope field) |
 | `callback.hit` | INFO | the listener accepted a hit for a run in progress (bound to that run with `events.bind_run_reference`, like the recommender line; stream only, never kept) | `method` (`GET`/`POST`/`PUT`/`HEAD`) |
-| `callback.ignored` | WARNING | the listener declined to store a request: an unknown token or a finished run (unscoped; once per `reason` per process), or a run in progress already at its hit cap (bound to that run with `bind_run_reference`; once per run per process, FR-072) | `reason` (`unknown_token`/`run_not_in_progress`/`hit_cap_reached`) |
+| `callback.ignored` | WARNING | the listener declined to store a request: an unknown token or a finished run (unscoped; once per `reason_kind` per process), or a run in progress already at its hit cap (bound to that run with `bind_run_reference`; once per run per process, FR-072) | `reason_kind` (`unknown_token`/`run_not_in_progress`/`hit_cap_reached`) |
+
+The field is `reason_kind`, not `reason`: `tests/unit/test_events.py` enforces a deny-list over every catalogued
+field name, and `reason` is on it because a reason is free text everywhere else in Kestrel (a judge's reason, a
+run's reason). `experience.unavailable` set the same precedent in feature 011. The value is an enum either way.
 
 `callback.hit` carries the run's scope fields through `bind_run_reference` and the `method`; it carries no token,
-no URL and no caller address. `callback.ignored` carries only `reason`: it is unscoped for `unknown_token` and
+no URL and no caller address. `callback.ignored` carries only `reason_kind`: it is unscoped for `unknown_token` and
 `run_not_in_progress` (there is no run to name) and bound to the run for `hit_cap_reached` (the capped request
 still answers `204`, so this line is its only trace). With no base URL configured the route is not mounted and
 neither line is ever emitted (FR-073).
@@ -61,7 +65,11 @@ neither line is ever emitted (FR-073).
 - `evidence.side_channel_unavailable`: `step`
 - `evidence.override_disarmed`: `()` (turn is a scope field)
 - `callback.hit`: `method`
-- `callback.ignored`: `reason`
+- `callback.ignored`: `reason_kind`
+
+Each entry joins `events.CATALOGUE` with the code that emits its line: part 1 adds the `run.start`, `turn` and
+`run.end` fields, `evidence.check` and `evidence.override_disarmed`; the other three arrive with part 2's
+side channel and listener.
 
 ## Deny-list check (unchanged)
 

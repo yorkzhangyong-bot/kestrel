@@ -17,7 +17,13 @@ version: 2
 
 - Name: `<id with ':'→'_'>.v<N>.md` (`attacker_direct_injection.v1.md`, `judge.v2.md`); a colon is not a legal
   Windows file-name character, so the front-matter `id` is authoritative and must agree with the file name.
-- Front-matter: exactly `id` and `version` (the `key: value` subset of YAML, read with the standard library).
+- Front-matter: `id` and `version` (the `key: value` subset of YAML, read with the standard library), plus the
+  one **optional** key `framing` (added by feature 013). `framing` records what a planting template is framed as
+  — the override-task template carries `framing: override`, the structural field a test asserts instead of
+  reading its wording (013/SC-014) — and is `None` on every file that omits it, which is every file feature 009
+  shipped. No other key is accepted: a front-matter naming one is still refused with "the front-matter allows
+  only 'id' and 'version'". The key lives in the front-matter only, never in the text a fingerprint is taken
+  over, so adding it to a file does not move that file's fingerprint by itself.
 - `text`: everything below the front-matter minus leading/trailing newlines — a checkout's line-ending or
   trailing-newline convention cannot move a fingerprint.
 - The **active** version of an id is its highest `N`; older files are the non-active versions an A/B arm can pin.
@@ -42,7 +48,7 @@ def families() -> tuple[str, ...]: ...             # families with an attacker p
 def fingerprint(text: str) -> str: ...             # sha256 hex (stdlib hashlib)
 def is_valid_version(v: str) -> bool: ...          # ^[1-9]\d*$
 def prompt_path(id, version, directory=None) -> Path: ...
-def format_prompt_file(id, version, text) -> str: ...     # the on-disk form
+def format_prompt_file(id, version, text, framing=None) -> str: ...   # the on-disk form; `framing` only when set
 def parse_prompt_file(path) -> PromptFile: ...            # validates name <-> front-matter
 def prompt_files(directory=None) -> dict[str, dict[str, PromptFile]]: ...
 def read_lock(path=None) -> dict[str, dict[str, str]]: ...
@@ -76,7 +82,9 @@ uv run python scripts/bump_prompt.py judge          # judge.v1.md -> judge.v2.md
 uv run python scripts/bump_prompt.py judge --lock   # record judge@2's fingerprint; the guard is green again
 ```
 `bump` refuses while the current version is unrecorded (no stacking); `--lock` refuses to re-record a pinned
-version with a different text unless `--force` (an unmerged version). `tests/unit/test_bump_prompt.py` covers it.
+version with a different text unless `--force` (an unmerged version). A bump carries the optional `framing` key
+across to the new version, so bumping a planting template cannot silently drop it.
+`tests/unit/test_bump_prompt.py` covers it.
 
 ## Provenance recording (FR-003, data-model §Schema v7)
 - Adaptive turns: when a turn is produced, record the active (or arm-pinned) `attacker:<family>` id+version and the

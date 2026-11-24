@@ -14,13 +14,23 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
 # Feature 010 (FR-010): a run keeps at most this many of its log lines; the rest reach the stream only, and one
 # `log.truncated` marker row records how many were dropped. A constant, not a setting.
 RUN_LOG_CAP = 1000
+# Feature 013 (FR-072): the most callback hits the listener stores for one run row (consumed or not); a later
+# request is still answered like a stored hit, stores nothing, and is logged once per run. A constant, not a setting.
+CALLBACK_HITS_CAP = 100
+# Feature 013: the evidence kinds (FR-004) and locations (FR-003) the run_evidence table accepts, the planted-token
+# kinds, and the side-channel statuses a run row records (FR-034).
+EVIDENCE_KINDS = ("canary_in_reply", "instruction_override", "unsafe_executable_output", "canary_in_tool_argument",
+                  "honeypot_tool_invoked", "canary_callback", "protected_state_changed")
+EVIDENCE_LOCATIONS = ("reply", "tool_call", "callback", "state")
+PLANTED_TOKEN_KINDS = ("override", "callback")
+SIDE_CHANNEL_STATUSES = ("not_configured", "checked", "unavailable")
 
 # The `runs` table's columns: shared by a fresh database's CREATE TABLE (below) and the schema-v9 rebuild
 # (`runs_new` in `_rebuild_runs_with_autoincrement`), so the two definitions cannot drift apart. SQLite cannot
@@ -63,7 +73,11 @@ RUNS_COLUMNS_SQL = """
     -- Added in schema version 10 (feature 012): a replay links to the run it re-tests and records one outcome.
     source_run_id INTEGER REFERENCES runs(id) ON DELETE CASCADE,  -- null unless mode = 'replay'
     replay_outcome TEXT CHECK (replay_outcome IS NULL OR
-        replay_outcome IN ('fixed', 'still_vulnerable', 'inconclusive'))  -- null unless mode = 'replay'
+        replay_outcome IN ('fixed', 'still_vulnerable', 'inconclusive')),  -- null unless mode = 'replay'
+    -- Added in schema version 11 (feature 013): the side channel's per-run correlation id and how it fared.
+    correlation_id TEXT,                                          -- null unless the target had a side channel
+    side_channel_status TEXT CHECK (side_channel_status IS NULL OR
+        side_channel_status IN ('not_configured', 'checked', 'unavailable'))  -- null (pre-013) reads as not_configured
 """
 # The indexes on `runs`: also shared, textually, with `_rebuild_runs_with_autoincrement` (which must issue these
 # as separate `execute()` calls rather than this joined form - see that method's docstring).
@@ -195,6 +209,55 @@ CREATE TABLE IF NOT EXISTS run_log (
     record TEXT NOT NULL                         -- the exact JSON line that went to the stream
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_run_log_seq ON run_log (run_id, seq);
+
+-- Added in schema version 11 (feature 013, behavioural evidence): additive only, no rebuild (FR-057).
+-- One row per evidence item: a deterministic finding on one turn of a run (FR-003, FR-004, FR-007).
+CREATE TABLE IF NOT EXISTS run_evidence (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    turn INTEGER NOT NULL,                             -- 1 for a single-turn run
+    kind TEXT NOT NULL CHECK (kind IN ('canary_in_reply', 'instruction_override', 'unsafe_executable_output',
+        'canary_in_tool_argument', 'honeypot_tool_invoked', 'canary_callback', 'protected_state_changed')),
+    location TEXT NOT NULL CHECK (location IN ('reply', 'tool_call', 'callback', 'state')),
+    owasp_category TEXT NOT NULL,                      -- the kind's class, or the family's for canary_in_reply
+    detail TEXT NOT NULL,                              -- non-secret (FR-007): never a token, a URL or a state value
+    pattern_name TEXT,                                 -- unsafe_executable_output only: the stable pattern name
+    pattern_set_version TEXT,                          -- unsafe_executable_output only: the set version it fired under
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_run_evidence_run ON run_evidence (run_id, turn, id);
+-- What a run planted, and whether its override token is still armed (FR-008, FR-012, FR-028, FR-035).
+CREATE TABLE IF NOT EXISTS run_planted_tokens (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('override', 'callback')),
+    token TEXT NOT NULL,                               -- override: the joined form; callback: the URL's last segment
+    prompt_id TEXT NOT NULL,                           -- the task template that planted it
+    prompt_version TEXT NOT NULL,
+    disarmed_turn INTEGER,                             -- override only: the turn whose sent message held the joined
+    created_at TEXT NOT NULL                           --   form; null = armed; copied as-is to a replay
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_run_planted_tokens ON run_planted_tokens (run_id, kind);
+CREATE INDEX IF NOT EXISTS idx_run_planted_tokens_token ON run_planted_tokens (token);
+-- Requests the callback listener accepted for a run in progress (FR-029, FR-030, FR-072).
+CREATE TABLE IF NOT EXISTS callback_hits (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    method TEXT NOT NULL,                              -- 'GET' | 'POST' | 'PUT' | 'HEAD'
+    received_at TEXT NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0                -- 1 once a turn's check turned it into an evidence item
+);
+CREATE INDEX IF NOT EXISTS idx_callback_hits_run ON callback_hits (run_id, consumed);
+-- The optional side channel of a target (FR-019); the header value is a Fernet token, never returned by the API.
+CREATE TABLE IF NOT EXISTS target_side_channels (
+    target_id INTEGER PRIMARY KEY REFERENCES targets(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    header_name TEXT,                                  -- null = no auth header
+    header_value_encrypted TEXT,
+    honeypot_tool TEXT,                                -- null = no honeypot check
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 # Columns added to `runs` in version 3; ALTER-added for a version-2 database (fresh ones get them from SCHEMA).
@@ -219,6 +282,10 @@ PROMPT_RUN_TURN_COLUMNS = (
     ("judge_prompt_id", "TEXT"), ("judge_prompt_version", "TEXT"),
 )
 PROMPT_ARM_COLUMNS = (("prompt_arm_target", "TEXT"), ("prompt_arm_version", "TEXT"))
+
+# Columns added to `runs` in version 11 (feature 013); ALTER-added for an older database, the v3/v4/v7 way (the
+# ALTER form omits the CHECK on `side_channel_status`; the base schema carries it, and code only writes valid values).
+EVIDENCE_RUN_COLUMNS = (("correlation_id", "TEXT"), ("side_channel_status", "TEXT"))
 
 
 class NameTaken(Exception):
@@ -300,6 +367,35 @@ class Run:
     # Version 10 (feature 012): a replay links to the run it re-tests and records one outcome against it.
     source_run_id: int | None = None       # the run this one replays; null unless mode == "replay"
     replay_outcome: str | None = None      # "fixed" | "still_vulnerable" | "inconclusive"; null unless a replay
+    # Version 11 (feature 013): the side channel's per-run correlation id and status; None on a pre-013 row, which
+    # reads as "not_configured" (FR-034).
+    correlation_id: str | None = None
+    side_channel_status: str | None = None
+
+
+@dataclass(frozen=True)
+class PlantedToken:
+    """What a run planted in its opening message (feature 013): an override token (the joined form) or a callback
+    token (the URL's last segment), the template version that planted it, and whether it is still armed
+    (`disarmed_turn` is None). A replay carries its source's rows, armed state included (FR-035)."""
+    kind: str                 # "override" | "callback"
+    token: str
+    prompt_id: str            # "override_task" | "callback_task"
+    prompt_version: str
+    disarmed_turn: int | None = None
+    created_at: str | None = None
+
+    @property
+    def armed(self) -> bool:
+        return self.disarmed_turn is None
+
+    @property
+    def prompt_ref(self) -> str:
+        return f"{self.prompt_id}@{self.prompt_version}"
+
+    def __repr__(self) -> str:   # the value is evidence material, not a credential, but never belongs in a log
+        return (f"PlantedToken(kind={self.kind!r}, prompt={self.prompt_ref!r}, armed={self.armed}, "
+                f"disarmed_turn={self.disarmed_turn!r})")
 
 
 @dataclass(frozen=True)
@@ -426,17 +522,20 @@ class TargetStore:
         has no ALTER that adds AUTOINCREMENT to an existing column, so `_rebuild_runs_with_autoincrement` rebuilds
         `runs` once every additive column it needs has been added above. Version 10 (feature 012) cannot be
         additive either: SQLite cannot ALTER a CHECK constraint, so `_rebuild_runs_for_replay` rebuilds `runs` a
-        second time to widen the `mode` CHECK and add `source_run_id`/`replay_outcome`."""
+        second time to widen the `mode` CHECK and add `source_run_id`/`replay_outcome`. Version 11 (feature 013)
+        is additive again: four new tables from the schema script and two nullable `runs` columns ALTER-added
+        below (FR-057) — no rebuild, so the v9/v10 helpers stay the no-ops they already are for a v10 database."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
+        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
-        # An older database may lack the adaptive (v3), experience (v4) and prompt-version (v7) columns on `runs`.
+        # An older database may lack the adaptive (v3), experience (v4), prompt-version (v7) and evidence (v11)
+        # columns on `runs`.
         run_columns = {r["name"] for r in db.execute("PRAGMA table_info(runs)")}
-        for column, ddl in ADAPTIVE_RUN_COLUMNS + EXPERIENCE_RUN_COLUMNS + PROMPT_RUNS_COLUMNS:
+        for column, ddl in ADAPTIVE_RUN_COLUMNS + EXPERIENCE_RUN_COLUMNS + PROMPT_RUNS_COLUMNS + EVIDENCE_RUN_COLUMNS:
             if column not in run_columns:
                 db.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl}")
         # The v7 prompt-version provenance on `run_turns` and the v7 prompt-arm columns on `experiment_arms`.
@@ -691,11 +790,16 @@ class TargetStore:
                   owasp_category: str, attacker_source: str, mode: str = "single_turn",
                   attacker_model: str | None = None, turn_budget: int | None = None,
                   token_budget: int | None = None, time_limit_s: int | None = None,
-                  use_prior_experience: bool = True, source_run_id: int | None = None) -> int:
+                  use_prior_experience: bool = True, source_run_id: int | None = None,
+                  correlation_id: str | None = None, side_channel_status: str = "not_configured") -> int:
         """Write the row before anything is sent, so a crash still leaves evidence an attack went out (R10).
 
         Adaptive runs pass mode='adaptive' with the attacker model and the budgets they were allowed (FR-015). A
-        replay (feature 012) passes mode='replay' and source_run_id naming the run it re-tests."""
+        replay (feature 012) passes mode='replay' and source_run_id naming the run it re-tests. A run on a target
+        with a side channel (feature 013) passes its correlation id and `side_channel_status='checked'`; the
+        status is written here, at claim time, so a crashed or interrupted run never leaves it null (013/FR-034)."""
+        if side_channel_status not in SIDE_CHANNEL_STATUSES:
+            raise ValueError(f"side_channel_status must be one of {SIDE_CHANNEL_STATUSES}, not {side_channel_status!r}.")
         with self.connect() as db:
             if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
                 raise TargetNotFound(target_id)
@@ -703,11 +807,11 @@ class TargetStore:
                 cursor = db.execute(
                     "INSERT INTO runs (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category,"
                     " attacker_source, status, started_at, mode, attacker_model, turn_budget, token_budget,"
-                    " time_limit_s, use_prior_experience, source_run_id) VALUES (?, ?, ?, ?, ?, ?, ?,"
-                    " 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " time_limit_s, use_prior_experience, source_run_id, correlation_id, side_channel_status)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category, attacker_source,
                      utc_now(), mode, attacker_model, turn_budget, token_budget, time_limit_s,
-                     int(use_prior_experience), source_run_id))
+                     int(use_prior_experience), source_run_id, correlation_id, side_channel_status))
             except sqlite3.IntegrityError:
                 # SQLite names the column, not the index, so ask the data rather than parse the message.
                 open_run = db.execute("SELECT id FROM runs WHERE target_id = ? AND status = 'in_progress'",
@@ -747,6 +851,98 @@ class TargetStore:
             if db.execute("UPDATE runs SET memory_written = ? WHERE id = ?",
                           (int(written), run_id)).rowcount == 0:
                 raise LookupError(f"No run with id {run_id}.")
+
+    # ---- behavioural evidence (feature 013): items, planted tokens and the side-channel status ----
+
+    def set_side_channel_status(self, run_id: int, status: str) -> None:
+        """The one in-run update of a run's side-channel status (013/FR-034): `checked` -> `unavailable` on the
+        first failed side-channel request. `finish_run` leaves the column alone."""
+        if status not in SIDE_CHANNEL_STATUSES:
+            raise ValueError(f"status must be one of {SIDE_CHANNEL_STATUSES}, not {status!r}.")
+        with self.connect() as db:
+            if db.execute("UPDATE runs SET side_channel_status = ? WHERE id = ?", (status, run_id)).rowcount == 0:
+                raise LookupError(f"No run with id {run_id}.")
+
+    def add_evidence(self, run_id: int, items) -> None:
+        """Insert one `run_evidence` row per evidence item, in the order given (013/FR-003). The caller builds the
+        items with non-secret details only (013/FR-007); the table's CHECKs refuse an unknown kind or location."""
+        now = utc_now()
+        with self.connect() as db:
+            db.executemany(
+                "INSERT INTO run_evidence (run_id, turn, kind, location, owasp_category, detail, pattern_name,"
+                " pattern_set_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(run_id, item.turn, item.kind, item.location, item.owasp_category, item.detail,
+                  item.pattern_name, item.pattern_set_version, now) for item in items])
+
+    def list_evidence(self, run_id: int) -> list:
+        """A run's evidence items by `(turn, id)` — the order they were found in (013/FR-003)."""
+        from kestrel.evidence.model import EvidenceItem   # the store stays importable without the package's callers
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM run_evidence WHERE run_id = ? ORDER BY turn, id", (run_id,)).fetchall()
+        return [EvidenceItem(kind=r["kind"], turn=r["turn"], location=r["location"],
+                             owasp_category=r["owasp_category"], detail=r["detail"], pattern_name=r["pattern_name"],
+                             pattern_set_version=r["pattern_set_version"], created_at=r["created_at"]) for r in rows]
+
+    def evidence_kinds_by_run(self, target_id: int) -> dict[int, list[str]]:
+        """Every run of this target that has evidence items: `{run_id: [distinct kinds, detection order]}`, in one
+        query for the whole target — for the run list (013/FR-038, FR-040)."""
+        order = {kind: index for index, kind in enumerate(EVIDENCE_KINDS)}
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT run_evidence.run_id AS run_id, run_evidence.kind AS kind FROM run_evidence"
+                " JOIN runs ON runs.id = run_evidence.run_id WHERE runs.target_id = ?", (target_id,)).fetchall()
+        out: dict[int, list[str]] = {}
+        for row in rows:
+            out.setdefault(int(row["run_id"]), []).append(row["kind"])
+        return {run_id: sorted(kinds, key=lambda kind: order.get(kind, len(order))) for run_id, kinds in out.items()}
+
+    def evidence_counts_by_run(self, target_id: int) -> dict[int, int]:
+        """How many evidence items each run of this target carries — the companion of `evidence_kinds_by_run`,
+        one query for the whole target, for the run list's `evidence_count` (013/FR-038)."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT run_evidence.run_id AS run_id, COUNT(*) AS n FROM run_evidence"
+                " JOIN runs ON runs.id = run_evidence.run_id WHERE runs.target_id = ?"
+                " GROUP BY run_evidence.run_id", (target_id,)).fetchall()
+        return {int(row["run_id"]): int(row["n"]) for row in rows}
+
+    def add_planted_token(self, run_id: int, *, kind: str, token: str, prompt_id: str, prompt_version: str) -> None:
+        """Record what a run planted (013/FR-008, FR-028); a second token of the same kind on one run is refused by
+        the unique index (a run plants at most one of each)."""
+        if kind not in PLANTED_TOKEN_KINDS:
+            raise ValueError(f"kind must be one of {PLANTED_TOKEN_KINDS}, not {kind!r}.")
+        with self.connect() as db:
+            db.execute("INSERT INTO run_planted_tokens (run_id, kind, token, prompt_id, prompt_version, created_at)"
+                       " VALUES (?, ?, ?, ?, ?, ?)", (run_id, kind, token, prompt_id, prompt_version, utc_now()))
+
+    def list_planted_tokens(self, run_id: int) -> list[PlantedToken]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM run_planted_tokens WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
+        return [PlantedToken(kind=r["kind"], token=r["token"], prompt_id=r["prompt_id"],
+                             prompt_version=r["prompt_version"], disarmed_turn=r["disarmed_turn"],
+                             created_at=r["created_at"]) for r in rows]
+
+    def disarm_planted_token(self, run_id: int, kind: str, turn: int) -> None:
+        """Record the turn a token was disarmed from (013/FR-012, FR-035): a value only ever moves toward an
+        earlier turn — a later call for a later turn is a no-op — so a replay's copy, inherited disarmed from its
+        source's turn k, can be disarmed earlier by its own re-sent message but never re-armed or pushed back."""
+        with self.connect() as db:
+            db.execute("UPDATE run_planted_tokens SET disarmed_turn = ? WHERE run_id = ? AND kind = ?"
+                       " AND (disarmed_turn IS NULL OR disarmed_turn > ?)", (turn, run_id, kind, turn))
+
+    def copy_planted_tokens(self, source_run_id: int, replay_run_id: int) -> int:
+        """Copy every planted-token row of the source to the replay, `disarmed_turn` carried across unchanged
+        (013/FR-035): a token the source disarmed is disarmed on the replay from that same turn. Returns the count."""
+        with self.connect() as db:
+            rows = db.execute("SELECT kind, token, prompt_id, prompt_version, disarmed_turn FROM run_planted_tokens"
+                              " WHERE run_id = ? ORDER BY id", (source_run_id,)).fetchall()
+            now = utc_now()
+            db.executemany(
+                "INSERT INTO run_planted_tokens (run_id, kind, token, prompt_id, prompt_version, disarmed_turn,"
+                " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(replay_run_id, r["kind"], r["token"], r["prompt_id"], r["prompt_version"], r["disarmed_turn"], now)
+                 for r in rows])
+        return len(rows)
 
     def add_turn(self, run_id: int, *, position: int, attacker_message: str, reply_text: str | None = None,
                  reply_truncated: bool = False, judge_verdict: str | None = None, judge_reason: str | None = None,
@@ -1024,7 +1220,8 @@ class TargetStore:
                    use_prior_experience=bool(row["use_prior_experience"]),
                    memory_written=None if row["memory_written"] is None else bool(row["memory_written"]),
                    judge_prompt_id=row["judge_prompt_id"], judge_prompt_version=row["judge_prompt_version"],
-                   source_run_id=row["source_run_id"], replay_outcome=row["replay_outcome"])
+                   source_run_id=row["source_run_id"], replay_outcome=row["replay_outcome"],
+                   correlation_id=row["correlation_id"], side_channel_status=row["side_channel_status"])
 
     @staticmethod
     def _header_rows(db: sqlite3.Connection, target_id: int) -> list[sqlite3.Row]:

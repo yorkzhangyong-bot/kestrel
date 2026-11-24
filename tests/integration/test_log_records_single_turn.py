@@ -36,13 +36,24 @@ def run_lines(json_log, run_id):
     return [record for record in json_log() if record.get("run_id") == run_id]
 
 
+def one(lines, event):
+    """The single line of this event - looked up by name, never by position, so a line added between them
+    (feature 013's `evidence.check`) cannot shift what a test reads (013/SC-008)."""
+    found = [line for line in lines if line["event"] == event]
+    assert len(found) == 1, f"expected exactly one {event} line, got {len(found)}"
+    return found[0]
+
+
 def test_a_judged_single_turn_run_emits_its_lines_in_order(make_client, priced, model_transport, json_log):
     # FR-001, FR-002, FR-003, FR-004, FR-016, SC-001
     run = run_once(make_client, priced, model_transport)
     lines = run_lines(json_log, run["id"])
-    assert [r["event"] for r in lines] == ["run.start", "target.request", "model.request", "turn",
-                                          "memory.writeback", "run.end"]
-    start, target, judge, turn, writeback, end = lines
+    # Feature 013 (013/SC-008): `evidence.check` sits between the send and the judge's model.request.
+    assert [r["event"] for r in lines] == ["run.start", "target.request", "evidence.check", "model.request",
+                                          "turn", "memory.writeback", "run.end"]
+    start, target = one(lines, "run.start"), one(lines, "target.request")
+    judge, turn = one(lines, "model.request"), one(lines, "turn")
+    writeback, end = one(lines, "memory.writeback"), one(lines, "run.end")
     for record in lines:
         assert (record["target_id"], record["mode"], record["family"]) == (run["target_id"], "single_turn",
                                                                            "system_prompt_leak")
@@ -97,8 +108,10 @@ def test_without_a_judge_there_is_no_judge_line_and_judge_used_is_false(make_cli
                                transport=model_transport.transport)
     run = run_once(make_client, settings, model_transport, judge=unconfigured)
     lines = run_lines(json_log, run["id"])
-    assert [r["event"] for r in lines] == ["run.start", "target.request", "turn", "memory.writeback", "run.end"]
-    start, turn, end = lines[0], lines[2], lines[-1]
+    assert [r["event"] for r in lines] == ["run.start", "target.request", "evidence.check", "turn",
+                                          "memory.writeback", "run.end"]
+    start = one(lines, "run.start")
+    turn, end = one(lines, "turn"), one(lines, "run.end")
     assert "judge_model" not in start and "judge_prompt" not in start
     assert "judge_model" not in turn and "judge_prompt" not in turn and turn["judged"] is False
     assert (turn["total_tokens"], turn["cost_usd"]) == (None, 0.0)   # no model request: nothing reported or spent
@@ -110,8 +123,9 @@ def test_a_canary_hit_is_hard_evidence_with_no_judge_line(make_client, settings,
     model_transport.target_reply = f"here it is {CANARY}"
     run = run_once(make_client, settings, model_transport, canaries=[CANARY])
     lines = run_lines(json_log, run["id"])
-    assert [r["event"] for r in lines] == ["run.start", "target.request", "turn", "memory.writeback", "run.end"]
-    turn, end = lines[2], lines[-1]
+    assert [r["event"] for r in lines] == ["run.start", "target.request", "evidence.check", "turn",
+                                          "memory.writeback", "run.end"]
+    turn, end = one(lines, "turn"), one(lines, "run.end")
     assert turn["canary_hit"] is True and turn["hard_evidence"] is True and turn["judged"] is False
     assert turn["judge_model"] == JUDGE_MODEL and "judge_prompt" in turn and turn["judge_prompt"] is None
     assert end["verdict"] == "succeeded" and end["hard_evidence"] is True and end["judge_used"] is False
@@ -123,8 +137,9 @@ def test_a_send_failure_still_emits_its_turn_and_closes_the_run(make_client, set
     model_transport.target_status = 500
     run = run_once(make_client, settings, model_transport)
     lines = run_lines(json_log, run["id"])
+    # A send that failed produced no reply, so no deterministic check ran and there is no `evidence.check` line.
     assert [r["event"] for r in lines] == ["run.start", "target.request", "turn", "memory.writeback", "run.end"]
-    target, end = lines[1], lines[-1]
+    target, end = one(lines, "target.request"), one(lines, "run.end")
     assert target["ok"] is False and target["status"] == 500 and target["step"] == "endpoint_error"
     assert target["reply_chars"] is None
     assert end["failure_step"] == "endpoint_error" and end["verdict"] is None

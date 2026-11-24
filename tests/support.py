@@ -137,7 +137,8 @@ class SpyExperienceStore(ExperienceStore):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.queries: list[dict] = []
-        self.pattern_writes: list = []
+        self.pattern_writes: list = []          # each write's PatternWrite (outcome, id, hit count, distance)
+        self.pattern_documents: list[str] = []  # the document text each write was handed (a PatternWrite has none)
         self.memory_writes: list[dict] = []
 
     def query_patterns(self, *, family: str, query_text: str, n: int):
@@ -147,6 +148,7 @@ class SpyExperienceStore(ExperienceStore):
     def write_pattern(self, **kwargs):
         result = super().write_pattern(**kwargs)
         self.pattern_writes.append(result)
+        self.pattern_documents.append(kwargs.get("document") or "")
         return result
 
     def write_memory(self, **kwargs):
@@ -176,9 +178,13 @@ async def no_sleep(_delay):
 class ModelTransport:
     """One httpx.MockTransport for a whole offline run (010/T003): it answers the model endpoint — attacker, judge and
     recommender requests, told apart by the request's response_format — with canned OpenAI-style bodies carrying a
-    `usage` object, and every other host as the stub target ({"reply": ...}). Every request is recorded with its
-    headers, so a test can check what reached the target. Pass `.transport` both as the app's transport and as the
-    real clients' transport."""
+    `usage` object, the side-channel host (feature 013) through `side_channel`, and every other host as the stub
+    target ({"reply": ...}). Every request is recorded with its headers, so a test can check what reached the
+    target. Pass `.transport` both as the app's transport and as the real clients' transport.
+
+    Feature 013: `target_reply` may be a callable `(request) -> str` for a reply that depends on what was sent
+    (the run's real planted token, read back from the store), and `on_target_request` is called with every target
+    request before it is answered, so a stub target can act on a planted callback URL it received."""
 
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
@@ -193,22 +199,33 @@ class ModelTransport:
         self.recommendation = "Keep the system prompt out of replies."
         self.usage = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
         self.error_usage: dict | None = None        # usage an error response reports (a retried, billed attempt)
+        self.on_target_request = None               # feature 013: a hook `(request) -> None` per target request
+        self.side_channel = SideChannelStub()       # feature 013: answers SIDE_CHANNEL_URL's three endpoints
         self.transport = httpx.MockTransport(self.handle)
 
     # -- what a test reads back --
 
     def target_requests(self) -> list[httpx.Request]:
-        return [r for r in self.requests if r.url.host != httpx.URL(MODEL_BASE_URL).host]
+        return [r for r in self.requests
+                if r.url.host not in (httpx.URL(MODEL_BASE_URL).host, httpx.URL(SIDE_CHANNEL_URL).host)]
 
     def model_requests(self, kind: str) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.host == httpx.URL(MODEL_BASE_URL).host and _kind(r) == kind]
+
+    def side_channel_requests(self) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.host == httpx.URL(SIDE_CHANNEL_URL).host]
 
     # -- the handler --
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if request.url.host == httpx.URL(SIDE_CHANNEL_URL).host:
+            return self.side_channel.handle(request)
         if request.url.host != httpx.URL(MODEL_BASE_URL).host:
-            return httpx.Response(self.target_status, json={"reply": self.target_reply})
+            if self.on_target_request is not None:
+                self.on_target_request(request)
+            reply = self.target_reply(request) if callable(self.target_reply) else self.target_reply
+            return httpx.Response(self.target_status, json={"reply": reply})
         kind = _kind(request)
         if kind == "attacker":
             status = self.attacker_statuses.pop(0) if self.attacker_statuses else 200
@@ -280,3 +297,124 @@ def await_experiment(client, experiment_id: int, timeout_s: float = 30.0) -> dic
             return status
         time.sleep(0.05)
     raise AssertionError(f"experiment {experiment_id} did not finish within {timeout_s}s")
+
+
+# ---- feature 013: the side-channel stub, the planted-value helpers and the repeating doubles ----
+
+SIDE_CHANNEL_URL = "http://sidechannel.kestrel.test/side-channel"   # the stub side channel's base URL
+
+
+class SideChannelStub:
+    """A scripted side channel (013/T006) behind `SIDE_CHANNEL_URL`, answered by `ModelTransport`: the descriptor,
+    a per-correlation-id tool-call log whose calls carry `seq`, a sequence of state snapshots (the last one repeats)
+    and six failure modes a test switches on with `failure`. Scaffolding for part 2's checks; part 1 never calls it."""
+
+    FAILURES = ("unreachable", "unauthorized", "timeout", "invalid_shape", "error_status", "non_json")
+
+    def __init__(self) -> None:
+        self.descriptor: dict = {"kestrel_side_channel": 1, "capabilities": ["tool_calls", "state"], "tools": []}
+        self.calls: dict[str, list[dict]] = {}      # correlation id -> the calls made under it, in order
+        self.states: list[dict] = [{}]              # the snapshot sequence a run reads; the last repeats
+        self.expected_header: tuple[str, str] | None = None   # (name, value) the stub insists on, or None
+        self.failure: str | None = None             # one of FAILURES, or None
+        self.requests: list[httpx.Request] = []
+        self._state_reads = 0
+
+    def add_call(self, correlation_id: str, name: str, arguments: dict) -> dict:
+        """Record one tool call under a correlation id with the next `seq` for that id."""
+        calls = self.calls.setdefault(correlation_id, [])
+        call = {"seq": len(calls) + 1, "name": name, "arguments": arguments, "at": "2026-11-23T10:15:01Z"}
+        calls.append(call)
+        return call
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.failure == "unreachable":
+            raise httpx.ConnectError("placeholder connect error", request=request)
+        if self.failure == "timeout":
+            raise httpx.ReadTimeout("placeholder timeout", request=request)
+        if self.failure == "unauthorized" or (self.expected_header is not None
+                                              and request.headers.get(self.expected_header[0]) != self.expected_header[1]):
+            return httpx.Response(401, json={"detail": "unauthorized"})
+        if self.failure == "error_status":
+            return httpx.Response(500, json={"detail": "placeholder error"})
+        if self.failure == "non_json":
+            return httpx.Response(200, text="<html>placeholder</html>")
+        if self.failure == "invalid_shape":
+            return httpx.Response(200, json={"unexpected": True})
+        path = request.url.path
+        if path.endswith("/describe"):
+            return httpx.Response(200, json=dict(self.descriptor))
+        if path.endswith("/tool-calls"):
+            correlation_id = request.url.params.get("correlation_id", "")
+            return httpx.Response(200, json={"correlation_id": correlation_id,
+                                             "calls": [dict(c) for c in self.calls.get(correlation_id, [])]})
+        if path.endswith("/state"):
+            snapshot = self.states[min(self._state_reads, len(self.states) - 1)]
+            self._state_reads += 1
+            return httpx.Response(200, json={"state": snapshot})
+        return httpx.Response(404, json={"detail": "not found"})
+
+
+def in_progress_run_id(store) -> int | None:
+    """The one run currently in progress (every test here drives a single target at a time), or None."""
+    with store.connect() as db:
+        row = db.execute("SELECT id FROM runs WHERE status = 'in_progress' ORDER BY id DESC LIMIT 1").fetchone()
+    return None if row is None else int(row["id"])
+
+
+def planted_values(store, run_id: int) -> dict[str, str]:
+    """A run's real planted values, read back from the store (013/T006): `first`/`second`/`joined` for an override
+    token (the stored token is the joined form; the parts are its two halves) and `callback_url`'s last segment as
+    `callback_token`. Empty when the run planted nothing."""
+    out: dict[str, str] = {}
+    for token in store.list_planted_tokens(run_id):
+        if token.kind == "override":
+            half = len(token.token) // 2
+            out.update({"joined": token.token, "first": token.token[:half], "second": token.token[half:]})
+        elif token.kind == "callback":
+            out["callback_token"] = token.token
+    return out
+
+
+def _echo(store) -> str:
+    """The run's real parts and callback token, written separately (never the joined form, which would disarm the
+    detector): what the repeating doubles put into their later messages and progress notes."""
+    run_id = in_progress_run_id(store)
+    values = planted_values(store, run_id) if run_id is not None else {}
+    bits = []
+    if "first" in values:
+        bits.append(f"first part {values['first']} then second part {values['second']}")
+    if "callback_token" in values:
+        bits.append(f"callback token {values['callback_token']}")
+    return " ".join(bits)
+
+
+class RepeatingStubAttacker(StubAttacker):
+    """A stub attacker whose turn-2-and-later messages repeat the run's real token parts (and callback token) read
+    back from the store, so an isolation test cannot pass vacuously (013/FR-063, SC-013)."""
+
+    def __init__(self, store, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._store = store
+
+    async def next_message(self, *, conversation, family, progress=None, hints=None, timeout=None):
+        reply = await super().next_message(conversation=conversation, family=family, progress=progress,
+                                           hints=hints, timeout=timeout)
+        from kestrel.attack.attacker import AttackerReply
+        return AttackerReply(message=f"{reply.message} {_echo(self._store)}".strip(), tokens=reply.tokens)
+
+
+class RepeatingStubJudge(StubJudge):
+    """A stub judge whose progress notes repeat the run's real token parts (and callback token), read back from the
+    store, so the memory summary built from them is a real test of the scrubbing (013/FR-063, SC-013)."""
+
+    def __init__(self, store, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._store = store
+
+    async def judge(self, *, attack: str, reply: str, conversation: str | None = None,
+                    timeout: float | None = None) -> ParsedVerdict:
+        verdict = await super().judge(attack=attack, reply=reply, conversation=conversation, timeout=timeout)
+        progress = f"{verdict.progress or ''} {_echo(self._store)}".strip()
+        return ParsedVerdict(verdict.verdict, verdict.reason, progress=progress, tokens=verdict.tokens)

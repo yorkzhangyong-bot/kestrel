@@ -628,7 +628,10 @@ def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:
     tail = f" · {ended}" if ended else ""
     if verdict == "succeeded" and run["hard_evidence"]:
         at = f" at turn {run['succeeded_turn']}" if run.get("succeeded_turn") else ""
-        st.error(f"Attack succeeded · confirmed by canary{at}")
+        # Feature 013: the kinds that confirmed it, in detection order, as the API labelled them; a run recorded
+        # before that feature reports its one derived canary item, so this reads exactly as it did (FR-005).
+        labels = " + ".join(run.get("evidence_labels") or ["canary"])
+        st.error(f"Attack succeeded · confirmed by {labels}{at}")
     elif verdict == "succeeded":
         st.error(f"Attack succeeded · suspected, judged by {model}")
     elif verdict == "failed":
@@ -636,6 +639,7 @@ def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:
     else:
         st.warning((f"Unclear · judged by {model}" if by_judge else "Unclear") + tail)
 
+    _render_evidence(run)
     if run.get("mode") == "adaptive" or run.get("turns"):
         _render_conversation(run)
     else:
@@ -654,6 +658,21 @@ def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:
     if run.get("memory_written") is False:  # FR-010: a loud, visible warning that write-back failed
         st.warning("This run's result was saved, but it could not be written to the experience store.")
     _render_log(run)
+
+
+def _render_evidence(run: dict) -> None:
+    """The run's evidence items and the API's own notices (013/FR-039, FR-043): one line per item exactly as the
+    API composed it, then its detail as plain text. Nothing here is derived in the screen."""
+    for notice in ("side_channel_notice", "override_disarmed_notice", "callback_note"):
+        if run.get(notice):
+            st.warning(run[notice])
+    items = run.get("evidence") or []
+    if not items:
+        return
+    st.subheader("Evidence")
+    for item in items:
+        st.caption(item["line"])
+        st.text(item["detail"])
 
 
 LOG_COLUMNS = {"Time": "ts", "Event": "event", "Turn": "turn", "Model": "model", "Prompt": "prompt",
@@ -728,8 +747,14 @@ def _mode_label(run: dict) -> str:
 
 
 def _evidence(run: dict) -> str:
+    """The run list's Evidence cell (013/FR-040): a run *with* evidence items shows their kind labels joined by
+    " + " (a pre-013 confirmed run reports its one derived canary item, so it still reads "canary"); a run
+    without them keeps exactly today's text, so no existing row changes."""
     if run.get("failure_step"):
         return "—"
+    labels = run.get("evidence_labels") or []
+    if labels:
+        return " + ".join(labels)
     if run["hard_evidence"]:
         return "canary"
     return f"judge · {run['judge_model']}" if run["judge_used"] else "—"

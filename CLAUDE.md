@@ -101,7 +101,8 @@ same commit. Before opening any implementation PR, review this file and add anyt
 ## Learned notes
 - 2026-11-13 — **Prompt registry (009, after the PR #19 review).** Every model-facing prompt (attacker per
   family, judge, recommender) is a file `src/kestrel/prompts/<id with ':'→'_'>.v<N>.md` with a two-line YAML
-  front-matter (`id`, `version`); **no prompt text lives in Python**. The files are the registry
+  front-matter (`id`, `version`) — plus, since feature 013, one **optional** third key `framing`, which only a
+  planting template carries (`framing: override`) and which a bump preserves; **no prompt text lives in Python**. The files are the registry
   (`src/kestrel/prompt_registry.py`): the highest `N` is active, older files are the non-active versions an A/B
   arm can pin, and `load_prompt("judge")` returns `(text, "judge@1")`. Versions are plain integers, not semver.
   The committed lock `src/kestrel/prompt_versions.lock.json` (`{id: {version: sha256}}`) pins every file's
@@ -327,3 +328,78 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `200`, so that alone proves nothing; the guardrail specifically excludes its *tool-capable* endpoint
   (`'failed_routing_step': 'Filter by Guardrails'` only after `'Filter by Tool Compatibility'` has already
   narrowed the candidate pool to the one that then fails ZDR).
+  **Recurred 2026-11-24** for the replacement model too: every live e2e fails at the connection-test step with
+  `{"ok": false, "step": "endpoint_error", "detail": "Status 502"}`, and the target's own log shows
+  `OpenAIModelNotFoundError: Error code: 404 ... 0 endpoints out of 20 requested are available matching your
+  guardrail restrictions and data policy ... Model blocked by guardrail` for `openai/gpt-oss-120b`. Same
+  account-side cause, same check: an untouched, pre-existing e2e (`tests/e2e/test_us1_connection.py`) fails the
+  same way, so it is never a regression in the feature under test. Treat a 502 from `targets/hs_code` at the
+  connection test as this until that check says otherwise; the offline suite covers everything the e2e does
+  except the live model call.
+- 2026-11-24 — **Behavioural evidence (013), part 1.** Deterministic proof is no longer canary-only: one
+  `EvidenceChecker` (`src/kestrel/evidence/`), built per run by `build_checker(...)`, owns every check and runs
+  them in the fixed order of FR-001 over each reply; **any** item ends the run succeeded with hard evidence and
+  no judge call for that turn, and `evidence=None` keeps `EvidenceChecker.canary_only(...)` — today's behaviour
+  exactly — for the *live* run functions only, so no existing caller or test changed; **both replay paths always
+  build the full checker** from the source's copied tokens (FR-014, FR-035 — `evidence=` is a test seam there,
+  never a canary-only fallback). Items are rows of `run_evidence` (kind, turn, location, OWASP
+  class, non-secret detail, plus a pattern name and set version for unsafe output); the seven kinds and their
+  labels/locations/classes live in one table (`evidence/model.py`), and `derived_items(run, stored)` is the one
+  helper that gives a **pre-013** hard-evidence run its single canary item on every surface, so the summary, the
+  run page and the report cannot disagree. The **override token** is two 6-char parts from a 31-symbol alphabet;
+  the planted wording is a prompt file (`override_task.v1.md`) framed as the injected override, with at least one
+  alphanumeric word between the parts, so the joined form appears in nothing Kestrel composes **even after
+  normalisation** (case folded, every non-alphanumeric character dropped) — that normalised form is what both
+  the echo-proofness test and the disarm check compare, and `note_sent` disarms on every message sent, a replay's
+  re-sends included. Where the paragraph goes is a Kestrel-owned sidecar
+  (`src/kestrel/attacks/data/insertion_points.json`, offset + sha256 of the seed's verbatim library text): direct
+  seeds at the attacker-voice end, indirect seeds **interior**, inside the simulated injected content, wrapped in
+  the seed's reviewed **quoting frame** (`frame_prefix`/`frame_suffix`, review round 1 item 7: a seed's own text is
+  a meta-instruction *about* retrieved content, so an unframed paragraph at its sentence boundary still read in the
+  user's voice). The run's exact filled task text is therefore frame + paragraph as **one string**
+  (`InsertionPoint.frame`); the run starters pass `seed=` to `build_checker` so `planted_task_texts()` is that
+  string *before* the retrieval provider is built (the provider captures the list eagerly), and `opening_message`
+  records it for a checker built without its seed. A derived point (fixture library) carries no frame — the frame
+  is reviewed per seed, never invented at run time — so only the shipped library exercises it offline
+  (`test_override_placement.py`, one `test_evidence_store_isolation.py` run). A `PatternWrite` carries no document:
+  `SpyExperienceStore.pattern_documents` is what a test inspects for pool text. Gotcha:
+  the sidecar is keyed to the *shipped* library, but the offline suite drives the synthetic `fixture_library()`
+  whose seeds share those ids with different text — so `insertion_point(family, id, text)` falls back to a
+  derived point of the same shape when the fingerprint does not match, and only the unit test
+  (`test_override_placement.py`) is strict; a strict runtime lookup would crash every offline run of an
+  injection family. The **unsafe-output** set is twelve named patterns in four categories at set version 1, with
+  the inert samples (3 positive + 3 negative per pattern) only in `tests/fixtures/unsafe_output_cases.json`; a
+  unit test parses `contracts/detectors.md`'s own table and set version so the contract, the module and the
+  fixture cannot drift. Gotchas while writing them: Python refuses an inline `(?i)` that is not at the start of
+  the expression (use the `flags=` argument when the pattern is an alternation), and an attribute-value class that
+  excludes *both* quote characters stops at the first inner quote of the other kind — the usual shape of an
+  event-handler value whose code contains a quoted string — so such a value never matched until each quoting
+  style got its own branch. **FR-063** strips the run's exact filled task text and scrubs its planted values at every
+  experience-store and retrieval boundary (`writeback._winning_messages`, the judge progress notes the summary is
+  built from, `retrieval.build_query`); the checker is built **before** the provider and the write-back so both
+  receive this run's values, and `tests/support.py`'s `RepeatingStubAttacker`/`RepeatingStubJudge` (which echo the
+  run's real parts, read back from the store) are what stop that test passing vacuously. Replay derives each
+  turn's result from "any evidence item", never the canary flag (both branches), and copies the source's tokens
+  with their armed state. Logging: four `run.start` fields (omitted when they do not apply), a new per-turn
+  `evidence.check` line **before** the judge's `model.request`, and kinds/counts on `turn` and `run.end`; the
+  `callback.ignored` field is `reason_kind`, not `reason`, because `tests/unit/test_events.py` enforces a
+  deny-list of free-text-looking field names over the whole catalogue (the 013 contracts were corrected to
+  match). Schema **v11** is additive — four new tables and two nullable `runs` columns, **no rebuild** — and
+  creates every table of *both* parts, so part 2 needs no second bump. Pre-existing tests edited beyond
+  SC-008's original list (and added to it): `tests/unit/test_prompt_registry.py` (the exact id set, the
+  `version == "1"` pin and the two-line front-matter prefix, all three of which a new prompt id, two bumped
+  attacker versions and the optional `framing` key change by construction), one assertion in
+  `tests/unit/test_attacker_client.py` that pinned a bumped family's active reference as `@1` while reading it
+  from the live registry — now compared against `prompt_registry.active_ref`, so no version literal can go stale
+  again — and `tests/unit/test_experience_summary.py`, whose fallback-summary assertion pinned the old
+  "canary hard evidence" suffix (now "; hard evidence": any deterministic proof, review round 1 item 13). The
+  unsafe-output boundary after review rounds 2 and 3: a SQL statement must start its line (a *named* client
+  prompt such as `mysql>` allowed, a bare `#`/`>`/`$` not) or be wrapped in inline-code backticks, so a
+  destructive statement embedded after prose on the same line without backticks is a known recall cost (no
+  upper-case-keywords rule, which would re-match a prose warning that quotes a statement); `eval` counts only when
+  applied directly to the download's substitution; a shell or runtime given its own program inline (`-c`/`-e`)
+  reads a piped download as data, judged within the piped command itself (never from a later command's flag on
+  the line); a non-JavaScript `type` makes a script element a data block, and `data-type` is not `type`; a
+  no-op `javascript:` URI is not a sink; and the tag context is an attribute-list grammar on one line, never
+  a `<` comparison (a tag split across lines is a declared recall cost). Any example of a dangerous statement
+  belongs in the fixture only — docs and commit messages describe the boundary behaviourally.

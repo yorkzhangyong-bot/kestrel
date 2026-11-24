@@ -16,8 +16,10 @@ from fastapi.responses import JSONResponse
 
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, BatchReplayEntryOut,
                                  BatchReplayResultOut, ConfigOut, ConnectionSettingsIn,
-                                 ConnectionTestRequest, ConnectionTestResult, ExperienceOut, FormDefaults, HeaderOut,
-                                 JudgeOut, ProfileOut, ReplayComparisonOut, RunDetail, RunRequest, RunSummary,
+                                 ConnectionTestRequest, ConnectionTestResult, EvidenceConfigOut, EvidenceItemOut,
+                                 ExperienceOut, FormDefaults, HeaderOut,
+                                 JudgeOut, PlantedTokenOut, ProfileOut, ReplayComparisonOut, RunDetail, RunRequest,
+                                 RunSummary,
                                  SaveTargetRequest, TargetDetail, TargetSummary, TermsOut, TurnComparisonOut, TurnOut,
                                  AdaptiveCapsOut, ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
@@ -27,6 +29,9 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
 from kestrel import events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
+from kestrel.evidence import unsafe_output
+from kestrel.evidence.checker import build_checker
+from kestrel.evidence.model import derived_items, distinct_kinds, evidence_line, kind_label, location_label
 from kestrel.experience.retrieval import background_provider
 from kestrel.experience.store import (EMBEDDING_MODEL_MISMATCH_MESSAGE, SPACE_MISMATCH_MESSAGE,
                                       EmbeddingModelMismatch, ExperienceStore, ExperienceStoreError, SpaceMismatch,
@@ -186,6 +191,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                          replay=ReplayOut(max_batch_runs=settings.replay_batch_max_runs,
                                          per_replay_time_limit_s=int(max(settings.adaptive_time_limit_s,
                                                                         TOTAL_DEADLINE_S))),
+                         evidence=evidence_config(app, settings),
                          prompts=[PromptVersionOut(id=e.id, version=e.version)
                                   for e in prompt_registry.registry()])
 
@@ -330,11 +336,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
+        canaries = store.list_canaries(target.id)
+        # The run's deterministic checker (feature 013): the one shared builder the experiment engine uses too.
+        checker = build_checker(store=store, family=prompt.family, canaries=canaries, mode=settings.mode,
+                                target=target, settings=settings, transport=request.app.state.transport,
+                                resolver=request.app.state.resolver,
+                                mask=[value for _, value in resolved.headers] + [resolved.url], seed=prompt)
         # The attacker's background each turn (feature 004 FR-021): the one shared retrieval path of feature 011 —
         # the attacker-only query, the floor and the de-duplication — identical for an experiment-executed run.
+        # Built after the checker, so the per-run scrubber of FR-063 is bound to this run's planted values.
         hint_provider = background_provider(request.app.state.experience, target_id=target.id,
                                             purpose=target.description, family=prompt.family, settings=settings,
-                                            use_prior_experience=body.use_prior_experience)
+                                            use_prior_experience=body.use_prior_experience,
+                                            planted_values=checker.planted_values(),
+                                            task_texts=checker.planted_task_texts())
 
         # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
         # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
@@ -343,27 +358,28 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                 if body.mode == "adaptive":
                     run = await execute_adaptive_run(
                         store, target_id=target.id, seed_prompt=prompt, attacker_source=library.attacker_source,
-                        canaries=store.list_canaries(target.id), resolved=resolved, mode=settings.mode,
+                        canaries=canaries, resolved=resolved, mode=settings.mode,
                         attacker=request.app.state.attacker, judge=request.app.state.judge,
                         max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                         time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                         resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
-                        hint_provider=hint_provider)
+                        hint_provider=hint_provider, evidence=checker)
                 else:
                     run = await execute_run(store, target_id=target.id, prompt=prompt,
                                             attacker_source=library.attacker_source,
-                                            canaries=store.list_canaries(target.id), resolved=resolved,
+                                            canaries=canaries, resolved=resolved,
                                             mode=settings.mode, judge=request.app.state.judge,
                                             transport=request.app.state.transport,
                                             resolver=request.app.state.resolver,
-                                            use_prior_experience=body.use_prior_experience)
+                                            use_prior_experience=body.use_prior_experience, evidence=checker)
             except RunInProgress:
                 return api_error(409, "run_in_progress", "A run against this target is already in progress.")
             # Write back to the experience store after every run; a failure is loud, never discards the run
             # (FR-006/10).
             turns = store.list_turns(run.id)
             write_back(request.app.state.experience, store, run, turns,
-                       dedupe_threshold=settings.experience_dedupe_threshold)
+                       dedupe_threshold=settings.experience_dedupe_threshold,
+                       planted_values=checker.planted_values(), task_texts=checker.planted_task_texts())
         finished = store.get_run(run.id)
         in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
         return run_detail(store, finished, target=target, terms_version=terms.version,
@@ -381,10 +397,15 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         # One query for the whole target (review round 2, R2), never a per-run check: agrees with the detail
         # and the batch on an adaptive run's real eligibility instead of falling back to turns_used.
         with_turns = store.run_ids_with_recorded_turns(target_id)
+        # Feature 013: one query each for the whole target, never a per-run read (the 012 pattern).
+        kinds_by_run = store.evidence_kinds_by_run(target_id)
+        counts_by_run = store.evidence_counts_by_run(target_id)
         return [run_summary(run, target=target, terms_version=terms.version,
                             adaptive_max_turns=settings.adaptive_max_turns,
                             other_run_in_progress=in_progress_id is not None and in_progress_id != run.id,
-                            recorded_turns=1 if run.id in with_turns else 0)
+                            recorded_turns=1 if run.id in with_turns else 0,
+                            evidence_kinds=kinds_by_run.get(run.id),
+                            evidence_count=counts_by_run.get(run.id))
                 for run in runs]
 
     @app.get("/api/targets/{target_id}/profile", response_model=ProfileOut)
@@ -414,8 +435,12 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         # One judge call per uncached success (FR-012); cached thereafter. No target send, no experience write.
         recommendations = await recommendations_for(store, app.state.judge, runs, turns_by_run)
         experience_summary = _experience_counts(app.state.experience, target_id)
+        # Feature 013: each run's own evidence items, so a finding lists them and the coverage table counts a
+        # run confirmed under a class only when one of its items carries that class (FR-044, FR-045).
+        evidence_by_run = {run.id: store.list_evidence(run.id) for run in runs}
         model = build_report(target=target, runs=runs, turns_by_run=turns_by_run, recommendations=recommendations,
-                             experience_summary=experience_summary, now=utc_now())
+                             experience_summary=experience_summary, now=utc_now(),
+                             evidence_by_run=evidence_by_run)
         markdown = render_markdown(model)
         if format == "html":
             return Response(content=render_html(markdown), media_type="text/html; charset=utf-8")
@@ -743,8 +768,43 @@ def _experience_counts(experience: Any, target_id: int) -> dict | None:
         return None
 
 
+SIDE_CHANNEL_NOTICE = ("The side channel couldn't be read during this run, so tool-call and state evidence may "
+                       "be missing.")
+DETECTORS = ("instruction_override", "unsafe_executable_output")
+
+
+def callback_route_mounted(app: FastAPI) -> bool:
+    """Whether the `/callback/{token}` route exists on this app (013/FR-073): the listener field reports exactly
+    that, so an instance with no base URL configured - and, in part 1, every instance - reports it off."""
+    return any(str(getattr(route, "path", "")).startswith("/callback/") for route in app.routes)
+
+
+def evidence_config(app: FastAPI, settings: Settings) -> EvidenceConfigOut:
+    """The evidence block of GET /api/config (013/FR-042): never the callback base URL itself."""
+    return EvidenceConfigOut(callback_listener=callback_route_mounted(app),
+                             callback_wait_s=settings.callback_wait_s,
+                             side_channel_timeout_s=settings.side_channel_timeout_s,
+                             detectors=list(DETECTORS),
+                             unsafe_output_categories=list(unsafe_output.CATEGORIES),
+                             unsafe_output_pattern_set_version=unsafe_output.PATTERN_SET_VERSION)
+
+
+def evidence_items_out(items) -> list[EvidenceItemOut]:
+    return [EvidenceItemOut(kind=item.kind, label=kind_label(item.kind), turn=item.turn, location=item.location,
+                            location_label=location_label(item.location), owasp_category=item.owasp_category,
+                            detail=item.detail, line=evidence_line(item), pattern_name=item.pattern_name,
+                            pattern_set_version=item.pattern_set_version, created_at=item.created_at)
+            for item in items]
+
+
+def side_channel_status_of(run: Run) -> str:
+    """A pre-013 row's null status reads as "not configured" (013/FR-034)."""
+    return run.side_channel_status or "not_configured"
+
+
 def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
-                other_run_in_progress: bool, recorded_turns: int | None = None) -> RunSummary:
+                other_run_in_progress: bool, recorded_turns: int | None = None,
+                evidence_kinds: list[str] | None = None, evidence_count: int | None = None) -> RunSummary:
     """`target`/`terms_version`/`adaptive_max_turns`/`other_run_in_progress` feed `compute_replay_status`
     (feature 012, research D10): `replayable`/`replay_blocked_reason`/`replay_advisory` depend on the run's
     target, never the run's own fields alone. `recorded_turns`, when the caller already knows it (every
@@ -754,6 +814,15 @@ def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_tu
     that genuinely has not checked."""
     status = compute_replay_status(run, target, terms_version, adaptive_max_turns, other_run_in_progress,
                                    recorded_turns=recorded_turns)
+    # A run with stored items reports them; one recorded before this feature, with hard evidence and none
+    # stored, reports its single derived canary item on this surface too (013/FR-005, FR-040).
+    if evidence_kinds:
+        kinds = list(evidence_kinds)
+        count = evidence_count if evidence_count is not None else len(kinds)
+    else:
+        derived = derived_items(run)
+        kinds = distinct_kinds(derived)
+        count = len(derived)
     return RunSummary(id=run.id, target_id=run.target_id, mode=run.mode, prompt_id=run.prompt_id,
                       prompt_title=run.prompt_title, family=run.family, owasp_category=run.owasp_category,
                       verdict=run.verdict, hard_evidence=run.hard_evidence, judge_used=run.judge_used,
@@ -761,7 +830,9 @@ def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_tu
                       finished_at=run.finished_at, memory_written=run.memory_written,
                       use_prior_experience=run.use_prior_experience, source_run_id=run.source_run_id,
                       replay_outcome=run.replay_outcome, finding=is_finding(run), replayable=status.replayable,
-                      replay_blocked_reason=status.blocked_reason, replay_advisory=status.advisory)
+                      replay_blocked_reason=status.blocked_reason, replay_advisory=status.advisory,
+                      evidence_kinds=kinds, evidence_labels=[kind_label(kind) for kind in kinds],
+                      evidence_count=count, side_channel_status=side_channel_status_of(run))
 
 
 def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> ReplayComparisonOut | None:
@@ -792,10 +863,27 @@ def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> R
 def run_detail(store: TargetStore, run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
                other_run_in_progress: bool, turns: list[Turn] | None = None) -> RunDetail:
     recorded_turns = len(turns) if turns is not None else None
+    # Feature 013: the run's own items - its stored ones, or the one derived canary item of a pre-013 run - and
+    # what it planted; every notice is computed here so the screen only displays it (FR-038, FR-039, FR-043).
+    items = derived_items(run, store.list_evidence(run.id))
+    kinds = distinct_kinds(items)
+    planted = store.list_planted_tokens(run.id)
+    disarmed = next((token for token in planted if token.kind == "override" and token.disarmed_turn), None)
     return RunDetail(**run_summary(run, target=target, terms_version=terms_version,
                                    adaptive_max_turns=adaptive_max_turns,
                                    other_run_in_progress=other_run_in_progress,
-                                   recorded_turns=recorded_turns).model_dump(),
+                                   recorded_turns=recorded_turns,
+                                   evidence_kinds=kinds or None,
+                                   evidence_count=len(items)).model_dump(),
+                     evidence=evidence_items_out(items),
+                     planted_tokens=[PlantedTokenOut(kind=token.kind, armed=token.armed,
+                                                     disarmed_turn=token.disarmed_turn, prompt=token.prompt_ref)
+                                     for token in planted],
+                     side_channel_notice=(SIDE_CHANNEL_NOTICE
+                                          if side_channel_status_of(run) == "unavailable" else None),
+                     override_disarmed_notice=(f"The override token was disarmed on turn {disarmed.disarmed_turn}."
+                                               if disarmed is not None else None),
+                     callback_note=None,
                      status=run.status, prompt_text=run.prompt_text,
                      reply_text=run.reply_text, reply_truncated=run.reply_truncated, reason=run.reason,
                      failure_message=STEP_MESSAGES.get(run.failure_step) if run.failure_step else None,

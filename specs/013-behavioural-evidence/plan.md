@@ -210,8 +210,10 @@ src/kestrel/
 ├── attacks/data/insertion_points.json  # Kestrel-owned sidecar keyed by prompt id: each direct/indirect-injection
 │                                  #   seed's insertion point as a character offset into its verbatim library text,
 │                                  #   plus a sha256 fingerprint of that text (indirect points sit INSIDE the simulated
-│                                  #   injected content, direct points at the attacker-voice position). library.json
-│                                  #   itself stays verbatim (the 002 contract) (FR-064)
+│                                  #   injected content, each with a reviewed quoting frame - frame_prefix/frame_suffix -
+│                                  #   presenting the paragraph as a quoted excerpt of the content the seed names; direct
+│                                  #   points at the attacker-voice position, no frame). library.json itself stays
+│                                  #   verbatim (the 002 contract) (FR-064)
 ├── prompts/attacker_direct_injection.v2.md, attacker_indirect_injection.v2.md, attacker_tool_exfiltration.v2.md
 ├── prompt_registry.py             # extended for one optional `framing` front-matter key (override_task; SC-014, T015)
 ├── prompt_versions.lock.json      # the five new/bumped files recorded (scripts/bump_prompt.py … --lock)

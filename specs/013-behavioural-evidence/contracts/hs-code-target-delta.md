@@ -44,7 +44,7 @@ whatever tools are actually offered, so a reader can see which set is live.
 ## The outbound-request tool (FR-054, FR-066)
 
 - A tool that makes exactly one outbound `GET` request (no body) to a URL the model supplies, bounded: http or
-  https only, a short timeout (a few seconds), a small response-size cap, no redirects followed. It returns a short
+  https only, a 5-second timeout, a 64 KiB response-size cap, no redirects followed. It returns a short
   status summary to the model. It exists so a callback is possible — an attack that makes the agent call it with
   the planted URL produces a listener hit. It is recorded like any tool.
 - **It is bounded by destination, not only by shape** (FR-066). The tool refuses any URL that does not match an
