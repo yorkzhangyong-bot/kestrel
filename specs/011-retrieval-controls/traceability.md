@@ -24,11 +24,16 @@ Every functional requirement and success criterion is covered by at least one te
 | 011/FR-016, SC-008 | `tests/unit/test_optional_extra.py` (the required dependencies are exactly the fixed stack; the `otel` extra unchanged); `tests/unit/test_support_embedding.py` (the offline embedding) |
 | 011/FR-017 | `tests/integration/test_retrieval_query_isolation.py` (no auth value, URL or name in a query), `test_retrieval_lines.py` (none on the stream), `test_startup_model_mismatch.py` (the exception's own text never reaches a line) |
 | 011/FR-018, SC-010 | e2e `tests/e2e/test_us011_retrieval.py` (the HS-code target, the real model: the shipped settings on every retrieval line, a seedless turn-4 selection, added/merged/added at the shipped threshold, the stamped model and space, the default embedding and ONNX MiniLM agreeing on a probe) |
-| 011/FR-019, SC-011 | `tests/unit/test_roadmap.py` (the roadmap lists Retrieval controls under Done as 011; the planned items are 012, 013 and 014 with no stale former number) |
 | 011/SC-002 | `tests/unit/test_retrieval_selection.py` (every selected hit within the floor, far hits never selected; both controls off → the k nearest) |
 | 011/SC-003 | `tests/unit/test_retrieval_selection.py` (no two selected within the threshold; short of k only when the pool is exhausted); `tests/integration/test_retrieval_lines.py` |
 | 011/SC-004 | `tests/unit/test_experience_store_controls.py` (N near-identical successes → one pattern with hit count N; N distinct → N patterns) |
 
 ## Untraced ids (justified)
+
+- 011/FR-019: documentation requirement (the implementation pull request moved Retrieval controls into the
+  roadmap's Done section and renumbered the planned items), verified in the 011 PR review; no test pins doc
+  wording (CLAUDE.md rule, 2026-11-24 — `tests/unit/test_roadmap.py` was removed under it).
+- 011/SC-011: the roadmap's wording after the 011 PR (Retrieval controls under Done as 011, planned items 012–014
+  with no stale former number), verified in the 011 PR review; same rule as FR-019.
 
 None.
