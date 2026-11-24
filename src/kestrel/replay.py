@@ -255,11 +255,13 @@ def _finish_single_turn(store: TargetStore, run_id: int, source: Run, *, turn_re
     """Emit the replay's one `turn` line, finish the row with its computed outcome, and stash it for `run.end`
     (mirrors `runs.py::_finish`, plus `replay_outcome`)."""
     reply = fields.get("reply_text")
+    kinds = list(evidence_kinds or [])
     events.turn_ended(turn=1, source=f"library:{source.prompt_id}", message_chars=len(source.prompt_text),
                       reply_chars=None if reply is None else len(reply),
                       reply_truncated=bool(fields.get("reply_truncated", False)), canary_hit=canary_hit,
-                      hard_evidence=bool(fields.get("hard_evidence", False)), judged=judged,
-                      verdict=fields.get("verdict"), attacker_generated=False)
+                      hard_evidence=bool(kinds), judged=judged,
+                      verdict=fields.get("verdict"), attacker_generated=False, evidence_kinds=kinds,
+                      evidence_count=len(kinds))
     replay_outcome = compute_outcome(turn_results, 1, source.succeeded_turn)
     run = store.finish_run(run_id, replay_outcome=replay_outcome, **fields)
     events.run_finished(run)
@@ -318,7 +320,7 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
                            prompt_id=source.prompt_id, attacker_source=source.attacker_source,
                            judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
                            turn_budget=1, time_limit_s=int(TOTAL_DEADLINE_S), use_prior_experience=False,
-                           source_run_id=source.id)
+                           source_run_id=source.id, **checker.run_start_fields())
         events.turn_started(1)
         deadline = clock() + TOTAL_DEADLINE_S
         secrets = [value for _, value in resolved.headers]
@@ -337,6 +339,10 @@ async def execute_replay(store: TargetStore, *, source: Run, source_turns: list[
         truncated = bool(outcome.reply_truncated)
 
         found = await checker.check_turn(1, reply, lambda: deadline - clock())
+        events.evidence_check(checks=found.checks, evidence_kinds=found.kinds, evidence_count=len(found.items),
+                              side_channel_status=found.side_channel_status,
+                              callback_wait_ms=found.callback_wait_ms,
+                              state_changed_keys=found.state_changed_keys)
         if found.items:   # any evidence item of any kind decides the turn (013/FR-035, research D23)
             store.add_evidence(run_id, found.items)
             return _finish_single_turn(store, run_id, source, turn_results=["succeeded"],

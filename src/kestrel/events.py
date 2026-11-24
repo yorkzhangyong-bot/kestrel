@@ -20,7 +20,7 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 from kestrel import tracing
 from kestrel.experiments.pricing import arm_cost
@@ -37,10 +37,12 @@ ANY_EVENT_FIELDS = ("message", "exc_type", "stack")
 # The event catalogue: the allow-list of each event's own fields, in their rendering order (contracts/log-records.md).
 CATALOGUE: dict[str, tuple[str, ...]] = {
     "run.start": ("prompt_id", "attacker_source", "attacker_model", "judge_model", "attacker_prompt", "judge_prompt",
-                  "turn_budget", "token_budget", "time_limit_s", "use_prior_experience", "source_run_id"),
+                  "turn_budget", "token_budget", "time_limit_s", "use_prior_experience", "source_run_id",
+                  "side_channel", "callback_listener", "override_planted", "callback_planted"),
     "turn": ("source", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "cost_note",
              "attacker_model", "attacker_prompt", "judge_model", "judge_prompt", "message_chars", "reply_chars",
-             "reply_truncated", "canary_hit", "hard_evidence", "judged", "verdict"),
+             "reply_truncated", "canary_hit", "hard_evidence", "judged", "verdict", "evidence_kinds",
+             "evidence_count"),
     "model.request": ("kind", "model", "prompt", "latency_ms", "ok", "status", "error", "attempts", "prompt_tokens",
                       "completion_tokens", "total_tokens", "cost_usd", "cost_note", "verdict", "hard_evidence",
                       "message_chars"),
@@ -57,7 +59,16 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "memory.flag_failed": (),
     "run.end": ("verdict", "hard_evidence", "stopping_condition", "failure_step", "judge_used", "turns_used",
                 "tokens_used", "succeeded_turn", "memory_written", "duration_ms", "cost_usd", "cost_note", "error",
-                "replay_outcome"),
+                "replay_outcome", "evidence_kinds", "evidence_count", "side_channel_status"),
+    # Feature 013 (contracts/log-records-delta.md): counts, kinds, statuses and steps only - never a token, a
+    # URL, a correlation id, an auth value, a tool-argument value, a state key or value, or an evidence detail.
+    "evidence.check": ("checks", "evidence_kinds", "evidence_count", "side_channel_status", "callback_wait_ms",
+                       "state_changed_keys"),
+    "evidence.override_disarmed": (),        # `turn` is a scope field
+    # Part 2 adds `evidence.side_channel_unavailable`, `callback.hit` and `callback.ignored` with the lines that
+    # emit them; `callback.ignored`'s own field is named `reason_kind`, not `reason`, because the field name
+    # `reason` is on the deny-list `tests/unit/test_events.py` enforces over this catalogue (a `reason` is free
+    # text everywhere else in Kestrel). Recorded in contracts/log-records-delta.md.
     "experiment.start": ("families", "reps", "max_runs", "token_budget_total", "wall_clock_s", "arms"),
     "experiment.cap": ("cap", "completed_runs", "tokens_used", "elapsed_s"),
     "experiment.end": ("status", "stopped_reason", "completed_runs", "tokens_used", "duration_ms", "error"),
@@ -169,6 +180,11 @@ class RunContext:
     turn_span: Any = None
     log_kept: int = 0                      # the RunLogHandler's per-run counters (FR-010)
     log_dropped: int = 0
+    # Feature 013: what this run's deterministic checks have found so far, and how its side channel fared - the
+    # three fields `run.end` reports, accumulated by the per-turn `evidence.check` line.
+    evidence_kinds: list[str] = field(default_factory=list)
+    evidence_count: int = 0
+    side_channel_status: str = "not_configured"
 
 
 _RUN: contextvars.ContextVar[RunContext | None] = contextvars.ContextVar("kestrel_run", default=None)
@@ -343,16 +359,23 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
                 attacker_source: str | None = None, attacker_model: str | None = None, judge_model: str | None = None,
                 attacker_prompt: str | None = None, judge_prompt: str | None = None, turn_budget: int | None = None,
                 token_budget: int | None = None, time_limit_s: int | None = None,
-                use_prior_experience: bool | None = None, source_run_id: int | None = None) -> None:
+                use_prior_experience: bool | None = None, source_run_id: int | None = None,
+                side_channel: str | None = None, callback_listener: str | None = None,
+                override_planted: bool | None = None, callback_planted: bool | None = None) -> None:
     """Emit `run.start` right after the run row is claimed and bind the run on its scope. With no scope open (a
     direct call) the line still goes to the stream, with no run identifiers, and is not kept (SC-005).
-    `source_run_id` (feature 012) names the run a replay re-tests; omitted entirely for a non-replay run."""
+    `source_run_id` (feature 012) names the run a replay re-tests; omitted entirely for a non-replay run.
+    Feature 013 adds four more, each omitted unless the caller passes it (the real run starters always do):
+    whether the target has a side channel, whether the listener is enabled at all (which `callback_planted`
+    alone cannot distinguish from "this family carries no callback task"), and what this run planted."""
     try:
         fields = _present({"prompt_id": prompt_id, "attacker_source": attacker_source,
                            "attacker_model": attacker_model, "judge_model": judge_model,
                            "attacker_prompt": attacker_prompt, "judge_prompt": judge_prompt,
                            "turn_budget": turn_budget, "token_budget": token_budget, "time_limit_s": time_limit_s,
-                           "use_prior_experience": use_prior_experience, "source_run_id": source_run_id})
+                           "use_prior_experience": use_prior_experience, "source_run_id": source_run_id,
+                           "side_channel": side_channel, "callback_listener": callback_listener,
+                           "override_planted": override_planted, "callback_planted": callback_planted})
         ctx = _RUN.get()
         if ctx is None or not ctx.keep or ctx.started:
             emit("run.start", **fields)
@@ -411,7 +434,9 @@ def _run_end(ctx: RunContext, error: BaseException | None) -> None:
             "stopping_condition": outcome.get("stopping_condition"), "failure_step": outcome.get("failure_step"),
             "judge_used": ctx.judge_requests > 0, "turns_used": outcome.get("turns_used", ctx.turn_lines),
             "tokens_used": outcome.get("tokens_used"), "succeeded_turn": outcome.get("succeeded_turn"),
-            "memory_written": ctx.memory_written, "duration_ms": _ms_since(ctx.started_at), "cost_usd": cost}
+            "memory_written": ctx.memory_written, "duration_ms": _ms_since(ctx.started_at), "cost_usd": cost,
+            "evidence_kinds": list(ctx.evidence_kinds), "evidence_count": ctx.evidence_count,
+            "side_channel_status": ctx.side_channel_status}
         if cost is None:
             fields["cost_note"] = note
         if error is not None:
@@ -451,11 +476,36 @@ def judge_requested(prompt_ref: str | None) -> None:
         ctx.turn_judge_prompt = prompt_ref
 
 
+def evidence_check(*, checks: Sequence[str], evidence_kinds: Sequence[str], evidence_count: int,
+                   side_channel_status: str, callback_wait_ms: int | None = None,
+                   state_changed_keys: int | None = None) -> None:
+    """The per-turn line the deterministic checks emit, after they run and before `turn` (feature 013, FR-047):
+    which checks ran, in order, what they found, how the side channel fared, the bounded callback wait actually
+    spent and how many protected-state keys differed - a count only, never a key name or value (FR-033). The two
+    part-2 fields are omitted when their check did not run. The run's own totals are accumulated here, so
+    `run.end` reports the whole run without any caller threading them through."""
+    try:
+        ctx = _live()
+        if ctx is not None:
+            for kind in evidence_kinds:
+                if kind not in ctx.evidence_kinds:
+                    ctx.evidence_kinds.append(kind)
+            ctx.evidence_count += evidence_count
+            ctx.side_channel_status = side_channel_status
+        emit("evidence.check", checks=list(checks), evidence_kinds=list(evidence_kinds),
+             evidence_count=evidence_count, side_channel_status=side_channel_status,
+             **_present({"callback_wait_ms": callback_wait_ms, "state_changed_keys": state_changed_keys}))
+    except Exception as error:
+        _backstop("evidence.check", error)
+
+
 def turn_ended(*, turn: int, source: str, message_chars: int | None, reply_chars: int | None,
                reply_truncated: bool, canary_hit: bool, hard_evidence: bool, judged: bool, verdict: str | None,
-               attacker_generated: bool) -> None:
+               attacker_generated: bool, evidence_kinds: Sequence[str] = (), evidence_count: int = 0) -> None:
     """Emit the turn's one `turn` line with its duration, totals, cost and what was in play, and close its span
-    (FR-002). Lengths and categories only: there is no parameter for any text."""
+    (FR-002). Lengths and categories only: there is no parameter for any text. Feature 013: `evidence_kinds` and
+    `evidence_count` are always present, and `hard_evidence` on this row now means "this turn produced at least
+    one evidence item of any kind" - `canary_hit` keeps the narrower meaning."""
     try:
         ctx = _live()
         fields: dict[str, Any] = {"turn": turn, "source": source}
@@ -472,7 +522,8 @@ def turn_ended(*, turn: int, source: str, message_chars: int | None, reply_chars
                 fields["judge_model"], fields["judge_prompt"] = ctx.judge_model, ctx.turn_judge_prompt
         fields.update({"message_chars": message_chars, "reply_chars": reply_chars, "reply_truncated": reply_truncated,
                        "canary_hit": canary_hit, "hard_evidence": hard_evidence, "judged": judged,
-                       "verdict": verdict if judged else None})
+                       "verdict": verdict if judged else None, "evidence_kinds": list(evidence_kinds),
+                       "evidence_count": evidence_count})
         emit("turn", **fields)
         if ctx is not None:
             ctx.turn_lines += 1

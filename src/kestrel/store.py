@@ -896,6 +896,16 @@ class TargetStore:
             out.setdefault(int(row["run_id"]), []).append(row["kind"])
         return {run_id: sorted(kinds, key=lambda kind: order.get(kind, len(order))) for run_id, kinds in out.items()}
 
+    def evidence_counts_by_run(self, target_id: int) -> dict[int, int]:
+        """How many evidence items each run of this target carries — the companion of `evidence_kinds_by_run`,
+        one query for the whole target, for the run list's `evidence_count` (013/FR-038)."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT run_evidence.run_id AS run_id, COUNT(*) AS n FROM run_evidence"
+                " JOIN runs ON runs.id = run_evidence.run_id WHERE runs.target_id = ?"
+                " GROUP BY run_evidence.run_id", (target_id,)).fetchall()
+        return {int(row["run_id"]): int(row["n"]) for row in rows}
+
     def add_planted_token(self, run_id: int, *, kind: str, token: str, prompt_id: str, prompt_version: str) -> None:
         """Record what a run planted (013/FR-008, FR-028); a second token of the same kind on one run is refused by
         the unique index (a run plants at most one of each)."""

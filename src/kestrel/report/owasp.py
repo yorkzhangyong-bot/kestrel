@@ -25,7 +25,23 @@ TESTED: tuple[TestedClass, ...] = (
     TestedClass("LLM07: System Prompt Leakage", ("system_prompt_leak",), "system-prompt leak"),
 )
 
-# The seven OWASP classes outside the current attack library, each with why Kestrel does not test it yet.
+@dataclass(frozen=True)
+class DetectedClass:
+    """A class Kestrel covers with a detector that runs on every reply rather than with an attack family
+    (feature 013, FR-045): its own coverage row, counted from the evidence items themselves."""
+    owasp_class: str
+    label: str                 # the coverage table's "Family" cell
+    kind: str                  # the evidence kind whose items confirm it
+
+
+# Classes a deterministic detector covers on every reply, whatever family the run belongs to (feature 013).
+DETECTED: tuple[DetectedClass, ...] = (
+    DetectedClass("LLM05: Improper Output Handling", "unsafe executable output detector (every reply)",
+                  kind="unsafe_executable_output"),
+)
+
+# The six OWASP classes outside the current attack library and its detectors, each with why Kestrel does not test
+# it yet. LLM05 left this list when feature 013 added the unsafe-output detector.
 UNTESTED: tuple[tuple[str, str], ...] = (
     ("LLM02: Sensitive Information Disclosure",
      "No dedicated data-exfiltration family yet; the current attacks target injection and prompt leakage, not "
@@ -34,9 +50,6 @@ UNTESTED: tuple[tuple[str, str], ...] = (
      "A deployment and dependency risk, not something a conversation with the running agent can probe."),
     ("LLM04: Data and Model Poisoning",
      "Concerns the agent's training and fine-tuning data, which a black-box chat attack cannot reach."),
-    ("LLM05: Improper Output Handling",
-     "Depends on how the host application consumes the agent's output downstream; not visible from the chat "
-     "endpoint alone."),
     ("LLM08: Vector and Embedding Weaknesses",
      "Targets the agent's own retrieval and embedding store; Kestrel tests the agent, not its RAG internals."),
     ("LLM09: Misinformation",

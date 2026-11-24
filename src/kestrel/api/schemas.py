@@ -54,6 +54,44 @@ class ExperienceOut(BaseModel):
     use_prior_experience_default: bool  # the screen defaults the toggle to this (feature 004, FR-014)
 
 
+class EvidenceConfigOut(BaseModel):
+    """What the deterministic checks are configured to do (feature 013, FR-042). Never the callback base URL
+    itself: `callback_listener` reports exactly whether the listener route is mounted (013/FR-073)."""
+    callback_listener: bool
+    callback_wait_s: float
+    side_channel_timeout_s: int
+    detectors: list[str]
+    unsafe_output_categories: list[str]
+    unsafe_output_pattern_set_version: str
+
+
+class EvidenceItemOut(BaseModel):
+    """One deterministic finding on one turn (feature 013, FR-003, FR-038). `detail` never carries a token value
+    or part, a URL, an auth value or a protected-state value (FR-007)."""
+    kind: str
+    label: str
+    turn: int
+    location: str
+    location_label: str
+    owasp_category: str
+    detail: str
+    # The exact one-line form the run page and the report print (FR-039), composed server-side so the screen
+    # computes nothing of its own (FR-043).
+    line: str
+    pattern_name: str | None = None          # unsafe_executable_output only (FR-017)
+    pattern_set_version: str | None = None
+    created_at: str | None = None
+
+
+class PlantedTokenOut(BaseModel):
+    """What a run planted, for the run detail (feature 013, FR-038): never the token value or the URL - only the
+    kind, whether it is still armed, and the template that planted it."""
+    kind: str                       # "override" | "callback"
+    armed: bool
+    disarmed_turn: int | None = None
+    prompt: str                     # "override_task@1"
+
+
 class PromptVersionOut(BaseModel):
     id: str       # a registry id: "attacker:<family>", "judge", or "recommender" (feature 009)
     version: str  # the active version ("1", "2", …); never the prompt text (FR-007, FR-012)
@@ -99,6 +137,7 @@ class ConfigOut(BaseModel):
     adaptive: AdaptiveCapsOut
     experience: ExperienceOut
     replay: ReplayOut
+    evidence: EvidenceConfigOut | None = None   # feature 013 (FR-042)
     prompts: list[PromptVersionOut] = []   # active prompt versions, id + version only (feature 009, FR-007)
 
 
@@ -191,6 +230,13 @@ class RunSummary(BaseModel):
                                                 #   strings FR-004 to FR-006 define
     replay_advisory: str | None = None  # independent of replay_blocked_reason - a replayable run can still carry
                                          #   one (FR-040)
+    # Feature 013 (behavioural evidence): the run's distinct evidence kinds in detection order, their labels, how
+    # many items it carries, and how its side channel fared. A run recorded before this feature with hard
+    # evidence and no stored items reports exactly one derived canary item here (FR-005, FR-040).
+    evidence_kinds: list[str] = Field(default_factory=list)
+    evidence_labels: list[str] = Field(default_factory=list)
+    evidence_count: int = 0
+    side_channel_status: str = "not_configured"
 
 
 class TurnComparisonOut(BaseModel):
@@ -241,6 +287,13 @@ class RunDetail(RunSummary):
     failure_message: str | None = None
     turns: list[TurnOut] = Field(default_factory=list)
     comparison: ReplayComparisonOut | None = None   # feature 012: present only when mode == "replay"
+    # Feature 013: every evidence item, what the run planted, and the three notices the API computes so the UI
+    # only displays them (FR-038, FR-039, FR-043).
+    evidence: list[EvidenceItemOut] = Field(default_factory=list)
+    planted_tokens: list[PlantedTokenOut] = Field(default_factory=list)
+    side_channel_notice: str | None = None
+    override_disarmed_notice: str | None = None
+    callback_note: str | None = None
 
 
 class RunLogOut(BaseModel):

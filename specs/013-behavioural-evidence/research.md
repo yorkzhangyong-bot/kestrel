@@ -358,10 +358,10 @@ exempts nothing), exempt from `require_token` while mounted (the dependency retu
 `/callback/` only then). It never reads the request body, answers `204` for a token of a run in progress (or of a
 replay in progress, D15) after `store.record_callback_hit(token, method)` and emits `callback.hit` under
 `events.bind_run_reference(run)`; otherwise it answers `404` with an empty body and emits `callback.ignored`
-(warn-once per `reason`: `unknown_token` / `run_not_in_progress`). **Storage is capped per run** (FR-072):
+(warn-once per `reason_kind`: `unknown_token` / `run_not_in_progress`). **Storage is capped per run** (FR-072):
 `record_callback_hit` inserts nothing once the run holds `store.CALLBACK_HITS_CAP = 100` rows (consumed or not)
 and returns `(run_id, False)`; the route still answers `204` — a target cannot tell a stored hit from a capped one
-— and emits `callback.ignored` with `reason` `hit_cap_reached` through `events.warn_once` keyed on the run id,
+— and emits `callback.ignored` with `reason_kind` `hit_cap_reached` through `events.warn_once` keyed on the run id,
 bound to the run, so a flood costs one line, not one per request. `KESTREL_CALLBACK_BASE_URL` is the public base at
 which **that route** is
 reachable — for the in-process listener it therefore ends in `/callback` (for example

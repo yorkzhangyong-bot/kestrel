@@ -145,7 +145,9 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
                     # Feature 011: the same retrieval path as POST /api/runs, so the two cannot drift apart.
                     hint_provider=background_provider(experience, target_id=target.id, purpose=target.description,
                                                       family=seed.family, settings=settings,
-                                                      use_prior_experience=arm.use_prior_experience),
+                                                      use_prior_experience=arm.use_prior_experience,
+                                                      planted_values=checker.planted_values(),
+                                                      task_texts=checker.planted_task_texts()),
                     evidence=checker)
             else:
                 run = await execute_run(store, target_id=experiment.target_id, prompt=seed,
@@ -162,7 +164,8 @@ async def _run_rep(store, experiment, target, arm, family, rep, seed, resolved, 
                                  run_id=run.id, send_ok=run.failure_step is None)
         if arm.write_back:   # a cold arm skips write-back so the other arm is not warmed by it (FR-005);
             write_back(experience, store, run, store.list_turns(run.id),   # otherwise learn from the run (Principle V)
-                       dedupe_threshold=settings.experience_dedupe_threshold)
+                       dedupe_threshold=settings.experience_dedupe_threshold,
+                       planted_values=checker.planted_values(), task_texts=checker.planted_task_texts())
         return run
 
 

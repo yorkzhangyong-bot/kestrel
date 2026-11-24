@@ -51,3 +51,37 @@ def test_recommendation_is_attached_when_present():
     rec = {1: Recommendation("Refuse to reveal the system prompt.", model="google/gemini-3.8-flash")}
     finding = build_report(target=Target(), runs=runs, turns_by_run={}, recommendations=rec, now=NOW).findings[0]
     assert finding.recommendation is not None and "Refuse" in finding.recommendation.text
+
+
+# ---- feature 013: a finding lists every evidence item (013/FR-044) ----
+
+from kestrel.evidence.model import EvidenceItem   # noqa: E402  (feature 013)
+
+
+def test_a_finding_lists_each_evidence_item_and_still_quotes_the_reply():  # 013/FR-044
+    reply = "Sure: KESTREL-CANARY-9Z"
+    runs = [run(id=1, verdict="succeeded", hard_evidence=True, reply_text=reply)]
+    items = [EvidenceItem(kind="canary_in_reply", turn=1, location="reply",
+                          owasp_category="LLM07: System Prompt Leakage", detail="KESTREL-CANARY-9Z"),
+             EvidenceItem(kind="unsafe_executable_output", turn=1, location="reply",
+                          owasp_category="LLM05: Improper Output Handling", detail="destructive_sql/x (set 1): y",
+                          pattern_name="x", pattern_set_version="1")]
+    finding = build_report(target=Target(), runs=runs, turns_by_run={}, recommendations={}, now=NOW,
+                           evidence_by_run={1: items}).findings[0]
+    assert [i.label for i in finding.evidence_items] == ["canary", "unsafe executable output"]
+    assert finding.evidence_items[0].line == "canary · turn 1 · in the reply · LLM07: System Prompt Leakage"
+    assert finding.evidence_items[1].detail == "destructive_sql/x (set 1): y"
+    assert finding.evidence == reply          # the confirming reply is still shown verbatim
+
+
+def test_a_pre_013_finding_shows_its_one_derived_canary_item():  # 013/FR-005, 013/FR-044
+    runs = [run(id=1, verdict="succeeded", hard_evidence=True, reply_text="KESTREL-CANARY-9Z")]
+    finding = build_report(target=Target(), runs=runs, turns_by_run={}, recommendations={}, now=NOW).findings[0]
+    assert [i.label for i in finding.evidence_items] == ["canary"]
+    assert finding.evidence_items[0].turn == 1
+
+
+def test_a_judged_success_without_items_lists_none():  # 013/FR-044
+    runs = [run(id=1, verdict="succeeded", hard_evidence=False, reason="the judge thought so")]
+    finding = build_report(target=Target(), runs=runs, turns_by_run={}, recommendations={}, now=NOW).findings[0]
+    assert finding.evidence_items == () and finding.judge_note

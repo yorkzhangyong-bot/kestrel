@@ -661,7 +661,7 @@ one attack, asserting the structure of the result.
   (`CALLBACK_HITS_CAP`), counted over every hit row of that run whether or not a turn's check has consumed it. Once
   a run holds that many rows, every further request for its token MUST still be answered exactly as an accepted
   hit (a target cannot tell a stored hit from a capped one), MUST store nothing, and MUST be reported by one
-  `callback.ignored` line with reason `hit_cap_reached`, bound to that run and emitted once per run per process on
+  `callback.ignored` line with reason_kind `hit_cap_reached`, bound to that run and emitted once per run per process on
   the first capped request — never once per request. A turn's `canary_callback` item counts stored hits only, so
   its count never exceeds the cap. The cap is per run row: a replay has its own, separate from its source's. The
   run's time limit bounds how long the planted URL is live; this bounds what a target that loops on the URL, or

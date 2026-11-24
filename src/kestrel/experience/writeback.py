@@ -7,22 +7,38 @@ Feature 010: the result is one `memory.writeback` line inside the run's scope (b
 outside any scope, the line still names its run (a run reference: stream only, never kept). Feature 011: a success
 within `dedupe_threshold` of an existing same-family pattern is merged into it (its hit count raised) instead of
 added, and the line says which — `pattern_written` keeps meaning "the success was recorded as a pattern".
+Feature 013 (FR-063): before any text of a run reaches the store, the run's exact filled task text is stripped and
+its own planted values — each token part, the joined form, the callback URL — are replaced, in the winning
+messages and in the judge progress notes the memory summary is built from. The run's own stored message keeps
+them, so a replay still re-sends it verbatim.
 """
 from __future__ import annotations
 
 import logging
+from typing import Sequence
 
 from kestrel import events
+from kestrel.evidence.override import scrub_planted_values, strip_planted_tasks
 from kestrel.experience.summary import build_summary
 
 WRITEBACK_FAILED = "The write-back failed; the attack result is kept but was not recorded to the experience store."
 
 
-def write_back(experience, store, run, turns, *, dedupe_threshold: float | None = None) -> bool:
-    """Record the run in the experience store. Returns True if memory was written, False if write-back failed."""
+def write_back(experience, store, run, turns, *, dedupe_threshold: float | None = None,
+               planted_values: Sequence[str] = (), task_texts: Sequence[str] = ()) -> bool:
+    """Record the run in the experience store. Returns True if memory was written, False if write-back failed.
+
+    `planted_values` and `task_texts` are the run's own (the checker's `planted_values()` /
+    `planted_task_texts()`): everything written from here passes through them first (FR-063)."""
     with events.bind_run_reference(run):
         try:
-            summary = build_summary([t.judge_progress for t in turns], family=run.family, verdict=run.verdict,
+            def clean(text: str | None) -> str | None:
+                if not text:
+                    return text
+                return scrub_planted_values(strip_planted_tasks(text, task_texts), planted_values)
+
+            summary = build_summary([clean(t.judge_progress) for t in turns], family=run.family,
+                                    verdict=run.verdict,
                                     hard_evidence=run.hard_evidence, turns_used=run.turns_used,
                                     stopping_condition=run.stopping_condition)
             experience.write_memory(run_id=run.id, target_id=run.target_id, summary=summary, family=run.family,
@@ -32,7 +48,8 @@ def write_back(experience, store, run, turns, *, dedupe_threshold: float | None 
             pattern_written = run.verdict == "succeeded"
             outcome = None
             if pattern_written:
-                outcome = experience.write_pattern(run_id=run.id, document=_winning_messages(run, turns),
+                document = clean(_winning_messages(run, turns)) or ""
+                outcome = experience.write_pattern(run_id=run.id, document=document,
                                                    family=run.family, owasp_category=run.owasp_category,
                                                    dedupe_threshold=dedupe_threshold)
             store.set_memory_written(run.id, True)

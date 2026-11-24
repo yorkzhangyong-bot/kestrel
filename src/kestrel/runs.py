@@ -98,7 +98,8 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
     events.run_started(store, run_id=run_id, target_id=target_id, mode="single_turn", family=prompt.family,
                        prompt_id=prompt.id, attacker_source=attacker_source,
                        judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
-                       turn_budget=1, time_limit_s=int(total_s), use_prior_experience=use_prior_experience)
+                       turn_budget=1, time_limit_s=int(total_s), use_prior_experience=use_prior_experience,
+                       **checker.run_start_fields())
     events.turn_started(1)
     deadline = clock() + total_s
     try:
@@ -113,6 +114,10 @@ async def execute_run(store: TargetStore, *, target_id: int, prompt: AttackPromp
         truncated = outcome.reply_truncated
 
         found = await checker.check_turn(1, reply, lambda: deadline - clock())
+        events.evidence_check(checks=found.checks, evidence_kinds=found.kinds, evidence_count=len(found.items),
+                              side_channel_status=found.side_channel_status,
+                              callback_wait_ms=found.callback_wait_ms,
+                              state_changed_keys=found.state_changed_keys)
         if found.items:
             store.add_evidence(run_id, found.items)
             return _finish(store, run_id, prompt, message, canary_hit=found.canary_hit, evidence_kinds=found.kinds,
@@ -156,8 +161,9 @@ def _finish(store: TargetStore, run_id: int, prompt: AttackPrompt, message: str,
     events.turn_ended(turn=1, source=f"library:{prompt.id}", message_chars=len(message),
                       reply_chars=None if reply is None else len(reply),
                       reply_truncated=bool(fields.get("reply_truncated", False)), canary_hit=canary_hit,
-                      hard_evidence=bool(fields.get("hard_evidence", False)), judged=judged,
-                      verdict=fields.get("verdict"), attacker_generated=False)
+                      hard_evidence=bool(evidence_kinds), judged=judged,
+                      verdict=fields.get("verdict"), attacker_generated=False,
+                      evidence_kinds=evidence_kinds, evidence_count=evidence_count)
     run = store.finish_run(run_id, **fields)
     events.run_finished(run)
     return run

@@ -141,6 +141,9 @@ async def _check_evidence(state: _State, evidence: EvidenceChecker, remaining: C
     (013/FR-001). Any item ends the run as succeeded with hard evidence and no judge call (013/FR-002);
     `pending_canary` keeps its narrower meaning (a canary matched) for the turn line's `canary_hit`."""
     found = await evidence.check_turn(state["turns_used"] + 1, state["pending_reply"] or "", remaining)
+    events.evidence_check(checks=found.checks, evidence_kinds=found.kinds, evidence_count=len(found.items),
+                          side_channel_status=found.side_channel_status, callback_wait_ms=found.callback_wait_ms,
+                          state_changed_keys=found.state_changed_keys)
     update: _State = {"pending_canary": found.canary_hit, "pending_evidence": found}
     if found.items:
         update["outcome"] = {"verdict": "succeeded", "hard_evidence": True, "reason": found.reason,
@@ -210,7 +213,8 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                        prompt_id=seed_prompt.id, attacker_source=attacker_source, attacker_model=attacker.model,
                        judge_model=judge.model if judge.configured else None, attacker_prompt=attacker_prompt,
                        judge_prompt=judge_prompt, turn_budget=max_turns, token_budget=token_budget,
-                       time_limit_s=int(time_limit_s), use_prior_experience=use_prior_experience)
+                       time_limit_s=int(time_limit_s), use_prior_experience=use_prior_experience,
+                       **checker.run_start_fields())
 
     def remaining() -> float:
         return deadline - clock()
@@ -272,7 +276,9 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                           reply_chars=None if reply is None else len(reply),
                           reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
                           hard_evidence=bool(items), judged=judged,
-                          verdict=state.get("last_verdict") if judged else None, attacker_generated=turn >= 2)
+                          verdict=state.get("last_verdict") if judged else None, attacker_generated=turn >= 2,
+                          evidence_kinds=found.kinds if found is not None else [],
+                          evidence_count=len(items))
         conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]
         if state.get("pending_reply") is not None:
             conversation.append(("agent", state["pending_reply"]))
@@ -380,7 +386,7 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                            prompt_id=source.prompt_id, attacker_source=source.attacker_source, attacker_model=None,
                            judge_model=judge.model if judge.configured else None, judge_prompt=judge_prompt,
                            turn_budget=max_turns, token_budget=token_budget, time_limit_s=int(time_limit_s),
-                           use_prior_experience=False, source_run_id=source.id)
+                           use_prior_experience=False, source_run_id=source.id, **checker.run_start_fields())
 
         def remaining() -> float:
             return deadline - clock()
@@ -436,7 +442,9 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                               reply_chars=None if reply is None else len(reply),
                               reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
                               hard_evidence=bool(items), judged=judged,
-                              verdict=state.get("last_verdict") if judged else None, attacker_generated=False)
+                              verdict=state.get("last_verdict") if judged else None, attacker_generated=False,
+                              evidence_kinds=found.kinds if found is not None else [],
+                              evidence_count=len(items))
             # Any evidence item of any kind decides this turn (013/FR-035, research D23) - never the canary alone.
             turn_results.append("succeeded" if items else (state.get("last_verdict") if judged else None))
             conversation = list(state["conversation"]) + [("attacker", state["pending_message"])]

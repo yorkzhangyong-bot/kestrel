@@ -65,6 +65,12 @@ def render_markdown(model: ReportModel) -> str:
     for finding in model.findings:
         lines += [f"### {finding.family} — {finding.owasp_class}", "", "Winning attacker message:"]
         lines += _fence(finding.winning_message)
+        if finding.evidence_items:
+            # Feature 013 (FR-044): every deterministic item of this run, each line then its detail as code.
+            lines += ["Evidence:", ""]
+            for item in finding.evidence_items:
+                lines.append(f"- {item.line}")
+                lines += [""] + _fence(item.detail)
         if finding.evidence is not None:
             lines.append("Hard evidence (verbatim):")
             lines += _fence(finding.evidence)

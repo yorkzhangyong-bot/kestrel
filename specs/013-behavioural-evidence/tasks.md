@@ -287,13 +287,13 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
 **Independent Test**: quickstart US3 — `test_evidence_api_ui.py`, `test_report_coverage.py` /
 `test_report_findings.py`, `test_evidence_store_isolation.py`, `test_evidence_redaction.py`.
 
-- [ ] T025 [P] [US3] Unit test `tests/unit/test_strip_planted_tasks.py` (`FEATURE = "013"`):
+- [X] T025 [P] [US3] Unit test `tests/unit/test_strip_planted_tasks.py` (`FEATURE = "013"`):
       `strip_planted_tasks` removes the run's exact filled task text — for the override task at both a direct
       seed's attacker-voice offset and an indirect seed's inside-the-content offset, and for the callback task
       appended in the user's voice — wherever it sits, and leaves a message with no task text byte-identical;
       `scrub_planted_values` replaces each token part, the joined form and the callback URL wherever else they
       appear, and leaves text containing none of them unchanged (FR-063).
-- [ ] T026 [P] [US3] Integration test `tests/integration/test_evidence_store_isolation.py` (`FEATURE = "013"`):
+- [X] T026 [P] [US3] Integration test `tests/integration/test_evidence_store_isolation.py` (`FEATURE = "013"`):
       with a `SpyExperienceStore` and T006's **repeating** attacker and judge doubles — which echo the run's real
       parts in their turn-2-and-later messages and progress notes — run a confirmed override-family attack in both
       direct and indirect placement and assert that no pattern document, no memory record, no memory summary and no
@@ -302,7 +302,7 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       SC-013). The **callback-URL** half of FR-063/SC-013 is added in part 2 (T054/T055 make the callback task and
       its redaction exist): a confirmed `tool_exfiltration` run with a real planted URL repeated in a turn-2 stored
       message must write no URL into any pattern document, memory record, memory summary or retrieval query.
-- [ ] T027 [P] [US3] Unit test `tests/unit/test_events_evidence.py` (`FEATURE = "013"`): `run.start` renders
+- [X] T027 [P] [US3] Unit test `tests/unit/test_events_evidence.py` (`FEATURE = "013"`): `run.start` renders
       `side_channel`, `callback_listener`, `override_planted` and `callback_planted` when passed and **omits each
       when not** (never `null`, the one 010 convention); `turn` and `run.end` carry
       `evidence_kinds`/`evidence_count`, and `turn`'s `hard_evidence` now means "any evidence item on this turn"
@@ -310,7 +310,7 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       `evidence_count`, `side_channel_status`, `callback_wait_ms` and `state_changed_keys` (a count only), each
       omitted when it does not apply; `evidence.override_disarmed` renders with the turn scope field; no
       `log.unknown_field` warning fires for any of them (FR-047, FR-048).
-- [ ] T028 [US3] Implement `strip_planted_tasks` and `scrub_planted_values` in `src/kestrel/evidence/override.py`
+- [X] T028 [US3] Implement `strip_planted_tasks` and `scrub_planted_values` in `src/kestrel/evidence/override.py`
       and apply **both** at every experience-store and retrieval boundary: `experience/writeback.py` (per message
       before `_winning_messages` joins, around `summary.build_summary`'s judge-progress inputs, and before
       `write_memory`) and `experience/retrieval.py` (per attacker message before `build_query` joins), handing each
@@ -320,14 +320,14 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       `experiments/engine.py::_run_rep` call `build_checker(...)` before building the provider, so the per-run
       scrubber is bound after the run exists; `write_back` receives the checker's planted values and task texts
       alongside the run it already has (FR-063). Makes T025 and T026 pass.
-- [ ] T029 [US3] Add the evidence fields to `api/schemas.py` and fill them in `api/main.py` per contracts/api.md:
+- [X] T029 [US3] Add the evidence fields to `api/schemas.py` and fill them in `api/main.py` per contracts/api.md:
       `RunSummary` gains `evidence_kinds`/`evidence_labels`/`evidence_count`/`side_channel_status`, with a pre-013
       hard-evidence run reported through `derived_items(run)` as exactly one canary item on **every** surface;
       `RunDetail` gains `evidence` (items with `pattern_name`/`pattern_set_version`), `planted_tokens` (never a
       value or URL), `side_channel_notice`, `override_disarmed_notice` and `callback_note`, every string computed
       server-side; `ConfigOut.evidence` (part-1 fields plus `unsafe_output_pattern_set_version`); the run list
       uses `store.evidence_kinds_by_run` (FR-005, FR-007, FR-038, FR-042, FR-043).
-- [ ] T030 [P] [US3] Integration test `tests/integration/test_evidence_api_ui.py` (`FEATURE = "013"`): the run
+- [X] T030 [P] [US3] Integration test `tests/integration/test_evidence_api_ui.py` (`FEATURE = "013"`): the run
       summary and detail carry the fields above, a pre-013 run reading as exactly one canary item everywhere; the
       run page headline is exactly `"Attack succeeded · confirmed by {labels joined by ' + '}"` with `" at turn N"`
       for an adaptive run; the `"Evidence"` section lists one exact `evidence_line` per item then its detail; the
@@ -335,24 +335,24 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       exact text** for a run without them (`"judge · {model}"`, or `"—"`), so no existing row changes; the
       disarmed notice and `callback_note` render when set; nothing is re-derived in the UI (FR-038, FR-039,
       FR-040, FR-043, SC-004, SC-008).
-- [ ] T031 [US3] Render the evidence surfaces in `ui/app.py`: the `"confirmed by {labels}"` headline, the
+- [X] T031 [US3] Render the evidence surfaces in `ui/app.py`: the `"confirmed by {labels}"` headline, the
       `"Evidence"` section, the run-list column via an `_evidence` that reads `evidence_labels` and **falls back to
       today's text when a run has no items**, and the `side_channel_notice` / `override_disarmed_notice` /
       `callback_note` lines (each only when the API sets it); `render_metrics` keeps driving Confirmed/Suspected
       from `finding` + `hard_evidence`. Every string comes from the API (FR-039, FR-040, FR-043). Makes T030 pass.
-- [ ] T032 [P] [US3] Unit test `tests/unit/test_report_coverage.py` / `test_report_findings.py` (extend, scoped
+- [X] T032 [P] [US3] Unit test `tests/unit/test_report_coverage.py` / `test_report_findings.py` (extend, scoped
       `013/FR-###`): a finding lists each evidence item (label, turn, location label, class, detail) and still
       quotes the confirming reply; a run is counted **confirmed** under a class only when one of its own items
       carries that class — a system-prompt-leak run whose only item is unsafe output is **not** a confirmed LLM07
       finding, and is confirmed under LLM05 only; the table has **four** tested rows (the new
       LLM05 detector row with its run and confirmed counts); `UNTESTED` has **six** classes; a pre-013
       hard-evidence run renders its one derived canary item (FR-005, FR-044, FR-045, SC-008).
-- [ ] T033 [US3] Implement the report additions: `report/model.py` (`Finding.evidence_items`,
+- [X] T033 [US3] Implement the report additions: `report/model.py` (`Finding.evidence_items`,
       `build_report(evidence_by_run=)`, the per-class confirmed counting of FR-045, `derived_items` for pre-013
       runs), `report/owasp.py` (`DETECTED` LLM05 row, drop LLM05 from `UNTESTED`), `report/render.py` (render each
       finding's items after the winning message); `api/main.py` passes `evidence_by_run` and still excludes
       replays (FR-005, FR-044, FR-045, FR-046). Makes T032 pass.
-- [ ] T034 [US3] Emit the part-1 log lines through `events.py` per contracts/log-records-delta.md: `run.start` +
+- [X] T034 [US3] Emit the part-1 log lines through `events.py` per contracts/log-records-delta.md: `run.start` +
       `side_channel`/`callback_listener`/`override_planted`/`callback_planted` (each omitted when not passed),
       `turn`/`run.end` + `evidence_kinds`/`evidence_count` (+ `run.end` `side_channel_status`), `turn`'s
       `hard_evidence` redefined as "any evidence item on this turn", the new `evidence.check` line per turn (with
@@ -360,7 +360,7 @@ counts) the log; the canary itself is an item; no planted value ever reaches the
       `CATALOGUE` (FR-047, FR-048). Makes T027 pass. The per-turn `evidence.check` line changes the event order the
       two pre-existing log-records tests assert — update `tests/integration/test_log_records_adaptive.py` and
       `test_log_records_single_turn.py` to the new order (SC-008).
-- [ ] T035 [P] [US3] Integration test `tests/integration/test_evidence_redaction.py` (`FEATURE = "013"`): across a
+- [X] T035 [P] [US3] Integration test `tests/integration/test_evidence_redaction.py` (`FEATURE = "013"`): across a
       confirmed override run's whole stream, 0 lines carry a token or part, the joined form, an evidence detail,
       reply text or attack text, counted with the run's real marker strings (FR-048, SC-007).
 
@@ -482,7 +482,7 @@ confirms the run; models never see the URL.
       recommender's view even though the listener is now off or the base changed** (FR-031, FR-069); **the per-run
       cap**: with `store.CALLBACK_HITS_CAP` lowered by `monkeypatch` (the store and the route read it at call time,
       never bind it at import), one request beyond the cap still answers `204`, stores nothing, and produces
-      exactly one `callback.ignored` line with reason `hit_cap_reached` bound to the run (a second capped request
+      exactly one `callback.ignored` line with reason_kind `hit_cap_reached` bound to the run (a second capped request
       adds no line), while the turn's item counts exactly the cap (FR-072, SC-016); **the mount rule**: an app
       created without `KESTREL_CALLBACK_BASE_URL` has no `/callback/` route — a well-formed token path gets the
       app's ordinary not-found response, no store lookup and no `callback.*` line, and in hosted mode (an access
@@ -505,7 +505,7 @@ confirms the run; models never see the URL.
       app's ordinary not-found response answers it, and `require_token` exempts nothing (FR-073) — exempt from
       `require_token` for `/callback/` paths while mounted, reading no body: `204` + `record_callback_hit` +
       `callback.hit` for a token on an in-progress run; when the store reports that run at its cap, still `204`
-      with nothing stored and one `callback.ignored` (`reason` `hit_cap_reached`) through `events.warn_once` keyed
+      with nothing stored and one `callback.ignored` (`reason_kind` `hit_cap_reached`) through `events.warn_once` keyed
       on the run id and bound to the run with `bind_run_reference` (FR-072); else `404` + `callback.ignored`;
       `token` must match `^[0-9a-f]{24}$` (FR-027, FR-029, FR-030, FR-072, FR-073).
 - [ ] T054 [US6] Extend the checker and planting: `build_checker` plants a callback token for `tool_exfiltration`

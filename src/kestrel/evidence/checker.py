@@ -98,6 +98,7 @@ class EvidenceChecker:
         self._unsafe_output = unsafe_output
         self._override = override_planted
         self._sent = _Sent()
+        self._callback_listener = False   # part 2 turns this on when the listener route is mounted
         self._run_id: int | None = None
         self._kinds_found: list[str] = []
         self._items_count = 0
@@ -140,6 +141,17 @@ class EvidenceChecker:
             return seed.text
         insertion = override_module.insertion_point(seed.family, seed.id, seed.text)
         return override_module.place_task(seed.text, insertion, self._override.paragraph)
+
+    def run_start_fields(self) -> dict[str, Any]:
+        """What this run's `run.start` line says about its evidence setup (013/FR-047): whether the target has a
+        side channel, whether the listener is enabled at all — a fact `callback_planted` alone cannot
+        distinguish from "this family carries no callback task" — and what this run planted. Statuses and
+        booleans only: never a URL, a token or a correlation id (FR-048)."""
+        return {"side_channel": ("configured" if self._side_channel_status != "not_configured"
+                                 else "not_configured"),
+                "callback_listener": "on" if self._callback_listener else "off",
+                "override_planted": self._override is not None,
+                "callback_planted": False}
 
     def planted(self) -> list[PlantedToken]:
         """What this run planted, for the API's `planted_tokens` (never a token value reaches the user)."""

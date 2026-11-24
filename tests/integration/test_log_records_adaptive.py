@@ -67,7 +67,10 @@ def test_one_turn_line_per_turn_with_that_turns_totals(make_client, three_turns,
     assert [t["turn"] for t in of(lines, "target.request")] == [1, 2, 3]
 
     order = [r["event"] for r in lines if r.get("turn") == 2]   # a turn's own order (contracts: ordering guarantees)
-    assert order == ["memory.retrieval", "model.request", "target.request", "model.request", "turn"]
+    # Feature 013 (013/SC-008): `evidence.check` reports the deterministic checks of the turn, after the send and
+    # before the judge is consulted at all.
+    assert order == ["memory.retrieval", "model.request", "target.request", "evidence.check", "model.request",
+                     "turn"]
     end = lines[-1]
     assert [r["event"] for r in lines[-2:]] == ["memory.writeback", "run.end"]
     assert end["judge_used"] is True and end["turns_used"] == 3 and end["stopping_condition"] == "turn_cap"
