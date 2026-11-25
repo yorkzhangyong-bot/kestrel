@@ -25,9 +25,11 @@ matching label below (see [qa-pipeline.md](qa-pipeline.md)); the traceability jo
 case. Create both once, by hand (labels, like branch protection, are not committed configuration):
 
 ```bash
-gh label create refactor --description "A behaviour-preserving change that implements no spec (pairs with Spec-PR: none + Spec-PR-reason: refactor)" --color 1d76db
-gh label create bugfix --description "A fix for behaviour an approved spec already covers (pairs with Spec-PR: none + Spec-PR-reason: bugfix: #<issue>)" --color d93f0b
+gh label create refactor --description "Behaviour-preserving change, no spec; pairs with Spec-PR: none + Spec-PR-reason: refactor" --color 1d76db
+gh label create bugfix --description "Fix for behaviour a spec covers; pairs with Spec-PR: none + Spec-PR-reason: bugfix: #<issue>" --color d93f0b
 ```
+
+GitHub limits a label description to 100 characters; a longer one fails with `HTTP 422`.
 
 | Label | Meaning |
 | --- | --- |
