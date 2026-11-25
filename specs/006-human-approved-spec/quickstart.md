@@ -147,3 +147,5 @@ issue lookup passed as plain arguments.
 | 6 | FR-009, FR-015, FR-016, FR-017, FR-018, FR-019, FR-020, FR-021, FR-022, FR-024, SC-007, SC-008, SC-009, SC-010 |
 | docs/qa-pipeline.md, docs/branch-protection.md, CLAUDE.md, docs/roadmap.md | FR-021, FR-023 |
 | README + docs/qa-pipeline.md | FR-012, SC-005 |
+
+<!-- probe/honest-path: throwaway spec edit for T031 step 8; never merged -->
