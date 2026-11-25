@@ -1,0 +1,563 @@
+# Phase 1 Data Model: LangGraph Checkpointer and Approve Node (014)
+
+See `research.md` for the reasoning and verified facts behind every shape below.
+
+## One store: the checkpointer's tables live inside `kestrel.db`
+
+*This section's schema is a guide to the shape, not the spec: the binding behaviour is FR-003 to FR-007, FR-035
+to FR-037, FR-048, FR-049, and the test functions `tasks.md` names for them.*
+
+`store.py`'s existing database gains, in one additive schema-version bump (no rebuild — nothing here changes a
+`CHECK` constraint or a column's identity): four new columns on `runs`, one new index on `run_turns`, and two new
+tables for the custom saver.
+
+```sql
+-- RUNS_COLUMNS_SQL itself gains all four new columns (not only a later ALTER): a fresh database's CREATE TABLE and
+-- every migration both read from this one definition, exactly as every column since schema v3 has.
+    ...
+    -- Whether this run was started with "Ask before each turn" ticked. Captured once, at claim time; never
+    -- rewritten (research D5) — the checkpoint's own state is the only live answer to "is it still asking".
+    ask_before_each_turn INTEGER NOT NULL DEFAULT 0,
+    -- Whether this run was claimed through the live, checkpointed run-start path (research D22) — never set by a
+    -- single-turn claim, a replay claim, or an experiment repetition's claim, and never set by a resume or a
+    -- decision, neither of which ever claims a row. The classification the start-up sweep and every status read
+    -- use.
+    is_checkpointed INTEGER NOT NULL DEFAULT 0,
+    -- The attacker prompt reference this run is pinned to, recorded at claim time (research D16) — new columns;
+    -- today only run_turns records a per-turn attacker-prompt reference, and only from turn 2. A resumed or decided
+    -- run's attacker client is rebuilt against exactly this reference, never whatever is currently active.
+    attacker_prompt_id TEXT, attacker_prompt_version TEXT
+
+-- judge_model / judge_prompt_id / judge_prompt_version already exist as columns (written today only by
+-- finish_run); claim_run gains the option to also set them at claim time (research D16), so a resumed or decided
+-- run's judge client is rebuilt against the SAME claim-time values finish_run later re-affirms, never a judge that
+-- changed in between. No new columns for these three.
+
+-- Migration note: this is a plain ALTER TABLE ADD COLUMN set against the existing `runs` table (no rebuild needed
+-- — none of the four changes a CHECK or an existing column's identity), but RUNS_COLUMNS_SQL is still updated too,
+-- so a fresh database's CREATE TABLE and every future migration's own column list agree with what an ALTER
+-- produces on an existing one.
+```
+
+```sql
+-- Defense in depth for the record-step idempotency fix (research D6): the atomic write method (below) and its
+-- existence check are what actually keep a turn row and its evidence together; this index makes a bug in that
+-- guard loud (sqlite3.IntegrityError) instead of a silent duplicate row. Created inside _migrate itself, after the
+-- duplicate-row check below — never in the initial schema script, which TargetStore.__init__ runs unconditionally
+-- before _migrate ever gets a chance to check for a pre-existing duplicate.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_run_turns_position ON run_turns (run_id, position);
+```
+
+```python
+# Migration safety, run before the index above (inside _migrate, not the initial schema script): if an existing
+# database already holds a duplicate (run_id, position) pair in run_turns (not reachable through any code path this
+# project has ever shipped, but not provably impossible either), creating the index above would otherwise fail with
+# a bare sqlite3.IntegrityError. _migrate checks for this explicitly first and raises a clear, named error
+# identifying the migration and the table ("schema <N> migration found duplicate (run_id, position) rows in
+# run_turns and refuses to start — this database needs manual inspection before it can be opened") — the same
+# fail-loud posture earlier schema rebuilds already take for a foreign-key violation, never a silent guess at which
+# duplicate row to keep.
+```
+
+```sql
+-- The custom checkpoint saver's own two tables, covering LangGraph's full checkpoint-tuple shape (config,
+-- checkpoint, metadata, parent_config, pending_writes). checkpoint_ns is always '' for Kestrel's own graphs (no
+-- subgraphs), carried only for contract-correctness (FR-036 exercises the real contract, never a narrowed,
+-- Kestrel-specific shortcut).
+CREATE TABLE IF NOT EXISTS checkpoints (
+    thread_id TEXT NOT NULL,                 -- str(run.id)
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    parent_checkpoint_id TEXT,
+    type TEXT NOT NULL,                      -- self.serde.dumps_typed(checkpoint)'s own type tag
+    checkpoint BLOB NOT NULL,
+    metadata BLOB NOT NULL,                  -- includes kestrel_graph_version, added by the saver's own aput
+                                              --   (research D18) before this blob is produced
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_thread ON checkpoints (thread_id, checkpoint_ns, checkpoint_id DESC);
+
+CREATE TABLE IF NOT EXISTS checkpoint_writes (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,                    -- negative for a control write (error/scheduled/interrupt/resume) ->
+                                              --   upserted; >= 0 for a regular write -> inserted only if absent
+                                              --   (research D10)
+    channel TEXT NOT NULL,
+    type TEXT,
+    value BLOB,
+    task_path TEXT NOT NULL DEFAULT '',      -- ordering only; carries no identity of its own and is not part of
+                                              --   the primary key (research D10)
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+);
+```
+
+No foreign key from either checkpoint table to `runs` (`thread_id` is a plain text column) — reconciliation and
+deletion (below) are Kestrel's own responsibility, not `ON DELETE CASCADE`'s.
+
+## `store.py` additions
+
+### `Run` (extended)
+
+```python
+ask_before_each_turn: bool = False
+is_checkpointed: bool = False
+attacker_prompt_id: str | None = None
+attacker_prompt_version: str | None = None
+# judge_model / judge_prompt_id / judge_prompt_version already existed on Run.
+```
+
+### `claim_run`
+
+`claim_run(..., ask_before_each_turn: bool = False, is_checkpointed: bool = False, attacker_prompt_id: str | None =
+None, attacker_prompt_version: str | None = None, judge_model: str | None = None, judge_prompt_id: str | None =
+None, judge_prompt_version: str | None = None)` — new optional keywords; raises a clear `ValueError` when
+`ask_before_each_turn` is true for a mode other than `"adaptive"` (the API layer turns this into its own `422`,
+never leaving the check to be reimplemented there). Only the live run-start path ever passes `is_checkpointed=True`
+or the provenance-pin keywords (research D16, D22); every other caller leaves them at their defaults.
+
+### The atomic turn-plus-evidence write (research D6)
+
+A new method, `add_turn_with_evidence(run_id, *, position, ..., evidence_items)`, wraps `add_turn`'s own `INSERT`
+and zero or more `add_evidence`-shaped inserts in **one** transaction — the turn row and its evidence either both
+exist or neither does, even under an interruption immediately after. The lifted, shared `record` step (both the
+live and replay paths) calls this instead of two separate calls, and first checks `has_turn(run_id, position) ->
+bool` (a point lookup against `uq_run_turns_position`); when that is already true, it skips the write entirely and
+returns the delta `state` alone already implies, emitting no second `turn` log line for that position.
+
+### Checkpoint reconciliation and deletion (research D11)
+
+- `TargetStore` exposes `delete_checkpoint(run_id)` — wraps `adelete_thread(str(run_id))`'s own two `DELETE`s
+  against `checkpoints`/`checkpoint_writes`.
+- Called from the one function every finishing path funnels through (below), immediately after `finish_run` and
+  write-back.
+- Deleting a target's own runs is preceded, in the same request, by deleting every checkpoint thread belonging to
+  that target's run ids — the checkpoint tables carry no foreign key of their own, so this is an explicit step.
+- The start-up sweep additionally deletes any checkpoint whose own thread's `runs` row is not currently
+  `in_progress` at all, and reconciles (finishes using the checkpoint's own recorded outcome, then deletes) a
+  thread whose graph reached its own end but whose row is still `in_progress`.
+
+## The custom saver (`src/kestrel/checkpointing.py`)
+
+A `BaseCheckpointSaver` subclass over `TargetStore`'s own connection, five async methods each
+`asyncio.to_thread`-wrapped:
+
+- **`__init__(self, store)` calls `super().__init__(serde=JsonPlusSerializer(allowed_msgpack_modules=[
+  ("kestrel.attack.graph", "Outcome"), ("kestrel.evidence.checker", "TurnEvidence"), ("kestrel.evidence.model",
+  "EvidenceItem")]))`** (research D9) — never `self.with_allowlist(...)` after construction, which is a no-op in
+  the serializer's permissive (non-strict) mode and so leaves the default mode's own warnings in place. This
+  explicit serializer is the saver's own object, so it survives `.copy()` (per-app graph copies, below) unchanged —
+  a saver-level round trip and a graph-level read through a per-app copy both see the same, correctly registered
+  types, under either of the library's serializer modes.
+- **`aput` stamps the checkpoint's own metadata with `kestrel_graph_version`** (research D18) before persisting it:
+  `metadata = {**metadata, "kestrel_graph_version": CURRENT_GRAPH_VERSION}` — `CURRENT_GRAPH_VERSION` is a plain
+  module constant the saver imports from `attack/graph.py` (`1` through part 1; bumped to `2` when part 2 adds the
+  `approve` node to the live graph's topology). LangGraph itself never needs to see this key; it is purely data
+  Kestrel adds to a dictionary it already owns writing.
+- **`aput_writes` replicates LangGraph's own replace/ignore rule and carries `task_path`** (research D10): for
+  each `(channel, value)` pair, a negative index (from LangGraph's own index map) upserts (`INSERT OR REPLACE`); a
+  non-negative one inserts only if absent (`INSERT OR IGNORE`); `task_path` (already a parameter `aput_writes`
+  receives) is stored and read back, used only for ordering.
+- **`SUPPORTED_LANGGRAPH_CHECKPOINT`/`SUPPORTED_LANGGRAPH`**: two constants, narrowed to the range actually tested
+  — `">=4.3.0,<4.4.0"` and `">=1.2.17,<1.3"`. `check_supported_versions()` reads the installed version of each
+  package, parses it with the standard library (accepting a two- or three-component version number — `<1.3`'s own
+  bound has only two, so a parser that demands exactly three would fail on its own declared range) against the two
+  constants, and raises a clear, named error for whichever package falls outside its range. `pyproject.toml` gains
+  two explicit dependency lines at the identical ranges; a test reads `pyproject.toml` with `tomllib` and asserts
+  both specifiers equal the two constants exactly.
+
+## Classification (research D13): one function, distinct results
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-052 and FR-054, the
+`contracts/`, and the test functions `tasks.md` names for them.*
+
+```python
+# The one plain, statically single-target edge with no routing write of its own (FR-052) — every other edge is
+# read from the completed task's own stored routing write, never a hand-written table.
+_STATIC_NEXT_STEP = {"judge": "record"}
+
+async def classify(graph, run_id: int, *, leased: bool):
+    if leased:
+        return Running()
+    try:
+        tup = await graph.checkpointer.aget_tuple(thread_config(run_id))
+        if tup is None:
+            return NoCheckpoint()
+        if tup.metadata.get("kestrel_graph_version") != CURRENT_GRAPH_VERSION:
+            return Incompatible()
+        snap = await graph.aget_state(thread_config(run_id))
+    except Exception:
+        return Unreadable()
+    if not snap.tasks:
+        return ReachedEnd(outcome=snap.values.get("outcome"))
+    interrupts = [i for task in snap.tasks for i in task.interrupts]
+    if interrupts:
+        first = interrupts[0]
+        return Paused(interrupt_id=first.id, turn=first.value["turn"], message=first.value["message"])
+    task = snap.tasks[0]
+    completed = task.result is not None
+    if not completed:
+        from_step = "attacker" if task.name == "__start__" else task.name
+    else:
+        routed = next((channel.removeprefix("branch:to:") for task_id, channel, _ in tup.pending_writes
+                        if task_id == task.id and channel.startswith("branch:to:")), None)
+        from_step = routed or _STATIC_NEXT_STEP[task.name]
+    return Resumable(from_step=from_step, completed=completed, snapshot=snap)
+```
+
+`NoCheckpoint`, `Unreadable`, and `Incompatible` are all handled identically by every caller (close/refuse exactly
+as today, with `Incompatible` alone naming its own distinct reason). The distinction between `ReachedEnd` (no
+pending tasks, an outcome already decided — the graph genuinely finished) and `Resumable` (one pending task, no
+interrupt, `outcome` still unset in the general case — a step's writes landed but its own checkpoint commit did
+not) matters precisely because both shapes share an empty `next`; reading `snap.tasks` is what tells them apart,
+since a thread that truly reached the graph's end has none, while the commit-window shape still has exactly one,
+with its own result already present.
+
+**The pending task's own name is never the resume point.** A pending task whose `result` is `None` has not run
+yet in this invocation (a plain crash before it started) — that task's own name *is* where execution resumes
+(`"__start__"`, translated to `"attacker"`, for a cut right after the run's own input checkpoint, before
+`attacker` ever ran — never surfaced raw). But a pending task whose `result` is already set has *completed*;
+LangGraph does not re-run it on `ainvoke(None, ...)` — it folds the task's already-committed result in and
+continues from the step after it. **That next step is read from the completed task's own stored routing write —
+`tup.pending_writes` carries a `branch:to:<node>` channel naming exactly which of that node's possibly several
+conditional destinations was actually taken this run — never a hand-written, topology-specific table, which
+cannot represent a single node routing to different destinations on different turns** (FR-052; Kestrel's own live
+graph has exactly one edge with no such write at all, `judge → record`, always the same single destination,
+covered by `_STATIC_NEXT_STEP`). `completed` is carried on `Resumable` so a caller that needs to know specifically
+whether *send* has already happened (FR-044's in-flight-message rule) can define it correctly: **"past send" means
+`from_step` is `"evidence"`, `"judge"`, `"decide"`, or `"record"`** — every one of those steps only ever becomes
+the resume point once send has already run for the pending turn, whether send itself just completed (its own
+commit window) or an earlier step in the same turn did. `"decide"` (the shared `_decide_next` step) is a
+legitimate `from_step`/`run.resumed` value like any other, not an omission.
+
+Used by: the start-up sweep (every `in_progress`, `mode == "adaptive"`, `is_checkpointed` row — everything else
+closes exactly as today, with no call into this function at all); `GET /api/runs/{id}` and the run-list endpoint
+(both now `async def`), which derive `run_state` from this result (FR-054); the decision-validation step, which
+additionally compares the paused interrupt's own turn against what the request named; and Stop, which reads
+`Resumable.snapshot.values`/`ReachedEnd.outcome` for the fields it records (below).
+
+**`run_state`, one classification-derived field replacing a reconstruction from `resumable`/`paused` alone**
+(FR-054): `Running` → `"running"`; `Paused` → `"paused"`; `ReachedEnd`, `NoCheckpoint`, or `Unreadable` →
+`"stoppable"`; `Resumable` → `"resumable"`; not `is_checkpointed`, or a finished row → `"stoppable"` is never
+reached (the live classification path is not even entered) and the field reads `"finished"` once `status ==
+"finished"`, else the run's own mode-appropriate value outside this feature's reach is left to the existing
+`status` field alone to describe (this feature's own five values only ever apply to an `is_checkpointed` row).
+`resumable`/`paused` stay on the response, still computed from the same classification, for backward
+compatibility with anything already reading them — but the UI's own control logic reads `run_state` alone, never
+reconstructing it from `resumable`/`paused`, which cannot tell a leased run (`"running"`) apart from a reached-END,
+no-checkpoint, or unreadable one (`"stoppable"`): all four combinations read `resumable: false, paused: false`
+identically.
+
+## The execution lease (research D12)
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-038, FR-055, and the test
+functions `tasks.md` names for them.*
+
+```python
+# Held on app.state, never a bare module-level object — two unrelated apps (e.g. two test apps over different
+# databases) must never share lease keys.
+app.state.leases: set[int] = set()
+
+@contextmanager
+def lease(app_state, run_id: int):
+    if run_id in app_state.leases:
+        raise RunLeased(run_id)   # -> 409, "This run is currently executing."
+    app_state.leases.add(run_id)
+    try:
+        yield
+    finally:
+        app_state.leases.discard(run_id)
+```
+
+Every request that starts, resumes, decides, or stops a run acquires this lease before doing anything else that
+could race with another such request, and releases it in a `finally`. **The original start takes it immediately
+after `claim_run` succeeds**, inside `run_adaptive` itself, before the first graph invocation — not only resume,
+decision, and stop (research D12) — and holds it for the rest of that request, including the shared finishing
+function (below) when it is the request that finishes the run.
+
+## The approve node (`attack/graph.py`, added to `LIVE_GRAPH`'s topology when part 2 ships; research D4, D7)
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-018 to FR-024, and the
+test functions `tasks.md` names for them.*
+
+```python
+async def _approve_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
+    spent = {"time_spent_s": _time_spent(runtime)}   # every return on a path that actually completes sets it too
+    turn = state["turns_used"] + 1
+    if not state.get("ask_before_each_turn", False) or turn == 1:
+        return spent
+    decision = interrupt({"turn": turn, "message": state["pending_message"]})   # suspends here, no return, on the
+                                                                                  # pausing pass itself (research D24)
+    if decision == "run_to_end":
+        return {**spent, "ask_before_each_turn": False}
+    return spent   # "approve" (validated and resolved one layer up, research D8): proceed to send
+```
+
+No `"stop"` branch (Stop never reaches the graph, research D7). Wired as `attacker → approve → send`, replacing
+the #49 edge `attacker → send`, on `LIVE_GRAPH`'s one topology. `REPLAY_GRAPH` keeps the #49 edge unchanged; the
+experiment harness keeps calling bare, checkpointer-free `LIVE_GRAPH` directly — once part 2 ships, that call does
+pass through the new node, but always as the no-op branch, since an experiment repetition never sets
+`ask_before_each_turn`.
+
+## Decision validation and resume (research D8)
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-038, FR-039, and the test
+functions `tasks.md` names for them.*
+
+```python
+class DecisionRequest(BaseModel):
+    turn: int              # the pending turn this decision answers
+    decision: Literal["approve", "run_to_end", "stop"]
+```
+
+The handler: acquire the lease; classify. If the result is not `Paused`, refuse (`409 not_paused`). If
+`request.turn != result.turn`, refuse (`409 not_paused`, "This run's pending turn has already moved on.") and send
+nothing. For `"stop"`, use the Stop path (below) instead of any `Command` call. For `"approve"`/`"run_to_end"`,
+check preconditions (research D15/D16), then call `ainvoke(Command(resume={result.interrupt_id: request.decision}),
+thread_config(run_id), context=deps, durability="sync")`.
+
+## Stop (research D7, D11): no graph call, for any resumable run
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-051, FR-055, FR-056, the
+`contracts/`, and the test functions `tasks.md` names for them.*
+
+```python
+async def stop_run(store, graph, app_state, run_id: int) -> Run:
+    with lease(app_state, run_id):
+        status = await classify(graph, run_id, leased=False)
+        if isinstance(status, (NoCheckpoint, Unreadable)):
+            # FR-056: the exact close the sweep itself performs for this shape, same reason text, no write-back —
+            # never a 409 that would otherwise trap the target until a restart.
+            run = store.finish_run(run_id, verdict="unclear", judge_used=False, stopping_condition="interrupted",
+                                    reason="Kestrel stopped while this run was in progress, so it was interrupted.")
+            store.delete_checkpoint(run_id)   # a no-op if nothing readable actually exists
+            return run
+        if isinstance(status, Incompatible):
+            raise NotStoppable(status)   # 409 — unreachable without a restart in between (the version stamp is
+                                          # this same build's own), so the sweep always resolves it first
+        run = store.get_run(run_id)
+        state = (status.snapshot.values if isinstance(status, Resumable)
+                 else (await graph.aget_state(thread_config(run_id))).values if isinstance(status, Paused)
+                 else None)
+        # an outcome already decided — whether the graph reached its own end (ReachedEnd), or the deterministic
+        # checks/judge already decided one for a turn `record` has not yet durably written (Resumable,
+        # state["outcome"] set) — is reconciled, never discarded as stopped_by_user.
+        decided = status.outcome if isinstance(status, ReachedEnd) else (state or {}).get("outcome")
+        if decided is not None:
+            # FR-051: write the pending turn only when `record` itself has not run for it — never key this on
+            # `turns_used + 1` alone, which `record` leaves already incremented (with the same turn's own pending
+            # fields still populated, uncleared) and so would re-write as a phantom turn `turns_used + 2`.
+            # `record` has not run for the pending turn exactly when the resume point names `record` itself
+            # (pending, not yet completed — `from_step` is the task's own name in that case) or names a completed
+            # `evidence`/`judge` task whose own routing goes to `record` — both collapse to one simple check:
+            # `status.from_step == "record"`. `record`'s own commit window (`from_step == "decide"`), `decide`'s
+            # (`from_step == "attacker"` or later), and the clean checkpoint after `record` all have `record`
+            # already run for this turn, so none of them writes anything here.
+            if state is not None and status.from_step == "record":
+                turn = state["turns_used"] + 1
+                store.add_turn_with_evidence(run_id, position=turn, **_pending_turn_fields(state))
+            # finish_with_outcome (shared with the sweep's own reconciliation, below) passes the run's own
+            # already-pinned judge_model/judge_prompt_id/judge_prompt_version through to finish_run whenever the
+            # outcome it is recording was judge-decided, and states a reason — never leaves either to finish_run's
+            # own column-writing UPDATE to silently null out. This is a fix to the one shared function, not
+            # something Stop does differently from the sweep.
+            run = finish_with_outcome(store, run_id, decided)
+        else:
+            last_judged = last_durably_judged_turn(store.list_turns(run_id))   # the last run_turns row with a
+                                                                                 # non-null judge_verdict
+            run = store.finish_run(run_id, verdict=(last_judged.judge_verdict if last_judged else "unclear"),
+                                   judge_used=last_judged is not None,
+                                   # Stop pins the SAME claim-time judge provenance finish_run's own UPDATE always
+                                   # writes every column of — never left at NULL, which would misattribute an
+                                   # already-judged turn to no judge at all (FR-047, Principle III).
+                                   judge_model=(run.judge_model if last_judged else None),
+                                   judge_prompt_id=(run.judge_prompt_id if last_judged else None),
+                                   judge_prompt_version=(run.judge_prompt_version if last_judged else None),
+                                   turns_used=(state or {}).get("turns_used"), tokens_used=(state or {}).get("tokens_used"),
+                                   stopping_condition="stopped_by_user", reason="stopped_by_user")
+        write_back_once(run)
+        store.delete_checkpoint(run_id)
+        return run
+```
+
+Identical for a paused run (the approve node's own Stop control) and a merely-resumable one (the general way out)
+— one function, reached from `POST /api/runs/{id}/stop`. A run whose graph reached its own end, or whose pending
+turn's outcome was already decided but not yet recorded, is **finished with that outcome**, never `stopped_by_user`
+— the same reconciliation path the sweep performs, so Stop is never refused for either shape. `_pending_turn_fields`
+reads exactly the state fields `record` itself would read to make this same call under normal operation (the
+drafted message, the reply, the evidence items, the judge verdict if any) — Stop constructs no call `record`
+would not already make for the identical turn, and constructs it only when `record` has not already made it
+(FR-051) — `status.from_step == "record"`, never `turns_used` alone, which `record`'s own increment makes
+indistinguishable from "one turn further along."
+
+## Write-back exactly once (research D19)
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-043, FR-055, and the test
+functions `tasks.md` names for them.*
+
+**`run_adaptive` keeps calling `finish_run` directly and returns the finished `Run` to whichever caller invoked
+it, exactly as it does today — this never changed; only who calls the *finishing function* on top of that did**
+(FR-055). This matters because `run_adaptive` is shared code: the API's own original start calls it, and so does
+the experiment harness, for a cold arm that must never write back (007) and a warm one whose own `write_back`
+decision `experiments/engine.py` still makes for itself, unchanged. If `run_adaptive` itself called the finishing
+function, a warm arm would write back twice (once there, once in `engine.py`) and a cold arm would be warmed —
+corrupting the A/B comparison and breaking FR-032. So the API-path finishing function every other finishing path
+calls (a resume reaching a stopping point, a decision reaching one, Stop, and the sweep's own reconciliation; the
+original start's own equivalent is `api/main.py::start_run`, reading the already-finished `Run` back from
+`run_adaptive`) adds only three things **on top of** an already-finished row: `write_back(...)` (skipped if
+`run.memory_written is not None`, i.e. already attempted) → `store.delete_checkpoint(run.id)` → lease release —
+it never calls `finish_run` a second time. A pause returns from the request handler *before* this function is
+ever called, so its write-back status stays unset. **The lease taken at the start of any of these five paths is
+released on every exit, an exception included** — the lease's own `with` block (above) already guarantees this
+structurally, regardless of whether the row it wraps was finished, paused, or left `in_progress` by an exception;
+nothing about this function's own addition changes that.
+
+## The live checker rebuild (research D17)
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-044, and the test
+functions `tasks.md` names for it.*
+
+```python
+def rebuild_live_checker(store, library, run: Run, stored_turns: list[Turn]) -> EvidenceChecker:
+    planted = [t for t in store.list_planted_tokens(run.id) if t.kind == "override"]
+    override = None
+    if planted:
+        stored = planted[0]
+        seed = library.get(run.prompt_id)   # the run's own recorded seed, looked up by the id it was claimed with
+        paragraph, _ref = override_module.override_task_paragraph_for_version(stored.prompt_version,
+                                                                              OverrideToken.from_joined(stored.token))
+        insertion = override_module.insertion_point(seed.family, seed.id, seed.text)
+        override = _Planted(token=OverrideToken.from_joined(stored.token), prompt_ref=stored.prompt_ref,
+                            paragraph=paragraph, task_text=insertion.frame(paragraph) if insertion else paragraph,
+                            disarmed_turn=stored.disarmed_turn, recorded=False)
+    checker = EvidenceChecker(canaries=store.list_canaries(run.target_id), family=run.family, store=store,
+                              unsafe_output=True, override_planted=override, mask=[...])
+    checker.bind_run(run.id)   # sets _run_id unconditionally; recorded=False skips the insert (research D17)
+    for turn in stored_turns:
+        checker.note_sent(turn.attacker_message, turn.position, emit_disarm_event=False)
+    return checker
+```
+
+This is deliberately **not** `build_checker`'s own live branch (which would mint a brand-new token via
+`generate_override_token()`) and **not** its replay branch (`_copied_override`, which never regenerates a
+paragraph at all) — a resumed live run needs the third shape sketched above: the existing token, a freshly
+regenerated paragraph, bound without a duplicate insert. `note_sent` gains an `emit_disarm_event` keyword (default
+`True`, unchanged for a live run's normal, first-time call); the rebuild passes `False` for every replayed,
+already-recorded turn, and (only when classification's own `Resumable.from_step` reports past send — `"evidence"`,
+`"judge"`, `"decide"`, or `"record"`, never read off the raw, untranslated pending-task name) `True` for the
+checkpoint's own in-flight `pending_message`, noted once more after the loop — the one call allowed to actually
+disarm, if that in-flight message is what disarms it for the first time. For a family that plants nothing (`planted` is empty),
+`override` stays `None` and the rebuild behaves exactly like any other family's checker, live or resumed.
+
+## Time-spent accounting (research D24)
+
+*This section's prose is a guide to the shape, not the spec: the binding behaviour is FR-016, and the test
+functions `tasks.md` names for it.*
+
+`_State` gains `time_spent_s: float`. **Every** node in the turn loop (`attacker`, `approve`, `send`, `evidence`,
+`judge`, `record`) includes it in its own returned delta, recomputed fresh each time as
+`deps.time_spent_at_invocation_start + (deps.clock() - deps.invocation_start)` — never an increment, and never
+left to `record` alone. This is not redundant: the `approve` node cannot return a delta at all on the pass where
+it actually pauses (`interrupt()` suspends the node function before it reaches its own `return`), so if only
+`record` set this field, a turn that pauses would never persist any of its own attacker-drafting time — the
+exact bug this design avoids. Because `attacker` always completes and returns its own delta *before* `approve`
+runs, and synchronous durability commits that delta before `approve` is even invoked, the time spent drafting a
+turn's message is already durable by the time a pause can happen, regardless of whether `approve` itself ever
+gets to run again. Every field is anchored to values fixed when this invocation's own `_LiveDeps` was built:
+`time_spent_at_invocation_start` is `0.0` for a fresh claim, or the checkpoint's own stored `time_spent_s` for a
+resume/decision; `invocation_start` is `clock()` called once when that `_LiveDeps` was constructed.
+`_LiveDeps.deadline` is unchanged in name, type and role: a fresh claim computes it exactly as today (`clock() +
+time_limit_s`); a resume or decision computes it as `clock() + (run.time_limit_s - time_spent_at_invocation_start)`.
+The one case still genuinely uncounted: a crash strictly *inside* a node, before that node's own delta is
+produced at all (never reaching even that node's own update) — that fraction of a step's time is neither counted
+nor refunded, the one accepted consequence FR-016 itself names.
+
+**The two time anchors live on the shared `_Deps` base, not only `_LiveDeps`** (research D23): `send`, `evidence`,
+and `judge` are shared between `LIVE_GRAPH` and `REPLAY_GRAPH`, so `time_spent_at_invocation_start` and
+`invocation_start` are fields of `_Deps` itself, inherited by both `_LiveDeps` and `_ReplayDeps` — a replay's own
+construction site sets them the same fixed way a fresh live claim does (`0.0`/`clock()`), never reads a stored
+`time_spent_s` (a replay has none). Because `_Deps` gives both fields a default and a subclass may still need its
+own *non*-defaulted fields afterward, every `_Deps`-derived dataclass is `kw_only=True` (`@dataclass(kw_only=True)`
+or per-field `field(kw_only=True)`) — a defaulted base field followed by a required subclass field is otherwise a
+plain `TypeError` at class-definition time, independent of anything this feature does at runtime.
+
+**Per-turn carry-over, named**: a resumed or decided mid-turn's own lines must report only that turn's own
+real processing time, and must carry over the attacker call's already-recorded tokens/cost when that call is not
+re-executed (`contracts/log-records-delta.md`). `_State` gains two further fields the `attacker` node's own delta
+sets alongside `time_spent_s` whenever it actually runs: `turn_time_spent_at_start: float` (a copy of
+`time_spent_s` as it stood *before* this turn's own elapsed time was added — the baseline a later `record`/`run.end`
+line subtracts to report only this turn's own share) and `turn_attacker_usage: {"tokens": int, "cost": float}`
+(the attacker call's own tokens and cost for this turn, read back unchanged by every later step of the same turn
+that does not itself call the attacker again). A segment that resumes mid-turn without re-entering `attacker`
+reads both straight from the loaded checkpoint, exactly as it would any other already-set state field — never
+re-derived, and never reported as missing.
+
+## Provenance pinning (research D16)
+
+*This section's prose is a guide to the shape, not the spec: the binding behaviour is FR-041, FR-047, and the
+test functions `tasks.md` names for them.*
+
+A resumed or decided run's `_LiveDeps` reads `attacker_model`, `attacker_prompt_id`/`.version`, `judge_model`,
+`judge_prompt_id`/`.version`, and the turn/token/time-limit caps from the run's own stored row — never from
+whatever Kestrel is currently configured with — and constructs its attacker/judge clients against exactly those
+values. "Unavailable" is checked narrowly: the pinned prompt-version file no longer exists (`prompt_registry
+.text_for` cannot find it), or the API key the pinned client needs is not configured; either one refuses the
+request with `409 pinned_model_unavailable`, naming the missing value. A pinned model *slug* itself is never
+validated this way (nothing short of an actual call could confirm it) — Stop remains available regardless, since
+it builds no client at all.
+
+## The OWASP exclusion (research D25)
+
+*This section's prose is a guide to the shape, not the spec: the binding behaviour is FR-050, and the test
+function `tasks.md` names for it.*
+
+`api/main.py::target_report`'s own input is filtered one call site earlier, to `[r for r in
+store.list_runs(target_id) if r.status == "finished"]` — replacing today's unfiltered list the same way the
+existing replay exclusion already narrows it.
+
+## `run.end` suppression (research D21): narrow and defensively guarded, never a store read at exit
+
+*This section's prose is a guide to the shape, not the spec: the binding behaviour is FR-046, FR-053, and the
+test functions `tasks.md` names for them.*
+
+`RunContext` (the scope's own bound state) gains two plain fields, **never** read from the store at scope exit:
+`checkpointed: bool`, and `finished: bool`, starting `False` and flipped to `True` by the one shared finishing
+function (write-back exactly once, above) the moment it actually finishes that run's row, if it does so before the
+scope exits. **`checkpointed` is set once when the scope opens, and `run_scope()` itself is where every scope —
+including the original start's own, FR-053 — sets it, not only a later helper**: the original run-start path
+passes `checkpointed=True` into `run_scope()` (via `events.run_started(store, ..., checkpointed=True)`) the
+moment it claims a checkpointed row, before `run_adaptive`'s first invocation — never left for a *later* request
+to set, since the very first segment of a checkpointed run is exactly where a pause or an in-process exception
+can happen first, and it must be governed by this same rule from that first segment on. A resume, a decision, or
+Stop opens its own logging scope with **`events.reopened_run_scope(run)`** instead of `run_scope()`, since none of
+them is a fresh start and none should emit a second `run.start` for the same run id; it binds the run exactly as
+`run_scope()` does, copying `checkpointed` straight from the `Run` it is already given, never a fresh store
+lookup, but emits no `run.start` line of its own. The scope-exit code that today unconditionally emits `run.end`
+branches on these two fields alone:
+
+- not `checkpointed`, or `checkpointed` and `finished`: emits `run.end` exactly as it does today, for every exit —
+  a clean return, a cap, Stop, or an exception escaping — including naming the class of any exception that escaped.
+  This is every single-turn run, every replay, every experiment repetition, and a checkpointed adaptive run whose
+  scope *did* finish the row.
+- `checkpointed` and not `finished`, exiting **cleanly** (a pause — `run.paused` already names it, below): emits
+  neither `run.end` nor `run.interrupted` — nothing "interrupted" happened, the run is exactly where it meant to
+  stop, and its own pause is already on the kept log.
+- `checkpointed` and not `finished`, exiting on an **exception**: emits a kept `run.interrupted` line in place of
+  `run.end` — `resumable: true` (the row is still `in_progress`, its checkpoint still intact, by FR-042's own
+  guarantee) and `error` set to the exception's class name, **never its text** (the same bar `run.end` already
+  holds itself to) — so the run's own kept log and the stream both still say *that* this segment ended and why,
+  even though the row itself has not finished and no `run.end` fires for it. This is the only place `run.interrupted`
+  is written outside the start-up sweep (`contracts/log-records-delta.md`), and the only way an in-process failure
+  under the reversed FR-042 leaves any trace at all before the run is next touched. Because `checkpointed` is now
+  set from the very first segment on (FR-053), this applies to the original start's own scope too, not only a
+  reopened one.
+
+A scope that never sets `checkpointed` to `true` — whether because it was opened with no run bound at all, or
+because the run it is bound to is not checkpointed — is unaffected by construction: `checkpointed` defaults
+`false`, and the exit code never calls into the store to find out. `tests/unit/test_run_log_handler.py`'s own
+`FakeStore` (which implements only `add_log_line`) binds both a store and a run, but one whose checkpointed status
+this exit check never reads either way, for the same reason — no pre-existing test needs a new store method it
+does not already have.
