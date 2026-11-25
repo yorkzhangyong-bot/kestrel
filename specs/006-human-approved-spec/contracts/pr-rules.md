@@ -254,11 +254,7 @@ jobs:
   in `scripts/qa_recheck.py` is `next_action(run_status, rerun_status, elapsed, budget)`, where `rerun_status` is
   `None` / `"accepted"` / `"refused"`, never a literal HTTP status code, and `run_status` additionally carries
   `"error"` (a failed read: retried, or the failure signal once the budget runs out) and `"no_job"` (a completed
-  run whose newest attempt does not list a `traceability` job yet: treated exactly like `"error"` — retried at
-  the next poll within the budget, the failure signal only once the budget runs out — **found live on the
-  throwaway draft PR of quickstart scenario 6, 2026-11-25**: a second, overlapping attempt's job can take a
-  moment to appear in `filter=latest` even though the run itself already reads `completed`, so an immediate
-  failure signal here was a false alarm)):
+  run with no `traceability` job: the failure signal at once, nothing to retry toward)):
   1. `run` = the newest `qa.yml` run for the current head commit —
      `GET /repos/{owner}/{repo}/actions/workflows/qa.yml/runs?head_sha=${{ github.event.pull_request.head.sha }}&event=pull_request&per_page=1`;
      an empty, successful list (a merge conflict), or a run that has not started for lack of approval (`status`
@@ -270,11 +266,9 @@ jobs:
      failing read alike — → step 5 (`timeout` if the last read was a genuine, still-running status; `error` if the
      last read was a failure).
   3. `job` = the run's job named `traceability` — `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs?filter=latest`.
-     A failed read is retried like step 2's. A **successful** read that finds no job of that name is retried the
-     same way, within the same budget — the failure signal (`error`) only once the budget runs out (revised
-     2026-11-25: found live on the throwaway draft PR of quickstart scenario 6, overlapping rechecks step — a
-     brand-new attempt's job list can briefly be empty even though the run itself already reads `completed`,
-     which the original "not transient, fails at once" reading misread as final).
+     A failed read is retried like step 2's. A **successful** read that finds no job of that name is not transient
+     — waiting cannot make one appear — so it goes to step 5 (`error`) at once, without spending the rest of the
+     budget retrying.
   4. **Freshness check, then the re-run request.** Before requesting a re-run, `already_fresh(job.started_at,
      recheck_created_at)` (the recheck's own run `created_at`, read once via
      `GET /repos/{owner}/{repo}/actions/runs/{github.run_id}` — no earlier than the triggering event, so the
@@ -355,11 +349,8 @@ already_fresh(attempt_started_at: str, recheck_created_at: str) -> bool   # step
   returns the same `403` whether another attempt is in progress or the refusal is final (step 4).  `run_status`
   additionally carries `"error"` (a `RecheckApiError` from steps 1–3 or the post-refusal re-read of step 4: `wait`
   if `elapsed < budget`, else the failure signal with reason `error`) and `"no_job"` (step 3 found the run
-  `completed` with no job named `traceability` yet: treated exactly like `"error"` — `wait` if `elapsed < budget`,
-  else the failure signal with reason `error`; revised 2026-11-25, found live on the throwaway draft PR of
-  quickstart scenario 6 — a brand-new attempt's job list can briefly be empty even though the run itself already
-  reads `completed`, so waiting *can* make one appear, which the original "nothing about waiting longer would
-  help" reading got backwards). A `request_rerun` failure is treated the same
+  `completed` with no job named `traceability`: the failure signal with reason `error` at once, regardless of
+  `elapsed` — nothing about waiting longer would make a job appear). A `request_rerun` failure is treated the same
   way as any other step-4 read failure (`run_status = "error"` for that cycle) rather than as a third `rerun_status`
   value, since an unanswered POST is exactly as uninformative about whether a re-run started as any other failed
   read — the next cycle's re-read settles it.
@@ -379,9 +370,7 @@ body or label value, never contains `VERDICT: PASS` or `VERDICT: FAIL`). **Failu
 `get_latest_run` raises → retried at the next poll, never read as "no run" (no silent exit `0`); if the budget then
 runs out while it keeps failing → the comment, exit `1`, reason `error`; `get_run` raises during the step-2 poll →
 retried, the comment when the budget runs out; `get_job` raises, or returns `None` for a genuinely completed run →
-both retried the same way, within the budget (revised 2026-11-25: the `None` case — `"no_job"` — used to go to the
-comment at once; found live on the throwaway draft PR of quickstart scenario 6 that a brand-new attempt's job can
-take a moment to appear, so it is retried instead), the comment only once the budget runs out, reason `error`;
+the comment (the first retried like any other step-3 failure; the second — `"no_job"` — at once, no retry spent);
 `get_recheck_run_created_at` raises → the POST is still sent once the retry succeeds (never skipped on an error);
 `already_fresh` given a missing or unparsable timestamp → `False`, not an exception, and the POST is sent; an
 uncaught exception anywhere in the step sequence → the script's entry-point catch-all still posts the comment
@@ -469,10 +458,8 @@ probe `probe_006_rule.py`, updated to this contract after each review, decides e
   `completed` (another attempt is running) → `wait` (retry); the same refusal with the re-read still `completed`
   (no new attempt; final) → `fail-refused`; the budget exhausted while waiting or retrying → `fail-timeout`;
   `run_status = "error"` (any failed read of steps 1–3 or the post-refusal re-read) → `wait` within the budget,
-  else `fail-error`, never `exit-0-no-run`; `run_status = "no_job"` (a completed run whose newest attempt does
-  not list a `traceability` job yet) → `wait` within the budget, else `fail-error`, exactly like `"error"`
-  (revised 2026-11-25, found live on the throwaway draft PR of quickstart scenario 6: an immediate `fail-error`
-  here was a false alarm — the job can appear on the next poll).
+  else `fail-error`, never `exit-0-no-run`; `run_status = "no_job"` (a completed run with no `traceability` job) →
+  `fail-error` regardless of `elapsed`.
 - The spec-change rule is still required on the honest path (`spec_change_ok` with a `specs/**` + `src/**` change
   and `Spec-PR: none` in the body).
 - Existing assertions (`has_spec_pr_reference`, `changes_app_code`, `is_spec_only`, spec-change) stay untouched

@@ -280,25 +280,6 @@ line (`refactor` or `bugfix: #<issue>`) and a matching label; fail-closed otherw
   "no_job"` (the comment at once); a `request_rerun` failure is folded into `"error"` rather than a third
   `rerun_status`, since an unanswered POST is exactly as uninformative as any other failed read — the next cycle's
   re-read settles it either way.
-- **Decision 2026-11-25 (found live, T031, quickstart scenario 6 step 2e) — `"no_job"` is transient after all,
-  exactly like `"error"`.** The round-3 claim above — "polling cannot make one appear" — was wrong. On the
-  throwaway draft PR's QA run `45587259204`, the `refactor`-swapped-for-`bugfix` overlapping-events step produced
-  two relevant rechecks on one commit: recheck A read the run completed, found attempt 6's job (`139118750129`)
-  and requested its re-run at `09:50:49.20`, which GitHub accepted (a new attempt 7 was created). Recheck B, 2 s
-  later at `09:50:51.17`, also read the run completed (attempt 7 already existed) but called
-  `get_job(filter=latest)` before attempt 7's own `traceability` job had been created (it appeared at
-  `09:50:52`, started `09:50:55`) — a genuinely empty, successful job list for an attempt that was simply still
-  being set up. Recheck B's job log showed no `<method> failed` notice (ruling out a `RecheckApiError` read), then
-  went straight to `"Recheck giving up (reason: error)"` and posted a stale-result comment — the false alarm
-  quickstart step 2e explicitly says must not happen (both rechecks must exit 0 with no comment). **Fixed**:
-  `next_action` treats `run_status = "no_job"` exactly like `"error"` — `wait` if `elapsed < budget`, the comment
-  only once the budget runs out — so `_poll`'s existing retry loop (already used for every other transient read)
-  simply calls `get_job` again at the next 30 s poll, by which point the new attempt's job has normally appeared.
-  No orchestration change beyond `next_action` itself was needed: `fetch_job`'s own retry path was already correct
-  once the classification changed. **Rejected**: leaving `"no_job"` an immediate failure and instead teaching
-  `request_rerun`'s caller to wait once before the first `get_job` call after a rerun is requested — narrower than
-  the general fix, and does not help the next recheck instance that independently re-reads a run mid-setup for any
-  other reason (for example a slow runner picking up the new attempt).
 - *First decision, superseded by the owner's*: `on.pull_request.types: [opened, synchronize, reopened, edited,
   labeled, unlabeled]` on `qa.yml`, the whole pipeline running on each event, no job conditional on the event.
 - *First design's rationale (superseded)*: GitHub's default is `opened` / `synchronize` / `reopened` only, so a label

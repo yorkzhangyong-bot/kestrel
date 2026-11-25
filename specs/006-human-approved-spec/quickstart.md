@@ -109,13 +109,8 @@ Spec-PR-reason: refactor
    before it ever posts). `traceability` re-runs and turns red (the reason line still says `refactor`, and the
    `refactor` label is now gone). Swap back to `refactor` alone (`--remove-label bugfix --add-label refactor`): it
    passes again.
-3. Re-run the `traceability` job of the run's **latest** attempt (Actions page, or `gh run rerun <run> --job
-   <latest traceability job id>`): it reads the current state (label present) and passes — a re-run judges now,
-   not the event that first triggered it (FR-018). (Revised 2026-11-25, found live, T031: GitHub refuses
-   `gh run rerun` on an older attempt's job id — "job cannot be rerun" — only the latest attempt's own jobs can be
-   re-run; step 2a already shows the same live-read property, since the run was triggered by `opened` with the
-   `refactor` label already on and its own `labeled`-triggered re-run still read the live, current labels rather
-   than that triggering snapshot.)
+3. Re-run the first failed attempt of step 2 from the Actions page: it reads the current state (label present) and passes
+   — a re-run judges now, not the event that first triggered it (FR-018).
 4. Edit the description's body to `Spec-PR-reason: bugfix: #37` (no push): the recheck re-runs `traceability`; with
    only the `refactor` label on, it fails because the `bugfix` label is missing (the first failed condition is the
    one reported). Add `bugfix` (both labels on): it fails because the `refactor` label contradicts the reason.
