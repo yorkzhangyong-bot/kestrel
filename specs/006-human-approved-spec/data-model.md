@@ -99,8 +99,11 @@ event's run only skips its own job.
 `None` and `get_job`'s `None` each mean only a genuinely empty, successful result (no run; no `traceability` job),
 never a failed call. A `RecheckApiError` from steps 1–3 or the post-refusal re-read is retried at the next poll
 within the same budget (`run_status = "error"`); a budget spent this way ends in the same stale-result comment,
-reason `error` rather than `timeout`, never in exit 0. A completed run with no `traceability` job (`run_status =
-"no_job"`) goes straight to the comment — retrying cannot make a job appear. `already_fresh` never raises: a
+reason `error` rather than `timeout`, never in exit 0. A completed run whose newest attempt does not list a
+`traceability` job yet (`run_status = "no_job"`) is retried at the next poll within the same budget, exactly like
+`"error"` — a brand-new attempt's job can take a moment to appear even though the run itself already reads
+`completed` (revised 2026-11-25, found live on the throwaway draft PR of quickstart scenario 6; the original
+"retrying cannot make a job appear" reading was a false alarm there). `already_fresh` never raises: a
 missing or unparsable `started_at`/`created_at` makes it return `False`, so the re-run POST is sent rather than
 skipped. The script's entry point catches any other exception and still attempts the comment (with its one retry)
 before exit 1.

@@ -23,18 +23,25 @@ Planned next, not yet specified.
 
 ## Housekeeping
 
-- **Traceability gate: an honest path for refactor and bug-fix PRs** (next, once the graph refactor PR merges). The
-  gate (`scripts/check_traceability.py`) requires a `Spec-PR: #<n>` line on every PR that touches `src/` or `ui/`,
-  on any branch, and checks only the line's syntax — so a refactor or a bug fix that implements no spec has no
-  truthful way to pass it: the graph refactor PR was admin-merged with the check red, and every bug-to-pr run will
-  fail it the same way. Proposal: accept `Spec-PR: none` only together with a reason line (`refactor`, or
-  `bugfix: #<issue>`) and a matching PR label; the gate stays fail-closed for everything else. This amends
-  006/FR-009, so it needs a small spec change (a 006 spec PR) before the gate itself changes.
 - **Remove `SKIP_AI_REVIEW` once API credit is topped up.** The repository variable bypasses the Claude Code review gate while the reviewer account's `ANTHROPIC_API_KEY` has no API credit ([qa-pipeline.md](qa-pipeline.md)). When the credit is topped up, delete the variable so the `review` job fails closed again, and remove the bypass notes from `CLAUDE.md`, [qa-pipeline.md](qa-pipeline.md) and [branch-protection.md](branch-protection.md).
 - **HS-code target model (low priority).** Find out why `openai/gpt-oss-120b` needs replacing — as of 2026-11-24 the OpenRouter account's guardrail no longer lists it, so the target's own chat call 502s and every live e2e scenario fails at the connection test (`CLAUDE.md` gotcha). Any replacement must have a zero-data-retention endpoint that supports tool calls, probed with a `tools` array and the target's `json_schema` output, not a plain chat completion (candidate: `openai/gpt-4.1-mini`). Only the live e2e scenarios need it — the offline suite and the browser QA use stubs — so do it as a separate chore PR that changes `DEFAULT_CHAT_MODEL` in `targets/hs_code/agent/config.py` and the pin in `playwright.config.ts` together.
 
 ## Done
 
+- **006 (amendment) — Honest Spec-PR path for refactor and bug-fix PRs.** A PR that changes `src/` or `ui/` and
+  implements no specification declares `Spec-PR: none` with exactly one reason line — `Spec-PR-reason: refactor`
+  or `Spec-PR-reason: bugfix: #<issue>` — and the matching PR label (`refactor`/`bugfix`, not the other); a
+  `bugfix` issue number is checked to exist in this repository (open or closed) by a live lookup. Everything else
+  stays fail-closed, each failure naming the condition and the three accepted forms. `check_traceability.py` reads
+  the description and labels live (`gh pr view`) at evaluation time, never from the triggering event, so a manual
+  re-run and overlapping runs judge the same current state. A new, non-required `qa-recheck.yml` re-runs only the
+  `traceability` job — never `quality` or `review` — when the body is actually edited or the `refactor`/`bugfix`
+  label is added or removed; its step machine (`scripts/qa_recheck.py`) classifies a re-run refusal by re-reading
+  the run rather than the POST's HTTP code, fails closed on every API error, and posts one fixed-text stale-result
+  comment when it cannot refresh the check (a fork PR, GitHub's 50-re-run cap, or a timeout). Replaces the only
+  previous way past the gate for such a PR: citing a number that was not the PR's own spec, or an admin-merge with
+  the check red (the graph refactor PR #49). Shipped in #50 (spec) and the feature PR from branch
+  006-gate-honest-path.
 - **009 — Versioned prompts** — judge, recommendation, attacker prompts and family goal sentences in `prompts/<name>.<version>.md` with front-matter; cached `load_prompt`; `judge_prompt_version`/`attacker_prompt_version` on runs and experiment_arms (schema v7), shown in report headers; a prompt-version arm in 007 for A/B on the golden set or a campaign. Goal sentences stay neutral. Shipped in #18/#19.
 - **010 — Structured logging and tracing** — JSON-lines formatter; log with `extra={...}` fields, never %-interpolation; `run_id` (and `experiment_id`/arm) on every record; events at run start/end, each attacker turn, each target call (`elapsed_s`, status), each judge call (verdict, hard_evidence), memory retrieval (pattern/memory counts, retrieved pattern ids), write-back result, experiment cap hits; never attack text, replies or secrets. LangSmith/OpenTelemetry tracing behind env flags with `run_name` and metadata; test that no header value reaches span attributes. Covers Sprint hard task H2. Shipped in #21/#23 (OpenTelemetry only; LangSmith stayed out of scope).
 - **011 — Retrieval controls** — the pattern query is the family goal plus the attacker's own last two messages (never a target reply, a judge note, a memory summary or the purpose description), on one retrieval path for API runs and experiment arms; a distance floor drops far hits instead of padding the selection to k, and a near-identical threshold de-duplicates at retrieval and at write-back, where a repeated success raises the existing pattern's hit count instead of adding a copy; the collection is created with an explicit `l2` space and stamped with the embedding model name, both checked at start-up with a named failure; a labelled recall@k fixture scores retrieval offline; the settings and counts ride on the `memory.retrieval` line. No new dependency. Shipped in #27 (spec) and the feature PR from branch 011-retrieval-controls.

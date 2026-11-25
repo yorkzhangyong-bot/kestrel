@@ -17,6 +17,25 @@ or the REST API). Apply these settings once; the repo ships only the `CODEOWNERS
 - **Do not allow bypassing the above settings** (apply to administrators too).
 - (Optional) Require conversation resolution before merging.
 
+## Labels (the honest Spec-PR path, FR-021)
+
+A pull request that changes `src/` or `ui/` and implements no specification — a behaviour-preserving refactor, or
+a fix for a bug an approved spec already covers — declares `Spec-PR: none` together with a reason line and the
+matching label below (see [qa-pipeline.md](qa-pipeline.md)); the traceability job compares label names ignoring
+case. Create both once, by hand (labels, like branch protection, are not committed configuration):
+
+```bash
+gh label create refactor --description "Behaviour-preserving change, no spec; pairs with Spec-PR: none + Spec-PR-reason: refactor" --color 1d76db
+gh label create bugfix --description "Fix for behaviour a spec covers; pairs with Spec-PR: none + Spec-PR-reason: bugfix: #<issue>" --color d93f0b
+```
+
+GitHub limits a label description to 100 characters; a longer one fails with `HTTP 422`.
+
+| Label | Meaning |
+| --- | --- |
+| `refactor` | Pairs with `Spec-PR: none` + `Spec-PR-reason: refactor`. |
+| `bugfix` | Pairs with `Spec-PR: none` + `Spec-PR-reason: bugfix: #<issue>` — the issue number must exist in this repository (open or closed); the gate looks it up. |
+
 ## Why the code owner differs from the PR author
 
 Pull requests are opened by **`@yorkzhangyong-bot`**; GitHub does not count a PR author's own review toward a

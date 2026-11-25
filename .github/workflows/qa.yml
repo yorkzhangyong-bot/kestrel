@@ -39,6 +39,10 @@ jobs:
   traceability:
     needs: classify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # gh pr view --json body,labels, read live at evaluation time (FR-018)
+      issues: read          # gh api repos/.../issues/<n>, the bugfix path's issue lookup (FR-024)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,7 +53,8 @@ jobs:
       - name: Traceability (spec-mode on spec-only PRs, tests-traceability + PR rules otherwise)
         env:
           SPEC_ONLY: ${{ needs.classify.outputs.spec_only }}
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$SPEC_ONLY" = "true" ]; then
             echo "Spec-only PR -> spec-mode requirement check."

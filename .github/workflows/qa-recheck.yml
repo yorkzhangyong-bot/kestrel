@@ -1,0 +1,37 @@
+name: QA Recheck
+
+# Non-required (feature 006, FR-019): re-runs qa.yml's `traceability` job, and only it, when a pull request's
+# body is actually edited or a `refactor`/`bugfix` label is added or removed - never on every edit or label
+# event, and never the quality gate or the review. No concurrency group, on purpose: an irrelevant event's run
+# only skips its own job and can never cancel or replace a relevant recheck (contracts/pr-rules.md "Recheck
+# workflow").
+
+on:
+  pull_request:
+    types: [edited, labeled, unlabeled]
+    branches: [master]
+
+permissions:
+  actions: write          # re-run a job of the QA run (and read runs and jobs)
+  contents: read
+  pull-requests: write    # the one fixed-text stale-result comment (scripts/qa_recheck.py step 5)
+
+jobs:
+  recheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35   # backstop to the script's own 30-minute wait
+    if: >-
+      (github.event.action == 'edited' && github.event.changes.body != null) ||
+      ((github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+       (github.event.label.name == 'refactor' || github.event.label.name == 'bugfix'))
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Re-run the traceability job if the PR's state actually changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/qa_recheck.py
