@@ -357,28 +357,39 @@ def test_an_unresolved_first_turn_is_inconclusive_even_with_every_later_turn_cle
 
 
 def test_a_crash_mid_replay_closes_the_row_inconclusive_and_raises_replay_failed(store, target, monkeypatch):
+    """FR-015, FR-012: an unexpected failure after turn 1 has recorded closes the row inconclusive and raises
+    `ReplayFailed`, chained from the original error (research D15)."""
     source, source_turns = make_adaptive_source(store, target, turns=3)
     import kestrel.attack.graph as graph_module
     original = graph_module._check_evidence
     calls = {"n": 0}
 
-    def exploding_check_evidence(state, canaries):
+    async def exploding_check_evidence(state, evidence, remaining):   # _check_evidence's own signature
         calls["n"] += 1
         if calls["n"] == 2:   # let turn 1 record normally, then fail on turn 2
             raise RuntimeError("boom")
-        return original(state, canaries)
+        return await original(state, evidence, remaining)
 
     monkeypatch.setattr(graph_module, "_check_evidence", exploding_check_evidence)
+    sent: list[dict] = []
+    judge = SequencedJudge("failed", "failed", "failed")
 
     with pytest.raises(ReplayFailed) as excinfo:
         asyncio.run(execute_replay(
-            store, source=source, source_turns=source_turns, resolved=RESOLVED, mode="local",
-            judge=SequencedJudge("failed", "failed", "failed"), sender=sender_returning(ok("a harmless reply")),
-            **REPLAY_CAPS))
+            store, source=source, source_turns=source_turns, resolved=RESOLVED, mode="local", judge=judge,
+            sender=sender_returning(ok("a harmless reply"), record=sent), **REPLAY_CAPS))
 
+    # The injected failure, on turn 2: a stub that does not match the patched function's signature fails on
+    # turn 1 instead, before its own body runs, and the row still closes inconclusive (issue #53).
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, RuntimeError) and str(cause) == "boom"
+    assert calls["n"] == 2 and len(sent) == 2 and len(judge.calls) == 1
     crashed = store.get_run(excinfo.value.run_id)
+    assert crashed.mode == "replay" and crashed.source_run_id == source.id
+    assert [turn.position for turn in store.list_turns(crashed.id)] == [1]   # turn 1 recorded before the crash
     assert crashed.status == "finished" and crashed.verdict == "unclear"
     assert crashed.replay_outcome == "inconclusive"
+    _assert_target_not_locked(store, target)
 
 
 def _assert_target_not_locked(store, target) -> None:
