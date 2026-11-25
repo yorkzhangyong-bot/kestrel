@@ -8,7 +8,7 @@ It is a set of gates: a PR should not merge until they pass. It changes no featu
 | Job | What it does | Fails when |
 | --- | --- | --- |
 | **classify** | Computes `spec_only` (true when the PR changes nothing under `src/`, `tests/`, `ui/`, `scripts/`) and exposes it to the other jobs; always succeeds, so the required jobs never skip (FR-006). | — (it only classifies). |
-| **traceability** | On an **implementation PR**, [check_traceability.py](../scripts/check_traceability.py) checks every `FR-nnn`/`SC-nnn` in the feature spec is referenced under `tests/`, **and** enforces the implementation-PR rules: **any PR that changes `src/` or `ui/` must carry a `Spec-PR: #<n>` line**, regardless of branch name (`fix/*`, `chore/*`, `eval/*` are held to the same bar), plus a `spec-change:` note when a spec file changes alongside `src/`. A broken rule **fails the job** (the script's exit code is propagated, not masked by the `tee` log pipe). On a **spec-only PR** it runs [check_spec.py](../scripts/check_spec.py) instead (ids well-formed, unique, no orphan references across the feature dir; ids inside code spans are ignored). | A requirement id with no test; a missing `Spec-PR:` or required `spec-change:` line; or a malformed/duplicate/orphan id. |
+| **traceability** | On an **implementation PR**, [check_traceability.py](../scripts/check_traceability.py) checks every `FR-nnn`/`SC-nnn` in the feature spec is referenced under `tests/`, **and** enforces the implementation-PR rules: **any PR that changes `src/` or `ui/` must declare its spec provenance** — `Spec-PR: #<n>`, or the honest path below — regardless of branch name (`fix/*`, `chore/*`, `eval/*` are held to the same bar), plus a `spec-change:` note when a spec file changes alongside `src/`. The description and labels are read **live** from the platform (`gh pr view`) at evaluation time, never from the triggering event. A broken rule **fails the job** (the script's exit code is propagated, not masked by the `tee` log pipe). On a **spec-only PR** it runs [check_spec.py](../scripts/check_spec.py) instead (ids well-formed, unique, no orphan references across the feature dir; ids inside code spans are ignored). | A requirement id with no test; a missing or incomplete Spec-PR declaration or required `spec-change:` line; or a malformed/duplicate/orphan id. |
 | **quality** | On an implementation PR: `uv sync`, `ruff check src ui tests`, `mypy src`, `pytest … --cov=src` (≥85%), `gitleaks`, `pip-audit`. **On a spec-only PR it reports success without running these** (FR-005). | A lint or test failure; coverage **below 85%**; a secret; a **new** known-vulnerable dependency. (Never on a spec-only PR.) |
 | **review** | Needs **quality**. The [Claude Code Action](https://github.com/anthropics/claude-code-action) (`anthropics/claude-code-action@v1`) reviews against [.github/review/checklist.md](../.github/review/checklist.md) on code PRs or [.github/review/spec-checklist.md](../.github/review/spec-checklist.md) on spec-only PRs, then posts one PR comment ending in `VERDICT: PASS`/`FAIL`; a follow-up step enforces the verdict. | The posted comment ends in `VERDICT: FAIL` (at least one **severe** finding). A review that cannot run does not block. |
 | **notify** | Runs only if any job failed. Emails the failed job names and the first error lines (via `dawidd6/action-send-mail`). | — (best effort; never gates the PR). |
@@ -52,14 +52,72 @@ specify -> clarify -> spec PR (specs/ + docs/ only) -> human approval -> merge
 - **Spec-only PR** — the Spec Kit artifacts under `specs/<nnn>-*/` are opened as a PR that touches no code
   directory. `classify` marks it spec-only; `traceability` runs the spec-mode check; `quality` reports success
   without running; `review` uses the spec checklist. A code owner must approve before it merges.
-- **Implementation PR** — references its merged spec PR with a `Spec-PR: #<n>` line (enforced by `traceability`);
-  and if it edits a spec file alongside a `src/` change it must carry a `spec-change: <reason>` line in the
-  description. Both lines live in the PR description.
+- **Implementation PR** — references its merged spec PR with a `Spec-PR: #<n>` line (enforced by `traceability`),
+  or takes the honest path below; and if it edits a spec file alongside a `src/` change it must carry a
+  `spec-change: <reason>` line in the description. These lines live in the PR description. A PR that changes only
+  `tests/`, `scripts/`, `docs/` or `specs/` needs no `Spec-PR:` line at all — the rule is not evaluated for it.
 - **Human approval** is platform-enforced: [.github/CODEOWNERS](../.github/CODEOWNERS) assigns `specs/` (and the
   repo) to the reviewer `@ilikeandroid` — deliberately **not** the PR author `@yorkzhangyong-bot`, since GitHub
   does not count a PR author's own review. Branch protection (manual) requires a PR, a code-owner approval, and the
   `traceability`/`quality`/`review` checks; see [docs/branch-protection.md](branch-protection.md). The approval
   guarantee holds only once the owner has applied those settings.
+
+### The honest path for a refactor or bug-fix PR (FR-015–FR-024)
+
+A PR that changes `src/` or `ui/` but implements no specification — a behaviour-preserving refactor, or a fix for
+a bug in behaviour an approved spec already covers — has no spec PR to cite. Instead of forcing an admin-merge
+with the check red, it declares, in its description:
+
+```text
+Spec-PR: none
+Spec-PR-reason: refactor
+```
+
+or, naming the issue being fixed:
+
+```text
+Spec-PR: none
+Spec-PR-reason: bugfix: #<issue>
+```
+
+and carries the matching pull-request label (`refactor` or `bugfix`, see
+[docs/branch-protection.md](branch-protection.md#labels-the-honest-spec-pr-path-fr-021)) — **not** the other one.
+`traceability` accepts exactly that combination:
+
+- Exactly one `Spec-PR:` line, whose value is exactly `none`.
+- Exactly one `Spec-PR-reason:` line, `refactor` or `bugfix: #<issue>` (digits only).
+- The label named after the reason keyword, and not the other reason's label.
+- For `bugfix: #<issue>`: a live lookup (`gh api repos/<repo>/issues/<n>`) finds that number as an issue of this
+  repository, open or closed — a pull-request number, an issue transferred elsewhere, a deleted or non-existent
+  issue, or a failed lookup all fail closed.
+
+Anything else fails closed, naming the failed condition and the three accepted forms. The numbered form
+(`Spec-PR: #<n>`) is unchanged: labels beside it are ignored, and its number is never looked up. Every keyed line
+must start in column 1 of the raw description — an indented, bulleted, quoted or emphasised line, or one inside a
+one-line `<!-- ... -->` comment, is ordinary text, not a declaration (a multi-line comment whose own line starts
+in column 1 still counts, since the gate reads the raw description, not the rendered view).
+
+**The live read and the recheck.** The description and labels are fetched live (`gh pr view`) each time
+`traceability` runs, never from the event that triggered it, so a manual re-run and overlapping runs all judge
+the same, current state. A label added through the GitHub UI after the PR was opened, or a description edited
+afterwards, does not by itself re-run anything in `qa.yml` — a separate, non-required **QA Recheck** workflow
+(`.github/workflows/qa-recheck.yml`) re-runs only the `traceability` job of the newest pipeline run for the
+current commit, and only when the PR **body** actually changed or the `refactor`/`bugfix` label was **added or
+removed**; a title or base-branch edit, or any other label, re-runs nothing. `quality` and `review` never re-run
+for these events.
+
+**If the recheck cannot refresh it** — a pull request from a fork (read-only token), GitHub's cap of 50 re-runs
+per workflow run, a QA run that does not complete within its 30-minute bound, or a re-run still refused when that
+bound runs out — `traceability` keeps its last attempt's result, which may be stale, and the recheck posts one
+fixed-text PR comment saying so and how to refresh it. **Owner's merge rule:** after such a comment, do not merge
+until a `traceability` attempt that started after it has passed — a push, a manual re-run, or a later automatic
+recheck re-run all count, since each reads the live state; on a fork PR, which gets no comment, refresh
+`traceability` with a push or a manual re-run after the last body or label change before merging, whatever the
+recheck shows.
+
+**Rollout note.** A pull request already open when this gate merges carries `qa.yml` runs from the previous
+script (which read the event payload, with no honest path); its recheck re-runs that old `traceability` job,
+which fails closed — such a PR needs one push to pick up the new gate.
 
 ## The review gate (Claude Code Action)
 

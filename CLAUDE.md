@@ -31,7 +31,9 @@ default `google/gemini-3.8-flash`.
 `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-analyze` → `/speckit-implement`.
 - **Spec-only PR first**: commit only `specs/<nnn>-*/` (spec + checklists). The code owner approves before implementation.
 - **Implementation PR** then carries a `Spec-PR: #n` line in its description (the traceability gate requires it on
-  any PR that touches code dirs).
+  any PR that touches `src/` or `ui/`) — or, for a refactor or bug fix that implements no spec, `Spec-PR: none` +
+  `Spec-PR-reason: refactor` (+ the `refactor` label) or `Spec-PR-reason: bugfix: #<issue>` (+ the `bugfix` label,
+  its issue checked to exist in this repository). See "Git / review" below.
 - A PR that edits a spec file alongside a `src/` change needs a `spec-change:` note.
 
 ## Traceability & tests
@@ -61,6 +63,14 @@ default `google/gemini-3.8-flash`.
 ## Git / review
 - Branch protection on `master`: 1 approval from the code owner `@ilikeandroid` (CODEOWNERS `* @ilikeandroid`,
   `/specs/`), plus required status checks. Feature branches named `<nnn>-*`, off `master`.
+- **The Spec-PR rule** (any PR touching `src/` or `ui/`, any branch; `check_traceability.py`, 006): `Spec-PR: #<n>`,
+  or the honest path — `Spec-PR: none` + exactly one `Spec-PR-reason:` line (`refactor`, or `bugfix: #<issue>`
+  whose number the gate looks up live and must exist in this repository, open or closed) + the matching label
+  (`refactor`/`bugfix`, created by hand, not the other one). Every keyed line starts in column 1 of the raw
+  description; the gate reads the description and labels live (`gh pr view`) at evaluation time, never from the
+  triggering event. A body edit or a `refactor`/`bugfix` label change re-runs only the `traceability` job via the
+  non-required `.github/workflows/qa-recheck.yml`; nothing else re-runs for those events. Accepted forms and the
+  fail-closed cases: `docs/qa-pipeline.md`; labels: `docs/branch-protection.md`.
 - **Workflow-editing PRs** (`.github/workflows/*`) can't be reviewed by the Claude Code Action (it refuses when a
   PR changes a workflow), so they are **admin-merged**.
 - `SKIP_AI_REVIEW` repo variable currently **bypasses** the AI review gate (temporary; delete to restore fail-closed).
@@ -408,6 +418,35 @@ same commit. Before opening any implementation PR, review this file and add anyt
   no-op `javascript:` URI is not a sink; and the tag context is an attribute-list grammar on one line, never
   a `<` comparison (a tag split across lines is a declared recall cost). Any example of a dangerous statement
   belongs in the fixture only — docs and commit messages describe the boundary behaviourally.
+- 2026-11-25 — **Honest Spec-PR path (006 amendment, Phase 7).** `check_traceability.py` gained
+  `spec_pr_rule_problems(pr_body, labels, issue_exists)`: the eleven-row order of
+  `specs/006-human-approved-spec/contracts/pr-rules.md` over the **raw** description (no comment/markup strip —
+  reversed in the spec's own review round 2 — a keyed line starts in column 1). Messages are plain prose, not
+  tagged `[row N]`; tests classify a failure by a distinctive substring of its own message (`"conflicting
+  declaration"`, `"(FR-015)"`, `"is not an issue of this repository"`, …), so production text stays readable and
+  the probe's row-tag convention never leaked into shipped code. `pr_state()`/`issue_exists_in_repo()` replace
+  `PR_BODY`: both shell out to `gh` (`pr view --json body,labels`; `api repos/.../issues/<n>`) with the job's own
+  token, live at evaluation time — `qa.yml`'s traceability job carries `PR_NUMBER`/`GH_TOKEN` and
+  `permissions: {contents: read, pull-requests: read, issues: read}` instead of `PR_BODY`.
+  **`scripts/qa_recheck.py`** (a non-required `.github/workflows/qa-recheck.yml`, `on.pull_request.types:
+  [edited, labeled, unlabeled]`, **no concurrency group** — one would let an irrelevant event cancel a relevant
+  recheck) re-runs only `qa.yml`'s `traceability` job on a body edit or a `refactor`/`bugfix` label change. Its
+  step machine: `_find_run` (step 1) retries **only on a failed read**, never on a status that simply isn't
+  `"completed"` yet — getting this wrong (retrying `get_latest_run` itself while "waiting") would call the wrong
+  endpoint forever instead of handing off to step 2's `get_run`-based polling, since `next_action("queued", …)`
+  also returns `"wait"` and both look identical to a naive retry loop. A re-run refusal is classified by
+  **re-reading the run**, never by the POST's HTTP code (GitHub sends the same `403` whether another attempt is
+  in progress or the refusal is final); every client call returns a value or raises `RecheckApiError` — `None`
+  from `get_latest_run`/`get_job` means only a genuine empty result, never a failure in disguise, or a transient
+  API blip reads as "nothing to do" and the recheck exits 0 with no signal. `already_fresh` never raises (a
+  missing/unparsable timestamp means "not fresh", so the re-run request is sent, never silently skipped). The
+  stale-result comment names the reason class **literally** (`"(reason: timeout|refused|error)"`), since a prose
+  paraphrase alone doesn't satisfy "names the reason class" for a test (or a reader) checking for the word.
+  Gotcha: `GITHUB_REPOSITORY` and `GITHUB_RUN_ID` are already-set default runner env vars — do **not** re-map
+  them via a workflow step's own `env:` (only `GH_TOKEN`, `PR_NUMBER`, `HEAD_SHA` need it). Tests use a
+  `_FakeClock` (`now`/`sleep` injected into `run_recheck`) so a 30-minute budget exhausts in milliseconds of real
+  test time. T024 (create the `refactor`/`bugfix` labels) and T031 (the live throwaway-draft-PR check) are
+  owner/live steps, not run from a worker session.
 - 2026-11-24 — **Graph typed state (refactor, no behaviour change).** `attack/graph.py` compiles its two graphs
   once at import (`LIVE_GRAPH`, `REPLAY_GRAPH`) from module-level node functions —
   `StateGraph(_State, context_schema=_LiveDeps)` / `StateGraph(_ReplayState, context_schema=_ReplayDeps)`. Every
