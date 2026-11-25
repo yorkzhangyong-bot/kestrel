@@ -59,7 +59,7 @@ class StubClient:
         self.get_latest_run = get_latest_run or _sequence(qr.RunInfo(run_id="1", status="completed"))
         self.get_run = get_run or _sequence("completed")
         self.get_job = _Counting(get_job or _sequence(_JOB))
-        self.get_recheck_run_created_at = get_recheck_run_created_at or _sequence(_STALE_CREATED_AT)
+        self.get_recheck_run_created_at = _Counting(get_recheck_run_created_at or _sequence(_STALE_CREATED_AT))
         self.request_rerun = _Counting(request_rerun or _sequence("accepted"))
         self.comments: list[str] = []
         self._post_comment_fails = post_comment_fails
@@ -212,6 +212,23 @@ def test_refusal_then_a_fresh_job_on_the_resumed_run_skips_the_second_post():
     assert client.comments == []
     assert client.request_rerun.calls == 1   # never re-POSTed once the re-fetched job is fresh
     assert client.get_job.calls == 2         # re-fetched, not reused
+    assert client.get_recheck_run_created_at.calls == 1   # read once, before the loop - never re-read per pass
+
+
+def test_get_recheck_run_created_at_is_called_exactly_once_across_a_refusal_loop_back():
+    """Review round 2, finding 1: created_at is this recheck's own constant creation time - read once, before
+    the steps-3-4 loop, not re-read on every pass (which would only widen the window in which the job fetched
+    after it can go stale while a failing read's own retries sleep)."""
+    client = StubClient(
+        get_job=_sequence(qr.JobInfo(job_id="9", started_at="2026-01-01T00:10:00Z")),
+        get_run=_sequence("in_progress", "completed"),   # the post-refusal re-read, then the resumed poll
+        request_rerun=_sequence("refused", "accepted"),
+    )
+    code, _ = _run(client)
+    assert code == 0
+    assert client.get_recheck_run_created_at.calls == 1
+    assert client.get_job.calls == 2          # re-fetched on the loop-back
+    assert client.request_rerun.calls == 2    # refused once, then accepted after the loop-back
 
 
 def test_request_rerun_error_is_retried_via_a_reread_then_accepts():

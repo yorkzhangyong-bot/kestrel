@@ -457,21 +457,22 @@ same commit. Before opening any implementation PR, review this file and add anyt
   "error"`, not be misread as a final refusal. Every other real-client method now raises `RecheckApiError` on an
   undocumented 2xx shape too (a non-object body, a missing/null/non-list `workflow_runs` or `jobs`, a run or job
   missing its `status`/`id`/`created_at`) — `None` means only a genuinely empty, well-formed result. `_poll`'s
-  signature stays exactly what it was (`fetch, elapsed, budget_s, sleep, poll_interval_s, rerun_status, give_up`,
-  no `label` parameter) because a read-only differential probe calls it directly by position; a per-call failure
-  notice is logged by wrapping each `fetch` closure in its own `try/except RecheckApiError: log; raise` instead.
-  `already_fresh` treats a timezone-**naive** parsed timestamp the same as an unparsable one (`parsed.tzinfo is
-  None` → `None`), since comparing a naive `datetime` to an aware one raises `TypeError` in the stdlib, not just
-  a `ValueError` — the one case `datetime.fromisoformat` itself doesn't raise on. `check_traceability.py`'s
-  `SPEC_PR_LINE_RE`/`REASON_LINE_RE` capture the whole rest of the line (`(.*)$`) and `.rstrip(" \t\r")` in
-  Python instead of ending the pattern in `[ \t\r]*$`: the old non-greedy-then-optional-tail shape is quadratic
-  on a long, space-padded line (tens of seconds past ~30,000 characters); `parse_issue_lookup`'s `int(number)`
-  is wrapped in its own `try/except ValueError`, since CPython refuses to convert a >4,300-digit string at all.
-  Row 8's message cites `(FR-015, FR-016)`, matching the contract exactly (was `(FR-015)` only). A probe's own
-  simulated client can bake in a since-fixed bug on purpose as a deliberate comparison point (here,
-  `real_client_model=True` still maps every `request_rerun` failure to `"refused"`, modelling finding 2's
-  pre-fix behaviour) — a lingering gap against such a probe column is not automatically a new regression; check
-  what the column is actually modelling before chasing it.
+  signature is unchanged (`fetch, elapsed, budget_s, sleep, poll_interval_s, rerun_status, give_up`); a per-call
+  failure notice is logged by wrapping each `fetch` closure in its own `try/except RecheckApiError: log; raise`
+  instead of adding a parameter there. `already_fresh` treats a timezone-**naive** parsed timestamp the same as
+  an unparsable one (`parsed.tzinfo is None` → `None`), since comparing a naive `datetime` to an aware one raises
+  `TypeError` in the stdlib, not just a `ValueError` — the one case `datetime.fromisoformat` itself doesn't raise
+  on. `check_traceability.py`'s `SPEC_PR_LINE_RE`/`REASON_LINE_RE` capture the whole rest of the line (`(.*)$`)
+  and `.rstrip(" \t\r")` in Python instead of ending the pattern in `[ \t\r]*$`: the old non-greedy-then-
+  optional-tail shape was quadratic on a long, space-padded line (measured ~6 s at 32,000 characters, ~35 s at
+  65,000); the greedy `(.*)$` used instead is linear (~0 s at the same lengths). `parse_issue_lookup`'s
+  `int(number)` is wrapped in its own `try/except ValueError`, since CPython refuses to convert a >4,300-digit
+  string at all. Row 8's message cites `(FR-015, FR-016)`, matching the contract exactly (was `(FR-015)` only).
+  **`scripts/qa_recheck.py`'s `get_recheck_run_created_at()` is read exactly once per `run_recheck()` call,
+  before the steps-3-4 loop**, not on every pass through it: it is constant for the whole recheck run (its own
+  `created_at`), and re-reading it inside the loop only widens the window in which the just-fetched `job` goes
+  stale while that read's own retries sleep — a job id POSTed after such a window can belong to an attempt a
+  concurrent recheck has already superseded (review round 2, finding 1).
 - 2026-11-24 — **Graph typed state (refactor, no behaviour change).** `attack/graph.py` compiles its two graphs
   once at import (`LIVE_GRAPH`, `REPLAY_GRAPH`) from module-level node functions —
   `StateGraph(_State, context_schema=_LiveDeps)` / `StateGraph(_ReplayState, context_schema=_ReplayDeps)`. Every

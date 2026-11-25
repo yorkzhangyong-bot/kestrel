@@ -180,9 +180,10 @@ def spec_pr_rule_problems(pr_body: str | None, labels: list[str],
     """
     body = pr_body or ""
     numbered = bool(SPEC_PR_RE.search(body))
-    # `.rstrip(...)` here (not a `[ \t\r]*$` tail in the pattern) keeps the match linear: a greedy `(.*)$` plus a
-    # non-greedy `(.*?)` both followed by an optional trailing class is quadratic on a long, space-padded line
-    # (review finding 10).
+    # `.rstrip(...)` here, not a `[ \t\r]*$` tail in the pattern: the old `(.*?)[ \t\r]*$` (non-greedy, then an
+    # optional trailing class) was quadratic on a long, space-padded line (34.3 s at 65,000 characters); the
+    # greedy `(.*)$` used instead is linear (review finding 10, confirmed again at review finding 2 of round 2 -
+    # measured 0.000 s at the same length).
     values = [value.rstrip(" \t\r") for value in SPEC_PR_LINE_RE.findall(body)]
     none_valued = [value for value in values if value.lower().startswith("none")]
     reasons = [reason.rstrip(" \t\r") for reason in REASON_LINE_RE.findall(body)]

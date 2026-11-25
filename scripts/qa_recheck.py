@@ -8,10 +8,11 @@ Steps (contracts/pr-rules.md "Recheck script"):
   1. Find the newest `qa.yml` run for the pull request's head SHA.
   2. Wait until that run is `completed` (poll every 30 s).
   3. Find its `traceability` job.
-  4. Skip the re-run if that job's latest attempt already started after this recheck run began (`already_fresh`);
-     otherwise request a re-run. A refusal gets one immediate re-read of the run: not yet `completed` means
-     another attempt is in progress (resume polling, then redo steps 3-4 from the top — never a stale job id or
-     a skipped freshness check); still `completed` means the refusal is final.
+  4. Skip the re-run if that job's latest attempt already started after this recheck run began (`already_fresh`,
+     against this recheck's own creation time, read once); otherwise request a re-run. A refusal gets one
+     immediate re-read of the run: not yet `completed` means another attempt is in progress (resume polling,
+     then redo step 3 and the freshness check from the top — never a stale job id); still `completed` means the
+     refusal is final.
   5. On anything that cannot be refreshed - no job, a final refusal, the 30-minute budget exhausted, or a
      client call that keeps failing - post one fixed-text pull-request comment naming only the reason class
      (`timeout`, `refused`, or `error`) and exit 1. Never prints or echoes the description or a label value.
@@ -156,10 +157,9 @@ def _find_run(client, head_sha: str, elapsed, budget_s: int, sleep, poll_interva
 def _poll(fetch, elapsed, budget_s: int, sleep, poll_interval_s: int, rerun_status: str | None,
           give_up) -> str | int:
     """Repeatedly calls ``fetch() -> status`` (raising ``RecheckApiError`` on failure - ``fetch`` itself logs the
-    failure before re-raising, so this signature stays the one every caller, including a read-only differential
-    probe that calls it directly, already expects) and asks `next_action` what to do next, sleeping between
-    attempts, until the run is ``"completed"`` (returns that string) or a terminal action is reached (returns the
-    script's exit code)."""
+    failure before re-raising, rather than this function taking a label) and asks `next_action` what to do next,
+    sleeping between attempts, until the run is ``"completed"`` (returns that string) or a terminal action is
+    reached (returns the script's exit code)."""
     while True:
         try:
             status = fetch()
@@ -214,9 +214,24 @@ def run_recheck(client, head_sha: str, *, budget_s: int = _BUDGET_S, poll_interv
             if isinstance(status, int):
                 return status
 
-        # ---- steps 3-4, re-entered whenever a refusal leaves another attempt in progress. Contract step 4 says
-        # "back to step 2", which means 2, then 3, then 4: never re-POST a job id or skip already_fresh from an
-        # earlier attempt once the run has completed again. ----
+        # ---- step 4a's read: this recheck's own creation time. Read exactly once - it is constant for the whole
+        # run, so re-reading it on every pass only widens the window in which `job` (fetched after it, inside the
+        # loop below) can go stale while this read's own retries sleep. ----
+        while True:
+            try:
+                recheck_created_at = client.get_recheck_run_created_at()
+            except RecheckApiError as exc:
+                _log_failure("get_recheck_run_created_at", exc)
+                action = next_action("error", None, elapsed(), budget_s)
+                if action == "fail-error":
+                    return give_up("error")
+                sleep(poll_interval_s)
+                continue
+            break
+
+        # ---- steps 3-4b, re-entered whenever a refusal leaves another attempt in progress. Contract step 4 says
+        # "back to step 2", which means 2, then 3, then 4: never re-POST a job id from an earlier attempt once
+        # the run has completed again. ----
         while True:
             job_holder: list[JobInfo] = []
 
@@ -236,19 +251,8 @@ def run_recheck(client, head_sha: str, *, budget_s: int = _BUDGET_S, poll_interv
                 return result
             job = job_holder[0]
 
-            # ---- step 4a: the freshness pre-check; never skips the re-run request on bad data, only on a real
-            # freshness result ----
-            while True:
-                try:
-                    recheck_created_at = client.get_recheck_run_created_at()
-                except RecheckApiError as exc:
-                    _log_failure("get_recheck_run_created_at", exc)
-                    action = next_action("error", None, elapsed(), budget_s)
-                    if action == "fail-error":
-                        return give_up("error")
-                    sleep(poll_interval_s)
-                    continue
-                break
+            # ---- step 4a: the freshness pre-check, against the one `recheck_created_at` read above; never skips
+            # the re-run request on bad data, only on a real freshness result ----
             if already_fresh(job.started_at, recheck_created_at):
                 print("The traceability job's latest attempt already started after this recheck run; nothing "
                       "to refresh.")
