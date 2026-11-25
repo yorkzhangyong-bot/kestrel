@@ -24,7 +24,10 @@ the one shared finishing function every path calls (T023/T024); a resumed live r
 own stored token directly, never through the live-claim path (which would mint a new one) or the replay path (which
 never regenerates text) (T025/T026); time spent is recomputed fresh by every node's own returned delta from a fixed
 anchor, never accumulated piecemeal (T011/T012); a resumed or decided run's attacker and judge models and prompt
-references are pinned to what was recorded at claim (T033/T034).
+references are pinned to what was recorded at claim (T033/T034); a paused, resumable, or stoppable run idle past a
+configurable window is stopped automatically, with the same outcome a manual Stop on the same persisted state
+would produce (only the ordinary shape's own reason text differs; the log line's own automatic marker is present
+regardless of shape), and never while leased (T057/T058, T059/T060, T061/T062).
 
 **Tests**: REQUIRED — Principle VII. Every test carries `014/FR-###` / `014/SC-###` (or a module-level
 `FEATURE = "014"`). Tests are written FIRST and must fail before the implementation task that satisfies them. Every
@@ -32,12 +35,16 @@ store in a test is a temporary one (`tmp_path`), never the repository's `data/ke
 anywhere** — neutral placeholder messages, replies and fixtures only (FR-034).
 
 **Delivery**: two pull requests after this spec merges (FR-027). **Part 1** = Phases 1–6 (Setup, Foundational,
-User Story 1, the part-1 half of User Story 4, Part-1 end-to-end, Part-1 Polish). **Part 2** = Phases 7–11 (its own
-Foundational, User Story 2, User Story 3, the part-2 half of User Story 4, Part-2 Polish). The Delivery paragraph's
-phase count matches the headings below exactly — six phases in part 1 (1 through 6), five in part 2 (7 through 11).
-Part 1's own Polish phase renames the roadmap's planned "014" entry to "015" (FR-028, living documentation only,
-never a merged feature's own spec files); part 2's own Polish phase moves "LangGraph idioms" to Done (FR-029) and
-rewrites `traceability.md` for the whole feature, mirroring 013's own precedent for a part-1/part-2 feature.
+User Story 1, the part-1 half of User Story 4, Part-1 end-to-end, Part-1 Polish) **plus Phase 12** (the automatic
+idle-stop addition, owner review of PR #55 — added after Phases 7–11 were already numbered for part 2, but still
+part of the part-1 pull request; its own phase heading says so). **Part 2** = Phases 7–11 (its own Foundational,
+User Story 2, User Story 3, the part-2 half of User Story 4, Part-2 Polish) **plus Phase 13** (the same idle-stop
+mechanism's own reinforcement once pausing exists — no new production code of its own, a proof of composition the
+same way User Story 3 is, research D1). The Delivery paragraph's phase count matches the headings below exactly —
+seven phases in part 1 (1 through 6, plus 12), six in part 2 (7 through 11, plus 13). Part 1's own Polish phase
+renames the roadmap's planned "014" entry to "015" (FR-028, living documentation only, never a merged feature's
+own spec files); part 2's own Polish phase moves "LangGraph idioms" to Done (FR-029) and rewrites
+`traceability.md` for the whole feature, mirroring 013's own precedent for a part-1/part-2 feature.
 
 ## Phase 1: Setup (Part 1)
 
@@ -54,11 +61,12 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
 
 - [ ] T002 [P] Unit test `tests/unit/test_store_migration_v12.py` (`FEATURE = "014"`, following the
       `test_store_migration_v<N>.py` convention): a hand-written prior-version database migrated via
-      `TargetStore.__init__`/`_migrate` ends at the new schema version; all four new `runs` columns
-      (`ask_before_each_turn`, `is_checkpointed`, `attacker_prompt_id`, `attacker_prompt_version`) exist in
-      `RUNS_COLUMNS_SQL` itself (assert a **fresh** database's `CREATE TABLE` already has them, not only a migrated
-      one), `NOT NULL DEFAULT 0` for the first two, nullable for the last two, every pre-existing row reading the
-      defaults; `uq_run_turns_position` exists (created inside `_migrate`, after the duplicate-row check below —
+      `TargetStore.__init__`/`_migrate` ends at the new schema version; all five new `runs` columns
+      (`ask_before_each_turn`, `is_checkpointed`, `attacker_prompt_id`, `attacker_prompt_version`,
+      `last_activity_at`) exist in `RUNS_COLUMNS_SQL` itself (assert a **fresh** database's `CREATE TABLE` already
+      has them, not only a migrated one), `NOT NULL DEFAULT 0` for the first two, nullable for the last three,
+      every pre-existing row reading the defaults; `uq_run_turns_position` exists (created inside `_migrate`,
+      after the duplicate-row check below —
       **not** in the database's initial schema script, which `TargetStore.__init__` runs unconditionally before
       `_migrate` ever gets a chance to check for a pre-existing duplicate) and a second `add_turn` at the same
       `(run_id, position)` (bypassing the store's own atomic-write guard, calling the raw SQL directly) raises
@@ -75,12 +83,13 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       `mode != "adaptive"`**, raising a clear `ValueError` the API layer turns into its own `422`; a single-turn or
       replay claim that never passes any of these keywords defaults them all to their documented defaults
       (014/FR-002, FR-018, FR-047).
-- [ ] T004 Implement schema v12 in `src/kestrel/store.py` per `data-model.md`: all four new `runs` columns in
+- [ ] T004 Implement schema v12 in `src/kestrel/store.py` per `data-model.md`: all five new `runs` columns in
       `RUNS_COLUMNS_SQL` itself; the duplicate-row check and `uq_run_turns_position`, both inside `_migrate`; the
       `checkpoints`/`checkpoint_writes` tables (with `task_path`); `claim_run(..., ask_before_each_turn=False,
       is_checkpointed=False, attacker_prompt_id=None, attacker_prompt_version=None, judge_model=None,
-      judge_prompt_id=None, judge_prompt_version=None)` with the non-adaptive rejection (T003); the matching `Run`
-      fields (014/FR-003, FR-004, FR-047).
+      judge_prompt_id=None, judge_prompt_version=None, now: datetime | None = None)` with the non-adaptive rejection
+      (T003), setting `last_activity_at` to `now` (defaulting to the real wall clock when omitted); the matching
+      `Run` fields (014/FR-003, FR-004, FR-047, FR-059).
 - [ ] T005 [P] Unit test `tests/unit/test_record_step_atomic.py` (`FEATURE = "014"`): a new store method writing a
       turn row and its evidence items in one transaction; calling it twice for the same `(run_id, position)` with
       identical arguments is a no-op the second time (no duplicate row, no duplicate evidence, no exception);
@@ -278,9 +287,26 @@ fail again has Stop as its documented way out; the start-up sweep classifies ins
       merely a similar one), and that `memory_written` stays `false` — no write-back attempted, matching the
       sweep's own close exactly. On an already-finished run → `409 not_resumable`; on a currently-leased run →
       `409 run_executing`. The request completes synchronously, returning only once Stop's own action is fully
-      done (014/FR-025, FR-040, FR-047, FR-051, FR-054, FR-056, SC-014, research D7, D11).
-- [ ] T022 Implement `POST /api/runs/{id}/stop` and `runs.py::execute_stop(...)` per `contracts/api.md` and
-      `data-model.md`: acquires the lease, classifies, and: for `NoCheckpoint`/`Unreadable`, closes the row the
+      done.
+      **`test_stop_run_never_reacquires_a_lease_its_caller_already_holds` (FR-040)**: call `runs.py::stop_run`
+      directly while `run_id`'s lease is already held by the calling test (mirroring exactly how the endpoint
+      handler reaches it) and assert it succeeds and finishes the row — never raising `RunLeased` against its own
+      caller's own lease, which would otherwise make the endpoint handler's call (and the idle check's) a silent
+      no-op.
+      **`test_a_refused_stop_writes_nothing_to_the_kept_log`**: `POST /api/runs/{id}/stop` against a single-turn
+      run's own id (never checkpointed) gets its documented `409`, and `GET /api/runs/{id}/log` for it shows no new
+      line at all — never a stray `run.end` from a scope that was opened and then closed around a refusal that
+      never needed one (014/
+      FR-025, FR-040, FR-047, FR-051, FR-054, FR-056, SC-014, research D7, D11).
+- [ ] T022 Implement `POST /api/runs/{id}/stop` and `runs.py::stop_run(...)` (one name throughout — never
+      `execute_stop`, T062's own idle-triggered calls and T050's own decision-routed call reach this identical
+      function) per `contracts/api.md` and `data-model.md`. **The endpoint handler — never `stop_run` itself —
+      acquires the lease; before opening any scope, validates the run's own plain columns (`mode == "adaptive"`,
+      `is_checkpointed`, `status == "in_progress"`) and refuses `409 not_resumable` at once, with no scope ever
+      bound, if any fails; only past that does it open its own `events.reopened_run_scope`, call `mark_active`
+      (this is a user-triggered exit, research D26), then call `stop_run(..., triggered_by="user")`**: `stop_run`
+      classifies,
+      and: for `NoCheckpoint`/`Unreadable`, closes the row the
       same way the sweep closes it — identical reason text, no write-back (FR-056); for a decided outcome
       (`ReachedEnd`, or `Resumable` whose own state already holds one), records the pending turn through
       `add_turn_with_evidence` only when the resume point still names `record` as the next step — never merely
@@ -289,7 +315,11 @@ fail again has Stop as its documented way out; the start-up sweep classifies ins
       and a reason); otherwise synthesizes `stopped_by_user` from the last durably judged `run_turns` row, the
       checkpoint's own counts, and the run's own pinned judge provenance — no `ainvoke`/`Command` call at all, in
       any branch (research D7) — then calls the shared finishing function (T024) for write-back and checkpoint
-      deletion, and releases the lease and the target lock.
+      deletion. The handler releases the lease (its own `with` block) and the target lock on exit; `stop_run`
+      itself never acquires or releases either the lease or a scope, and never performs the mode/is_checkpointed/
+      status validation either (FR-040) — getting any of this backwards either
+      makes every caller that already holds the lease raise `RunLeased` against itself and silently do nothing, or
+      binds a scope a refused request was never going to use correctly.
 - [ ] T023 [P] [US1] Integration test `tests/integration/test_write_back_once.py` (`FEATURE = "014"`): a run resumed
       to a normal finish, a run stopped (the ordinary case), and a run Stop reconciles from its own already-decided
       outcome, each write back to a `SpyExperienceStore` exactly once; a run cut off mid-step and left
@@ -497,7 +527,9 @@ the API and the UI, with write-back, logging, caps and evidence all correct.
       pass/fail set (014/FR-001, FR-032, FR-043, FR-055, SC-002, SC-003).
 
 **Checkpoint (Part 1 complete)**: every part-1 task above green, full offline suite green (modulo the four named
-edits), `quickstart.md`'s Part 1 steps pass by hand. Ready for the part-1 pull request (FR-027).
+edits), `quickstart.md`'s Part 1 steps pass by hand. Ready for the part-1 pull request (FR-027) **once Phase 12's
+own idle-stop addition (below, added by a later owner review) is green too** — Phase 12 ships in this same part-1
+pull request despite sitting later in this file.
 
 ## Phase 5: Part-1 end-to-end
 
@@ -516,8 +548,13 @@ edits), `quickstart.md`'s Part 1 steps pass by hand. Ready for the part-1 pull r
       documentation (the roadmap, the README, CLAUDE.md, `docs/`) — **not** a merged feature's own spec files
       (`specs/011-retrieval-controls/` stays exactly as written). Add a CLAUDE.md "Learned notes" entry for the
       checkpointer (the per-app graph copy, the execution lease taken by the original start too, Stop-never-
-      resumes-the-graph and its reached-its-own-end reconciliation, the atomic record step, the claim-time
-      `is_checkpointed` classification, the version guard, the pinned provenance columns).
+      resumes-the-graph and its reached-its-own-end reconciliation — `stop_run` itself takes neither a lease nor a
+      scope, both owned by whichever of its three callers reaches it — the atomic record step, the claim-time
+      `is_checkpointed` classification, the version guard, the pinned provenance columns, and the
+      `KESTREL_RESUME_IDLE_HOURS` automatic idle stop added by a later owner review — its wall-clock idle clock,
+      the restart grace period (itself folded into `idle_stop_at`'s own formula), the per-branch Stop outcome it
+      reuses, and the `needs_attention` field `GET /api/targets` gained for the target-selector cue); add the
+      setting to `quickstart.md`'s own Part 1 steps.
 
 ---
 
@@ -579,28 +616,45 @@ on the run page.
       turn); a run with no pending decision at all → `409 not_paused`; an invalid `decision` value, or a missing
       `turn` field → `422`; **two concurrent, correctly addressed decision requests for the same pending turn** →
       exactly one succeeds (sends once), the other gets `409 run_executing` (reproducing the exact race a missing
-      lease would otherwise let both execute) (014/FR-038, FR-039, contracts/api.md).
+      lease would otherwise let both execute).
+      **`test_a_refused_decision_writes_nothing_to_the_kept_log`**: `POST /api/runs/{id}/decision` against a
+      single-turn run's own id (never checkpointed) gets its documented `409`, and `GET /api/runs/{id}/log` for it
+      shows no new line at all — never a stray `run.end` from a scope opened and then closed around a refusal that
+      never needed one (014/FR-038, FR-039, contracts/api.md).
 - [ ] T048 [P] [US2] `tests/unit/test_events_approve.py`: `run.paused` names the turn, emitted exactly once per
       actual pause (a bare status re-check of the same pause does not re-emit it — research D21); `run.decided`
       names the turn and the decision; `run.stopped` names whether the run was paused or merely resumable when
-      stopped, and whether it was the reconciled case; none carries the pending message's text (014/FR-026,
-      FR-033).
+      stopped, and whether it was the reconciled case; none carries the pending message's text.
+      **`test_a_stop_decision_opens_exactly_one_scope` (FR-046)**: decide `"stop"` on a paused run and, reading
+      `GET /api/runs/{id}/log`, assert exactly one `run.decided` and exactly one `run.end` — never a nested second
+      scope from `stop_run` emitting its own, independent pair for the same request (014/FR-026, FR-033).
 - [ ] T049 [US2] `tests/unit/test_ui_approve_node.py` (`streamlit.testing.v1.AppTest`): the checkbox on the
       start-run form, off by default; a paused run's page shows the pending message verbatim and exactly
-      **Approve**/**Run to end**/**Stop**; clicking each calls the matching API action with the correct `turn`.
+      **Approve**/**Run to end**/**Stop**, with its own `idle_stop_at` shown alongside them (FR-061, part 2's own
+      reinforcement that this field is not forgotten once a run can actually reach `"paused"`); clicking each
+      calls the matching API action with the correct `turn`.
 
 ### Implementation for User Story 2
 
 - [ ] T050 [US2] Implement `POST /api/runs/{run_id}/decision` in `api/main.py`/`runs.py::execute_decision(...)` per
-      `contracts/api.md`: acquires the lease; classifies; refuses (`409 not_paused`) on any mismatch between the
-      request's own `turn` and the pending interrupt's actual turn; for `"approve"`/`"run_to_end"`, checks
-      preconditions (T034's pinned-caps path) then calls `ainvoke(Command(resume={interrupt_id: decision}), ...)`;
-      for `"stop"`, dispatches to the same Stop path T022 implements; emits `run.decided`/`run.paused` per
-      `contracts/log-records-delta.md`; calls the shared finishing function (T024) on any stopping point.
+      `contracts/api.md`: acquires the lease; **before opening any scope**, validates the run's own plain columns
+      (`mode == "adaptive"`, `is_checkpointed`, `status == "in_progress"`) and refuses `409 not_paused` at once,
+      with no scope ever bound, if any fails; only past that does it open **one** `events.reopened_run_scope` for
+      the whole decision — never a second, nested one later, including for `"stop"` (research D29); classifies;
+      refuses (`409
+      not_paused`) on any mismatch between the request's own `turn` and the pending interrupt's actual turn; emits
+      `run.decided` once past validation; for `"approve"`/`"run_to_end"`, checks preconditions (T034's pinned-caps
+      path), calls `mark_active` (a user-triggered exit, research D26), then calls
+      `ainvoke(Command(resume={interrupt_id: decision}), ...)`; for `"stop"`, calls `mark_active` then dispatches to
+      the same `stop_run(..., triggered_by="user")` T022 implements, **within this same already-open scope** — never
+      opening a second one, which would let an exception afterward emit a second `run.interrupted`/`run.end` pair
+      for a row already finished (FR-046); emits `run.paused` per `contracts/log-records-delta.md`; calls the
+      shared finishing function (T024) on any stopping point.
 - [ ] T051 [P] [US2] Implement the UI: `ui/api_client.py::decide_run(run_id, turn, decision)` using `run_attack`'s
       own 360s timeout (a decision can itself drive a run all the way to completion, e.g. Run to end); the
       start-run form's **"Ask before each turn"** checkbox (off by default, adaptive mode only); the run page's
       pending-turn display and its three buttons, rendered ahead of `_render_finding`'s own early-return branches,
+      with `idle_stop_at` shown next to them (same display T064 already builds for part 1's own two-button case),
       each button call passing the pending turn's own number.
 
 **Checkpoint (US2)**: every test above green.
@@ -646,3 +700,215 @@ steps pass by hand. Ready for the part-2 pull request.
       part 1's Stop, the graph-version bump).
 - [ ] T056 Rewrite `traceability.md` for the whole feature (both parts covered by real tests now), one id per line
       in the `"014/FR-0xx: <reason>"` form the gate actually parses.
+
+---
+
+## Phase 12: Automatic stop after idle time (Part 1 — owner review of PR #55)
+
+Ships in the **part-1** pull request alongside Phases 1–6, despite its phase number falling after part 2's own
+(added in a later review round, numbered to continue from the existing T056 rather than renumber anything already
+cited elsewhere). Applies to every run whose classification currently reads `"paused"`, `"resumable"`, or
+`"stoppable"` — never `"running"`. The real `"paused"` classification, reached through the real approve node,
+cannot occur until part 2 ships — T061 still proves the mechanism handles it correctly, via the same
+monkeypatched-`interrupt()` technique T029 already uses, so the generic mechanism is not left untested for this
+one shape until Phase 13 reinforces it against the real thing.
+
+- [ ] T057 [P] Unit test `tests/unit/test_resume_idle_hours_setting.py` (`FEATURE = "014"`): `KESTREL_RESUME_IDLE_HOURS`
+      unset defaults to `24.0`; a positive float (including a decimal, e.g. `"0.5"`) parses exactly; `"0"`, a
+      negative value, `"nan"`/`"inf"`, a non-numeric string, and a value above `87,600` (ten years) each refuse to
+      start, naming the offending value — never silently falling back to the default; `GET /api/config` reports the
+      parsed value as `config["resume"]["idle_hours"]` — a new, own group, never folded into `config["adaptive"]`,
+      which `test_api_config_adaptive.py` keeps asserting as the exact, closed object it already is, untouched by
+      this feature (014/FR-057).
+- [ ] T058 Implement `Settings.resume_idle_hours` in `src/kestrel/settings.py` per `data-model.md` (research D28): a
+      new, strictly-positive, upper-bounded (`87,600`) parser, distinct from the existing `non_negative_float_or_off`
+      (no `"off"` sentinel here); reported on `GET /api/config` as `idle_hours` in its own new `resume` group,
+      alongside this feature's other settings there — not `adaptive`.
+- [ ] T059 [P] Unit test `tests/unit/test_idle_clock.py` (`FEATURE = "014"`): a fresh claim's `last_activity_at`
+      equals the claim moment. **Accepted exits reset it, refused ones never do** (research D26): releasing a
+      run's lease after `mark_active()` was called inside it — simulating a pause, an in-process error the
+      process survives, or an accepted resume/decision/stop that leaves the run paused/resumable/stoppable again —
+      updates `last_activity_at` to that release moment, every time; releasing a lease **without** `mark_active()`
+      having been called — a stale-turn decision (`409 not_paused`), a resume refused because the run is actually
+      `paused`, and a precondition refusal (`permission_missing`, or any of the other codes `/resume`'s own table
+      lists) — leaves `last_activity_at` completely unchanged in every one of those three cases, even though the
+      lease itself was genuinely held and released. **`run_adaptive`'s own first segment, named explicitly, not
+      only inferred from "every handler"**: a fresh original start that pauses, or survives an in-process
+      error, on its very first segment also calls `mark_active` before that exit, exactly like a later resume or
+      decision does — assert `last_activity_at` moves for this case too, not only for a resumed/decided exit.
+      **`claim_run`'s own clock agrees with `app_state.clock()`**: claim a run with a simulated clock passed as
+      `now=`, and assert the stored `last_activity_at` equals that same simulated value exactly — never a second,
+      independent real-wall-clock read that would silently disagree with it. **The restart grace period** (research
+      D27): with a simulated `app_state.clock()`/`started_at` pair, assert `check_idle_runs` is a complete no-op —
+      no row even read for idleness — whenever less than `min(1 hour, configured window)` has elapsed since
+      `started_at`, regardless of how far in the past any run's own `last_activity_at` is; once that grace period
+      has elapsed, the identical overdue run is caught at the next check (014/FR-059).
+- [ ] T060 Implement the idle clock in `src/kestrel/store.py`/`checkpointing.py` per `data-model.md` (research D26):
+      `runs.last_activity_at` (new nullable column, same migration as this feature's other four — T002/T004);
+      `claim_run` gains an explicit `now: datetime | None = None` keyword (default the real wall clock) and sets
+      `last_activity_at` to it; **the live run-start path passes `now=app_state.clock()` explicitly**, so this
+      timestamp agrees with whatever clock a test has substituted for `app_state.clock()`, never a second,
+      independent wall-clock read. The execution lease (T020) gains `mark_active(app_state, run_id)`
+      and an `app_state.accepted_exits` set the lease's own `finally` block checks **by membership, never by
+      branching on `set.discard()`'s own return value** (`set.discard()` always returns `None`) before calling
+      `store.touch_last_activity(run_id, now=...)` — never unconditionally. **Every handler that resumes, decides,
+      or stops — `run_adaptive`'s own original-start path included, not only a later resume or decision — calls
+      `mark_active` itself**, only once its own preconditions have already passed and it is about to actually act;
+      `check_idle_runs` (T062) never calls it, at all, on either outcome. `app.state.started_at`/`app.state.clock`
+      captured once in `lifespan` (the latter an injectable callable, defaulting to the real wall clock, so a test
+      can drive it directly); `idle_hours(run, app_state)` parses `run.last_activity_at` (stored `TEXT`) into a
+      `datetime` **before** subtracting (never a `str` from a `datetime`), then computes
+      `(app_state.clock() - parsed) / 1 hour` — plain wall-clock, no `max()` with anything.
+- [ ] T061 [P] Integration test `tests/integration/test_idle_auto_stop.py` (`FEATURE = "014"`), using an injectable
+      clock and a short injectable check interval (research D27): a resumable-shape and a stoppable-shape
+      (reached-end) run, plus a **paused-shape** run built the same way T029 builds one (a monkeypatched
+      `interrupt()` node, needing no part-2 production code to exist yet), each idle for *less* than the configured
+      window, are **not** stopped by the periodic check — assert this directly, not merely by absence of a later
+      effect. **The three Stop branches, each compared against a manual `POST .../stop` on an identical copy of
+      the same persisted state — never a literal `stopping_condition` asserted directly**: the ordinary shape
+      (resumable/paused, no outcome yet) is auto-stopped with `status`/`verdict`/`turns_used`/`tokens_used`/
+      target-lock-release/write-back/checkpoint-deletion/`stopping_condition` all equal to what the manual path
+      produces for the identical state, its own `reason` the one field that differs (the automatic sentence, never
+      naming a user action); the reconciled shape (stoppable, reached-end) is auto-stopped with every field,
+      **including `stopping_condition` and `reason`**, equal to the manual path's own reconciled outcome — neither
+      ever becomes `stopped_by_user`; the no-checkpoint-or-unreadable shape is auto-stopped with
+      `stopping_condition`/`reason` equal to the manual path's own sweep-matching close. In **every** one of the
+      three, `run.stopped` carries `trigger: "idle_timeout"` and `idle_hours`, where the manual comparison run's
+      own `run.stopped` carries `trigger: "user"` and no `idle_hours` — the one place the two are told apart.
+      **Logging** (research D29): read `GET /api/runs/{id}/log` for an auto-stopped run and assert it carries a
+      kept `run.stopped` (with `trigger`/`idle_hours`) and **exactly one** `run.end` — proving `check_idle_runs`
+      opened its own scope around this one stop (`stop_run` itself opens none), since nothing else would
+      have. **A currently-leased run is skipped, never blocked**: hold a
+      run's lease, advance the clock past its deadline, run a check, assert it is not stopped and the check does
+      not wait; release the lease (through the lease's own exit, never by mutating `app_state.leases` directly)
+      and assert the *next* check stops it fresh.
+      **`test_not_yet_due_run_is_never_leased`**: seed a run idle for *less* than the configured window, spy on
+      lease acquisition, run a check, and assert the lease for that run is **never even attempted** — the cheap,
+      unlocked `last_activity_at` prefilter must skip it before ever reaching `lease(...)`, so a concurrent, live
+      resume/decision/stop against that same, not-yet-due run is never refused by this check (reproducing probe
+      case L's failure otherwise: a not-yet-idle run held leased through a full re-classify gets a live request
+      `409 run_executing` it should never have seen).
+      **The re-check-under-the-lease race** (research D27): arrange
+      for a run's own `last_activity_at` to be reset (simulating an accepted resume landing) in the gap between
+      the check's initial listing read and its own lease acquisition for that run; assert it is **not** stopped —
+      the re-read under the lease must see the reset.
+      **`test_stop_run_called_by_the_idle_check_succeeds_under_its_own_already_held_lease`**: this is
+      structurally proved by every "is auto-stopped" assertion above already succeeding at all — `stop_run`
+      reacquiring the lease itself would make the automatic path a silent no-op (every tick finding the row still
+      idle, stopping nothing and logging nothing) — call this out explicitly here so a regression is never mistaken
+      for "the run just wasn't due yet."
+      **`test_a_failed_automatic_stop_is_retried_without_backoff`**: arrange a `stop_run` call for one run to
+      raise; assert that run's own `last_activity_at` is completely unchanged by the failed attempt (the automatic
+      path never calls `mark_active`, on success or failure — a successful stop finishes the row, mooting its
+      clock, so only the failure case is observable here), that the identical run is attempted again — not
+      skipped, not deferred by a full window — at the very next check, and that `GET /api/runs/{id}/log` for that
+      run shows **no new kept line** from the failed attempt (no `run.interrupted`, no `run.end`) — only the
+      unscoped `idle_stop.check_failed` line is the record of it, so a persistently failing automatic stop never
+      fills the run's own kept log toward its cap.
+      **One run's own failure does not end the check, and does not
+      block a later row at the same tick** (research D27): arrange a `stop_run` call for one run to raise an
+      ordinary exception; assert a catalogued `idle_stop.check_failed` `ERROR` line is logged (`run_id`,
+      `exc_type`, never the exception's own text), that a **second**, independently overdue run is still stopped
+      at that *same* check (proving per-run isolation, not only per-iteration), and that a *third* overdue run
+      seeded only after this tick is still stopped at the *next* one (proving the loop task itself survived) —
+      never silently ending the periodic task for the rest of the process's uptime.
+      **`test_a_failure_outside_any_single_runs_handling_does_not_end_the_loop`**: arrange the *listing* call
+      itself (`store.list_in_progress_checkpointed_runs`) to raise once, outside any per-run `try`; assert a
+      catalogued `idle_stop.check_failed` `ERROR` line is logged **with `run_id` omitted entirely** (distinct from
+      the per-run shape above, which always carries one), that this one tick stops nothing, and that an overdue run
+      seeded before this tick is still stopped at the *next* one — proving the loop survives a failure the per-run
+      catch alone could never reach, and that teardown's own cancel-and-await does not itself raise this
+      already-logged exception a second time (014/FR-058, FR-059, FR-060, SC-021).
+- [ ] T062 Implement `check_idle_runs`, `stop_run`'s `triggered_by` keyword (taking no lease and opening no scope of
+      its own — both belong to the caller), and `idle_stop_loop` in `src/kestrel/runs.py`/`checkpointing.py`
+      per `data-model.md` (research D27, D29): the grace-period no-op check first; then, per `is_checkpointed`,
+      `in_progress` row, **inside that row's own per-row `try`** (so a row whose own `last_activity_at` cannot even
+      be parsed is that row's own failure, never the whole tick's): a cheap, unlocked check against the listing's
+      own `last_activity_at` skips anything not yet due **before ever attempting its lease**; past that, skip
+      outright if already leased, otherwise take the lease and **re-read, re-classify, and recompute idleness fresh
+      under it** — skipping a row no longer `in_progress`, no longer `"paused"`/`"resumable"`/`"stoppable"`, or no
+      longer idle by that fresh read — then open `events.reopened_run_scope(fresh)` (this check has no
+      request-scope of its own to reuse, unlike the `/stop` endpoint handler or the decision handler) and call
+      `stop_run(..., triggered_by="idle_timeout")` **inside its own nested `try`**: an exception there is caught
+      *before the scope closes* and re-raised only once it has — so the scope always exits cleanly and never
+      writes a kept `run.interrupted`/`run.end` for a mere failed stop attempt — and never calls `mark_active`: an
+      automatic stop, successful or not, is not an accepted exit. Catch
+      `RunLeased` as a per-row skip and any other `Exception` as a per-row `idle_stop.check_failed` log-and-continue
+      (`contracts/log-records-delta.md`, `run_id` present, `level=logging.ERROR` — an actual `int`, never the string
+      `"ERROR"`, which the real `emit()` cannot log at all — and `scoped=False`, since this line is never kept on
+      any run's own log), with `CancelledError` left to propagate. `stop_run`
+      itself opens no scope and takes no lease (research D29) — each of its three callers (the `/stop` endpoint
+      handler, the decision handler's `"stop"` branch, and this check) already holds both before calling in; each
+      branch composes
+      its own already-correct `stopping_condition`/reason (research D7/D11), `triggered_by` changing only the
+      ordinary branch's own reason text, read from the currently configured `resume_idle_hours` at stop time, never
+      a value captured at claim time; `run.stopped` gains `trigger`/`idle_hours` regardless of branch. `lifespan`
+      captures `app.state.started_at`/`app.state.clock` (the sweep itself is **not** touched — no idle check of
+      its own) and starts `idle_stop_loop` (interval and clock both parameters, defaulting to
+      `IDLE_CHECK_INTERVAL_S`/the real clock) after the sweep completes. `idle_stop_loop` itself wraps each
+      `check_idle_runs` call in its own `try`: `CancelledError` re-raised untouched; any other `Exception` logged as
+      `idle_stop.check_failed` (`level=logging.ERROR`, `scoped=False`) with the `run_id` keyword **left out of the
+      call entirely** (never passed as `None`) — a failure this far outside any single row's own handling names no
+      particular run — and the loop continues to the next interval. Teardown **cancels and
+      awaits** that task, itself guarded against both a clean `CancelledError` and any other (already-logged)
+      exception escaping and interrupting tracing shutdown, before tracing shuts down.
+- [ ] T063 [P] Integration test `tests/integration/test_idle_stop_at_api.py` (`FEATURE = "014"`) and
+      `tests/unit/test_ui_needs_attention.py` (`streamlit.testing.v1.AppTest`, offline): `GET /api/runs/{id}` and
+      the run-list endpoint report `idle_stop_at` equal to `last_activity_at + resume_idle_hours` for a paused,
+      resumable, or stoppable run, and `null` for a running or finished one.
+      **The grace case**: with a run already overdue before a simulated restart (`last_activity_at` older than
+      the configured window, `app_state.started_at` set to "now"), assert `idle_stop_at` equals
+      `started_at + min(1 hour, configured window)` — **never** a time already in the past; since that same run
+      stays overdue throughout the grace period, this value holds unchanged (never falls back to
+      `last_activity_at + window`, which would be a time already in the past) until the first check past the grace
+      period stops the run.
+      **`test_get_api_targets_reports_needs_attention` (FR-062)**: seed one target whose own `in_progress` run
+      classifies `"paused"`/`"resumable"`/`"stoppable"` and one target with no such run (or none at all); assert
+      `GET /api/targets` — now `async def` — reports `needs_attention: true`/`false` respectively, computed from the
+      same classification `run_state`/`idle_stop_at` already use, never a second, independent check; assert
+      `GET /api/targets/{id}` (`TargetDetail`) reports the identical value for the same target, never disagreeing
+      with the list. The UI test
+      seeds **at most one**
+      `in_progress` run per target (never two — `uq_runs_active` already forbids that shape, so the test must
+      not either) and asserts **structurally** — this run surfaces at the top of its own target's run list, with
+      its own `idle_stop_at`, and the target selector carries its own small cue, read directly from
+      `GET /api/targets`'s own `needs_attention` field (never derived locally) — never a hard-coded exact
+      section-heading or cue-label string (CLAUDE.md's wording-pinning rule applied defensively here, research D30);
+      the run's own page shows the identical time next to its controls (014/FR-061, FR-062, SC-022).
+- [ ] T064 Implement `idle_stop_at` on `RunSummary`/`RunDetail` (`api/main.py`/`api/schemas.py`, computed as
+      `max(last_activity_at + resume_idle_hours, app_state.started_at + min(1 hour, resume_idle_hours))` alongside
+      `run_state` from the same classification call, research D30); a target's own run list shows its one
+      paused/resumable/stoppable run (if any) at the top of that list with its own `idle_stop_at`; `GET
+      /api/targets` becomes `async def` and each `TargetSummary` **and `TargetDetail`** gains `needs_attention`
+      (research D31, FR-062), computed the identical way from that target's one possible run on every endpoint
+      that returns either shape (`GET /api/targets`, `GET /api/targets/{id}`, and the `POST`/`PUT` target-save
+      responses) — one shared helper, never two separate computations that could drift apart; the target
+      selector gains a small cue, read from that field alone, for a target whose run needs attention, so one on a
+      *different* target stays visible without opening it; the run page's own display of the same time next to its
+      controls. **The UI's own cached `list_targets`/run-list results are invalidated after any run start, resume,
+      decision, or stop** — not only a target save/update/delete as today — so `needs_attention` and `idle_stop_at`
+      never go stale by showing a cue or a deadline for a run that has since crashed, paused, or been stopped. **The
+      UI reads both new fields with `.get(key, default)`**, the same way feature 012 reads `replayable` — `false`/
+      `null` when absent — so the ten-plus existing UI test modules whose own stubbed `list_targets`/run responses
+      predate this feature need no edit to keep passing (SC-003).
+
+**Checkpoint (Phase 12)**: every test above green — an idle paused/resumable/stoppable run is stopped
+automatically, never too early (including across a restart, bar the one short grace period), never while leased,
+with each of the three Stop shapes' own outcome identical to what a manual Stop on the same persisted state would
+produce (reason text aside for the ordinary shape only), logged the same way manual and automatic alike, and both
+the API and the UI show when that will happen. Folds into the part-1 pull request (no separate checkpoint beyond
+the existing Part-1-complete one above).
+
+## Phase 13: Automatic stop after idle time — reinforcement (Part 2)
+
+- [ ] T065 [P] [US4-part2] Integration test `tests/integration/test_idle_auto_stop_paused.py` (`FEATURE = "014"`):
+      with the approve node now shipped, pause a run through the **real** checkbox and a **real** `interrupt()` —
+      never T061's own monkeypatched stand-in, which part 1 needs precisely because the real node does not exist
+      yet — and advance the clock past the configured idle window; assert the identical mechanism T061 already
+      proves generically also stops this genuinely, natively paused run, with the identical outcome and logging.
+      Proof of composition, not new coverage of the mechanism itself (research D1's own pattern, as User Story 3
+      already established for resume): no part-2-specific production code of its own (014/FR-058, FR-059, FR-060,
+      FR-061).
+
+**Checkpoint (Phase 13)**: green, no production code change beyond Phase 12's own. Folds into the part-2 pull
+request (no separate checkpoint beyond the existing Part-2-complete one above).

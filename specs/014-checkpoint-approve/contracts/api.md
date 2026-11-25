@@ -23,18 +23,20 @@ run instead of only a finished or crashed one:
 
 ```json
 {"id": 57, "status": "in_progress", "ask_before_each_turn": true, "resumable": true, "paused": true,
+ "run_state": "paused", "idle_stop_at": "2026-11-26T10:15:00Z",
  "pending_turn": {"turn": 2, "interrupt_id": "...", "message": "<the attacker's drafted turn-2 message, masked>"},
  "..."}
 ```
 
 With `ask_before_each_turn` false or omitted, `run.start` itself gains no new *visible* field — it omits
 `ask_before_each_turn` entirely, exactly like every other optional field already on that line — but the response
-body's `resumable`/`paused`/`pending_turn`/`run_state` are always present regardless (`false`/`false`/`null`/one of
-this feature's own `run_state` values for a run this feature's pause mechanism never touches): those four are new
-on `RunDetail` for **every run of every mode**, not only an adaptive one, the same handful of differences FR-031
-names explicitly for an adaptive run specifically (it is now checkpointed and resumable rather than unconditionally
-closed on an interruption; its target lock now survives a restart until someone resumes or stops it; its time
-limit is now measured as time spent executing).
+body's `resumable`/`paused`/`pending_turn`/`run_state`/`idle_stop_at` are always present regardless
+(`false`/`false`/`null`/one of this feature's own `run_state` values/`null` for a run this feature's pause
+mechanism never touches): those five are new on `RunDetail` for **every run of every mode**, not only an adaptive
+one, the same handful of differences FR-031 names explicitly for an adaptive run specifically (it is now
+checkpointed and resumable rather than unconditionally closed on an interruption; its target lock now survives a
+restart until someone resumes or stops it; its time limit is now measured as time spent executing; it is stopped
+automatically if nobody acts on it within the configured idle window).
 
 ## New: `POST /api/runs/{run_id}/resume`
 
@@ -145,8 +147,16 @@ by classification (never a stored flag):
 
 ```json
 {"ask_before_each_turn": true, "resumable": true, "paused": true, "run_state": "resumable",
+ "idle_stop_at": "2026-11-26T10:15:00Z",
  "pending_turn": {"turn": 2, "interrupt_id": "...", "message": "..."}}
 ```
+
+`idle_stop_at` (FR-061) is present whenever `run_state` is `"paused"`, `"resumable"`, or `"stoppable"`, `null`
+otherwise — the **earliest** time the automatic idle-stop check (below) may stop this run, never a promise of
+exactly when: the actual stop happens at the first check that finds the run still idle at or after it, up to one
+check interval later. It is itself grace-aware (FR-059): whichever is **later** of `last_activity_at` plus the
+configured window, and the process's own start time plus the restart grace period — never a time already in the
+past while that grace period is still running.
 
 `resumable` and `paused` are both `false`, and `pending_turn` is `null`, for: every run this feature does not apply
 to (single-turn, replay, an experiment repetition); any finished run; and a run whose execution lease is currently
@@ -187,3 +197,66 @@ the sweep is classifying).
 
 The existing start-up log line keeps its meaning (how many rows were closed outright); `run.interrupted` is the
 new, per-row, kept line described above (see `contracts/log-records-delta.md`).
+
+The sweep itself runs **no** idle-stop check of its own (FR-058) — there is nothing left for one to find, since
+every reached-end, no-checkpoint, and unreadable row it would itself reconcile or close is already handled by its
+own classification above, before any idle check could run, and a genuinely resumable/paused row's own wall-clock
+idle time (research D26) does not depend on whether the process just started. The periodic check below is the
+only idle-stop mechanism; its own first tick after the restart grace period is what catches a run that became
+overdue while the process was down.
+
+## New: the periodic idle-stop check (no endpoint — an internal, unscoped background task)
+
+Started in `lifespan` after the start-up sweep completes, running for as long as the app stays up, cancelled
+**and awaited** at teardown before tracing shuts down: every few minutes (a small, non-configurable interval,
+short against the configured idle window), it first checks a **restart grace period** — if less than
+`min(1 hour, the configured window)` has elapsed since the process itself started, the whole tick is a no-op,
+deliberately, so a run already idle past the window when Kestrel restarts is not stopped the instant the new
+process comes up for time that elapsed while it was down. Past that, for every row whose classification reads
+`"paused"`, `"resumable"`, or `"stoppable"`, idle at least the configured window (measured fresh, re-read and
+re-classified under that row's own lease, never trusted from the tick's own initial listing): it is stopped
+through the identical mechanism `POST /api/runs/{run_id}/stop` uses (below), never a 409 for it, since nothing is
+asking. It calls no endpoint and answers no request. Before ever attempting a row's own lease, a cheap, unlocked
+check against that row's own last-known `last_activity_at` skips anything not yet due — a live request against
+that same row is therefore never refused by a check that was never going to stop it anyway; a row currently leased
+by another request is skipped at that check and reconsidered at the next one, never waited for. A failure stopping
+one particular row (a catalogued `ERROR` line, never its own exception text) never stops the check from
+considering every other row at that same tick; a failure outside any single row's own handling — the listing call
+itself, for instance — is isolated the same way, one level up, so that tick alone stops nothing but the background
+task itself still runs again at the next interval.
+
+## Changed: `POST /api/runs/{run_id}/stop` (automatic trigger, FR-058 to FR-060)
+
+The automatic idle-stop check reaches the identical `stop_run` mechanism this endpoint's own handler calls, with
+one internal difference only: `triggered_by="idle_timeout"` instead of the default `"user"`. Every response field
+this contract already documents for `POST /api/runs/{run_id}/stop` is identical either way **for the identical
+persisted shape** — the response names exactly what that shape's own manual branch would have recorded:
+- the **ordinary** shape's own stored `reason` reads `"Kestrel stopped this run automatically after {hours} hours
+  with nobody acting on it."` instead of naming a user action — `stopping_condition` stays `"stopped_by_user"`
+  either way;
+- the **reconciled** shape (the graph already reached its own end, or a turn's outcome was already decided) keeps
+  its own decided `stopping_condition` and reason completely unchanged — never `stopped_by_user`, manually or
+  automatically;
+- the **no-checkpoint-or-unreadable** shape keeps `stopping_condition: "interrupted"` and the sweep's own exact
+  reason text (FR-056), unchanged.
+
+In every one of the three shapes, the `run.stopped` log line gains `trigger`/`idle_hours`
+(`contracts/log-records-delta.md`) — the one place an automatic stop is actually named as such, regardless of
+which shape's own fields it otherwise produced.
+
+## Changed: `GET /api/config`
+
+Gains a new `resume` group: `{"idle_hours": 24.0}` (the configured `KESTREL_RESUME_IDLE_HOURS`) — its own group,
+never folded into the existing `adaptive` one, which `tests/integration/test_api_config_adaptive.py` already
+asserts as an exact, closed object (`{"max_turns", "token_budget", "time_limit_s"}`) that a new key would break.
+
+## Changed: `GET /api/targets` and `GET`/`POST`/`PUT` target-detail (FR-062)
+
+`GET /api/targets` becomes `async def`. Each `TargetSummary` gains `needs_attention` (bool), computed the same
+live way `idle_stop_at` is: `true` when that target's one possible `in_progress` run (`uq_runs_active` already
+caps it at one) currently classifies `"paused"`, `"resumable"`, or `"stoppable"`; `false` when it has none, or
+that run is currently leased. This is the one field the target selector's own cue (FR-061) is built from — the UI
+reads it directly, never deriving it from a separate per-target call or by guessing from any other field this
+endpoint already returns. `TargetDetail` (which extends `TargetSummary`) carries this identical, identically
+computed field on every response that returns one (`GET /api/targets/{id}`, and the `POST`/`PUT` target-save
+endpoints' own response body) — the list and a single target's own detail can never disagree about it.

@@ -464,3 +464,128 @@ against the installed `langgraph`/`langgraph-checkpoint` (1.2.17 / 4.3.0) and Ke
   report's own input is filtered one call site earlier, to runs whose status is `finished` — a paused, resumable, or
   otherwise still-executing run has reached no verdict yet and must not show up as an `unclear` finding just
   because it has sat open for a long time.
+- **D26 — A run's idle clock is one stored timestamp, updated only on an accepted exit at the one place every such
+  exit already passes through: lease release.** `runs` gains `last_activity_at` (nullable `TEXT`, an ISO
+  timestamp) — set at claim time to the claim's own moment, and updated to `now()` whenever this run's execution
+  lease is released **and** the request actually reached a point of doing something (pausing, an in-process error
+  the process survives, or a resume/decision/stop that was not itself refused) — never on a refused exit, which
+  never gets far enough to count as activity in the first place. The lease itself (research D12) gains a small
+  `mark_active()` method, called by the handler only after its own preconditions pass and it is actually about to
+  invoke the graph or perform the stop; the lease's own `finally` block touches `last_activity_at` only if that
+  flag was set, never unconditionally — this is what makes "an accepted request resets the idle state; a refused
+  one does not" true structurally, rather than relying on every call site to remember it. A genuine process death
+  updates nothing at all (nothing runs to record it); this is deliberate, and is exactly why a restart needs its
+  own short, bounded grace period (D27) rather than trusting `last_activity_at` alone the instant a new process
+  comes up. **Two callers of `mark_active` named explicitly, since both are easy to miss**: the original run-start
+  path (`run_adaptive`'s own first segment) calls it on its own exit, exactly like a later resume or decision does
+  on its — the original start is not a special case here, only the first caller to ever hold this particular run's
+  lease at all. The automatic idle check (D27) is, conversely, the one caller that deliberately **never** calls it,
+  whether its own stop attempt succeeds or fails: an automatic stop is not one of FR-059's own accepted-exit kinds,
+  so it must never reset the very clock it is itself reading.
+- **D27 — The automatic check is one function, called periodically only, gated by a start-up grace period, each
+  run re-verified fresh under its own lease, failures isolated per run and per iteration.** The same function the
+  start-up sweep already calls per `is_checkpointed` row (classify, then act) gains one more branch: for a row
+  whose classification is `"paused"`, `"resumable"`, or `"stoppable"`, compute wall-clock idle time as `clock() -
+  last_activity_at` (no `max()` with anything); if it has elapsed past the configured window (D28), attempt the
+  lease and call `stop_run` with `triggered_by="idle_timeout"` (D29). This is **not** run as a separate pass during
+  the start-up sweep at all (there is nothing left for a start-up-only pass to find: every reached-end,
+  no-checkpoint, and unreadable row the sweep itself would reconcile or close has already been handled by the
+  sweep's own classification before any idle check could run, and a genuinely resumable/paused row's idle time,
+  measured this way, is unaffected by whether the process just started) — only `lifespan` starting a plain
+  `asyncio` background task, after the sweep completes, looping `await asyncio.sleep(interval)` then this same
+  check, for as long as the app stays up; the task is cancelled **and awaited** in `lifespan`'s own teardown,
+  before any tracing shutdown runs. Before doing anything else on a given tick, the loop checks a **grace period**:
+  if less than `min(1 hour, configured window)` has elapsed since `app.state.started_at`, the tick is a pure no-op
+  for every row, deliberately — this is the one and only place the process's own start time matters, bounding how
+  long a stuck run can stay locked after a restart without granting it anything like a fresh window. Because
+  seconds to minutes pass between a tick first reading a run and that run's own lease actually being acquired,
+  the row MUST be **read again, reclassified, and re-measured for idleness fresh, under the lease**, immediately
+  before acting — never trusting the snapshot the tick's own initial listing read; a row no longer `in_progress`,
+  no longer one of the three idle-eligible classifications, or no longer idle by that fresh read is left alone, no
+  different from one the lease found already held. A `RunLeased` from another request already holding it is caught
+  and skipped, never retried within the same tick. This check holds no scope of its own until it actually proceeds
+  to stop a row (D29) — it never calls `mark_active` either way (D26): an automatic stop is not an accepted exit,
+  whether it succeeds or fails, so a failed one is retried, with no backoff, at every subsequent check for which it
+  is still due. Beyond that, the loop catches plain `Exception` **per run**
+  (logging one catalogued `ERROR` line carrying `run_id` and the exception's own class name, never its text, then
+  continuing to the next row) and **per iteration** (so one tick's own uncaught failure does not end the loop
+  task for good) — `CancelledError` is let through either way, since that is exactly teardown asking the task to
+  stop. The per-run line and the per-iteration one share one event name (`idle_stop.check_failed`,
+  `contracts/log-records-delta.md`) but not one shape: the per-run line carries `run_id`; the per-iteration line (a
+  failure outside any single row's own handling, such as the listing call itself raising) carries none, since no
+  row is implicated — `run_id` is the one field that is optional on this line, never a literal `null`, omitted
+  instead exactly the way every other optional event field already is. Teardown's own cancel-and-await is itself
+  guarded against both outcomes (`CancelledError` expected and discarded; any other exception already logged above
+  and never re-raised), so neither can escape and interrupt tracing shutdown. `IDLE_CHECK_INTERVAL_S` is a small constant (a few minutes) chosen short against the default 24-hour
+  window; both it and `check_idle_runs`'s own notion of "now" are parameters with that constant and a real clock as
+  their defaults, never hard-coded, so a test can drive many ticks and arbitrary clock values without a real sleep
+  or a real wall clock. Neither call site returns anything to a caller or blocks any request; the lease is held
+  for no longer than that one `stop_run` call takes, for the one run being checked at a time.
+- **D28 — The setting is a new, narrower parser: strictly positive, finite, bounded, no "off" sentinel.**
+  `KESTREL_RESUME_IDLE_HOURS` is read by its own small function (distinct from `settings.non_negative_float_or_off`,
+  which permits zero and an `"off"` string this setting has no use for — the owner's own wording says "a positive
+  number of hours," not "or disabled") — parses a float, refuses to start if it is not finite, not a number at
+  all, `<= 0`, or above `87,600` (ten years) — not chosen for any arithmetic limit (`idle_stop_at`'s own addition
+  does not overflow until far past this point), but as a deliberate policy ceiling: a value that large has no
+  honest use as "a configurable number of hours" and is really an attempt to disable the stop outright, which this
+  setting does not offer. The parsed value lives on `Settings` as `resume_idle_hours: float`, reported on
+  `GET /api/config` as `idle_hours` in its own new `resume` group — never folded into the existing `adaptive`
+  group, which `test_api_config_adaptive.py` already asserts as an exact, closed object with no room for a new key.
+- **D29 — The automatic outcome reuses `stop_run` itself, parameterised only by why, never by what it does; each
+  of its three branches keeps its own, already-distinct reason and `stopping_condition`; the lease and the logging
+  scope both belong entirely to whichever caller reaches it, never to `stop_run` itself.** `stop_run(store, graph,
+  app_state, run_id, *, triggered_by: Literal["user", "idle_timeout"] = "user")` — every branch's own fields are
+  unchanged by `triggered_by`, since each branch already has its own correct `stopping_condition` and reason from
+  research D7/D11: the ordinary branch still composes its reason only once it knows whether this is a manual or an
+  automatic stop (the automatic sentence, reading `hours` from the currently configured setting at the moment of
+  the stop, never a value captured at claim time, since the setting could change in between); the reconciled branch
+  keeps the decided outcome's own `stopping_condition` and reason exactly as D7 already produces them, completely
+  untouched by `triggered_by`; the no-checkpoint-or-unreadable branch keeps the sweep's own fixed `"interrupted"`
+  reason text (FR-056) exactly as D7 already produces it too. **`stop_run` neither acquires nor releases the
+  execution lease, and neither opens nor closes a logging scope — opening one unconditionally would silently nest
+  a second scope inside the decision handler's own, for a `"stop"` decision.**
+  There are exactly three callers, each already holding the lease and already inside its own open scope before it
+  calls in: the `/stop` endpoint handler and `check_idle_runs` (research D27) each acquire the lease and open
+  `events.reopened_run_scope(run)` themselves, immediately around their own call into this function, since neither
+  has any other scope open at that point; the decision handler (research D8), deciding `"stop"`, already holds the
+  lease and already has its own scope open for the whole decision (`run.decided` emitted first) before it reaches
+  this same call, and opens no second, nested one for it — nesting one there would let an exception after this
+  call emit a second `run.interrupted`/`run.end` pair for a row already finished, which FR-046's "exactly once"
+  already forbids. Only a **user**-triggered caller (the endpoint handler, or the decision handler) calls
+  `mark_active` before calling in, never `check_idle_runs` (research D26): an automatic stop is not one of
+  FR-059's own accepted-exit kinds, whether it succeeds or fails. `run.stopped` (`contracts/log-records-delta.md`)
+  gains `trigger` (`"user"` or `"idle_timeout"`, always present, the same bar `run.decided`'s own small
+  fixed-string fields already hold themselves to) and `idle_hours` (present only when `trigger == "idle_timeout"`,
+  the configured value that elapsed) — both added to `events.CATALOGUE`; neither field is read by anything that
+  decides `stopping_condition` or the stored `reason`, which stay exactly what D7/D11 would already produce for
+  that branch — `trigger`/`idle_hours` are the *only* place an automatic stop is actually named as such.
+- **D30 — `idle_stop_at` is computed, not stored, from the same inputs the check itself uses, and itself respects
+  the restart grace period; "at the top of its own target's list" is what "prominent" means, since at most one
+  `in_progress` run exists per target; the run list's own grouping is a UI concern, not a wording a test pins.**
+  `idle_stop_at = max(last_activity_at + resume_idle_hours, app_state.started_at + min(1 hour, resume_idle_hours))`
+  whenever classification currently reads `"paused"`, `"resumable"`, or `"stoppable"`; `null` otherwise — the
+  second term matters precisely because, without it, a run already overdue before a
+  restart shows a time already in the past throughout the grace period FR-059 itself grants it, exactly when a
+  returning user most needs an honest deadline to act against. Computed alongside `run_state` (research D13/
+  FR-054), from the same classification call, never a second read of the store; it is the *earliest* time an
+  automatic stop may happen, never a promise of exactly when — the actual stop happens at whichever periodic tick
+  first finds the run idle past it, up to one check interval later. Because `uq_runs_active` already limits a
+  target to one `in_progress` run, a target's own run list showing this run "at the top" (the coordinator's own
+  label for the owner's "prominently" — never asserted as the owner's verbatim words) is necessarily a list of at
+  most one; a stuck run on some *other* target is made visible a different way — a small cue on the target
+  selector itself naming that a target has a run waiting on a person (D31) — never invented as a cross-target
+  single list this feature does not otherwise have. CLAUDE.md's "no test pins wording or headings in docs" rule
+  does not reach UI label text one way or the other, but the UI test proving this feature (T063/T064 below) checks
+  structurally — this run surfaces ahead of the rest of its own target's list, and shows its own `idle_stop_at` —
+  never a hard-coded exact heading string, so a later wording change to either label does not break it; it also
+  never seeds two `in_progress` runs on one target, since `uq_runs_active` already forbids that shape outright.
+- **D31 — The target-selector cue is backed by a real API field, computed exactly like `idle_stop_at`, never a UI
+  guess.** `GET /api/targets`'s own `TargetSummary` gains `needs_attention: bool` (FR-062) — `true` when that
+  target's one possible `in_progress` run currently classifies `"paused"`, `"resumable"`, or `"stoppable"`; `false`
+  when it has none, or that run is currently leased. Computed by calling the identical classification function
+  (D13) already used for `run_state`/`idle_stop_at`, over that one run if it exists — never a second, independent
+  check, so the three fields can never disagree about the same run. `GET /api/targets` becomes `async def` to make
+  this call, the same change D14 already made to the run-detail and run-list endpoints for the identical reason.
+  The UI reads this field alone for its cue — never a per-target `GET /api/targets/{id}/runs` call on every rerun
+  (which `GET /api/targets` already being one list call makes unnecessary), and never a guess from a field
+  `TargetSummary` already carried, since the UI holds no logic of its own (CLAUDE.md).

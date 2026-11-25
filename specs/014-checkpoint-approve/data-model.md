@@ -8,11 +8,11 @@ See `research.md` for the reasoning and verified facts behind every shape below.
 to FR-037, FR-048, FR-049, and the test functions `tasks.md` names for them.*
 
 `store.py`'s existing database gains, in one additive schema-version bump (no rebuild — nothing here changes a
-`CHECK` constraint or a column's identity): four new columns on `runs`, one new index on `run_turns`, and two new
+`CHECK` constraint or a column's identity): five new columns on `runs`, one new index on `run_turns`, and two new
 tables for the custom saver.
 
 ```sql
--- RUNS_COLUMNS_SQL itself gains all four new columns (not only a later ALTER): a fresh database's CREATE TABLE and
+-- RUNS_COLUMNS_SQL itself gains all five new columns (not only a later ALTER): a fresh database's CREATE TABLE and
 -- every migration both read from this one definition, exactly as every column since schema v3 has.
     ...
     -- Whether this run was started with "Ask before each turn" ticked. Captured once, at claim time; never
@@ -26,7 +26,11 @@ tables for the custom saver.
     -- The attacker prompt reference this run is pinned to, recorded at claim time (research D16) — new columns;
     -- today only run_turns records a per-turn attacker-prompt reference, and only from turn 2. A resumed or decided
     -- run's attacker client is rebuilt against exactly this reference, never whatever is currently active.
-    attacker_prompt_id TEXT, attacker_prompt_version TEXT
+    attacker_prompt_id TEXT, attacker_prompt_version TEXT,
+    -- This run's idle clock (research D26): set at claim, updated only on an accepted lease release (never a
+    -- refused request). Nullable only because a pre-migration row never had one; every row this feature itself
+    -- claims always sets it.
+    last_activity_at TEXT
 
 -- judge_model / judge_prompt_id / judge_prompt_version already exist as columns (written today only by
 -- finish_run); claim_run gains the option to also set them at claim time (research D16), so a resumed or decided
@@ -34,7 +38,7 @@ tables for the custom saver.
 -- changed in between. No new columns for these three.
 
 -- Migration note: this is a plain ALTER TABLE ADD COLUMN set against the existing `runs` table (no rebuild needed
--- — none of the four changes a CHECK or an existing column's identity), but RUNS_COLUMNS_SQL is still updated too,
+-- — none of the five changes a CHECK or an existing column's identity), but RUNS_COLUMNS_SQL is still updated too,
 -- so a fresh database's CREATE TABLE and every future migration's own column list agree with what an ALTER
 -- produces on an existing one.
 ```
@@ -107,6 +111,7 @@ ask_before_each_turn: bool = False
 is_checkpointed: bool = False
 attacker_prompt_id: str | None = None
 attacker_prompt_version: str | None = None
+last_activity_at: str | None = None   # research D26 — this run's own idle clock
 # judge_model / judge_prompt_id / judge_prompt_version already existed on Run.
 ```
 
@@ -114,10 +119,16 @@ attacker_prompt_version: str | None = None
 
 `claim_run(..., ask_before_each_turn: bool = False, is_checkpointed: bool = False, attacker_prompt_id: str | None =
 None, attacker_prompt_version: str | None = None, judge_model: str | None = None, judge_prompt_id: str | None =
-None, judge_prompt_version: str | None = None)` — new optional keywords; raises a clear `ValueError` when
-`ask_before_each_turn` is true for a mode other than `"adaptive"` (the API layer turns this into its own `422`,
-never leaving the check to be reimplemented there). Only the live run-start path ever passes `is_checkpointed=True`
-or the provenance-pin keywords (research D16, D22); every other caller leaves them at their defaults.
+None, judge_prompt_version: str | None = None, now: datetime | None = None)` — new optional keywords; raises a
+clear `ValueError` when `ask_before_each_turn` is true for a mode other than `"adaptive"` (the API layer turns this
+into its own `422`, never leaving the check to be reimplemented there). Only the live run-start path ever passes
+`is_checkpointed=True` or the provenance-pin keywords (research D16, D22); every other caller leaves them at their
+defaults. `now` defaults to the real wall clock when omitted, so every pre-existing caller (a single-turn claim, a
+replay claim, an experiment repetition's claim) is unaffected; the live run-start path passes `now=
+app_state.clock()` explicitly, so `last_activity_at` (set to this same value, research D26) agrees with whatever
+clock a test has substituted for `app_state.clock()` — never the real wall clock read a second, independent way,
+which would silently disagree with a simulated clock in exactly the tests this feature's own idle-stop suite
+relies on.
 
 ### The atomic turn-plus-evidence write (research D6)
 
@@ -260,9 +271,10 @@ functions `tasks.md` names for them.*
 # Held on app.state, never a bare module-level object — two unrelated apps (e.g. two test apps over different
 # databases) must never share lease keys.
 app.state.leases: set[int] = set()
+app.state.accepted_exits: set[int] = set()   # research D26 — which held leases are about to release on ACTIVITY
 
 @contextmanager
-def lease(app_state, run_id: int):
+def lease(app_state, store, run_id: int):
     if run_id in app_state.leases:
         raise RunLeased(run_id)   # -> 409, "This run is currently executing."
     app_state.leases.add(run_id)
@@ -270,13 +282,29 @@ def lease(app_state, run_id: int):
         yield
     finally:
         app_state.leases.discard(run_id)
+        if run_id in app_state.accepted_exits:         # set.discard() itself always returns None — never branch
+            app_state.accepted_exits.discard(run_id)   # on its own return value; check membership first
+            store.touch_last_activity(run_id, now=app_state.clock())
+
+def mark_active(app_state, run_id: int) -> None:
+    app_state.accepted_exits.add(run_id)   # called once a handler's own preconditions pass, just before it acts —
+                                            # by every accepted-exit caller except the automatic idle check itself,
+                                            # which must never call this (research D26)
 ```
 
 Every request that starts, resumes, decides, or stops a run acquires this lease before doing anything else that
 could race with another such request, and releases it in a `finally`. **The original start takes it immediately
 after `claim_run` succeeds**, inside `run_adaptive` itself, before the first graph invocation — not only resume,
 decision, and stop (research D12) — and holds it for the rest of that request, including the shared finishing
-function (below) when it is the request that finishes the run.
+function (below) when it is the request that finishes the run. This includes calling `mark_active` on its own
+exit, exactly like a later resume or decision does on its (research D26) — the original start is not a
+special case here, only the first caller to ever hold this particular run's lease at all. **`mark_active` is what
+tells an accepted exit from a refused one** (research D26): a handler calls it only once its own preconditions
+have already passed and it is about to actually invoke the graph or perform the stop — never before, so a request
+refused by a precondition (a `409` of any kind) never marks itself active, and the lease's own release then never
+touches `last_activity_at` for it. The automatic idle check (below) is the one caller that deliberately never
+calls `mark_active` at all, whether its own stop attempt succeeds or fails — an automatic stop is not one of
+FR-059's own accepted-exit kinds.
 
 ## The approve node (`attack/graph.py`, added to `LIVE_GRAPH`'s topology when part 2 ships; research D4, D7)
 
@@ -313,85 +341,126 @@ class DecisionRequest(BaseModel):
     decision: Literal["approve", "run_to_end", "stop"]
 ```
 
-The handler: acquire the lease; classify. If the result is not `Paused`, refuse (`409 not_paused`). If
-`request.turn != result.turn`, refuse (`409 not_paused`, "This run's pending turn has already moved on.") and send
-nothing. For `"stop"`, use the Stop path (below) instead of any `Command` call. For `"approve"`/`"run_to_end"`,
-check preconditions (research D15/D16), then call `ainvoke(Command(resume={result.interrupt_id: request.decision}),
-thread_config(run_id), context=deps, durability="sync")`.
+The handler: acquire the lease; **before opening any scope**, check the run's own plain columns —
+`mode == "adaptive"`, `is_checkpointed`, and `status == "in_progress"` — refusing (`409 not_paused`) at once, with
+no scope ever opened, if any of these fails: a request against a run that was never checkpointed, or one already
+finished, must never bind a scope whose later exit would write something that refusal never earned — a stray
+`run.end` for a run that was never checkpointed in the first place, or a stray `run.interrupted` if that same
+refusal were instead raised as an exception inside an already-checkpointed scope. Only past this does it open
+**one** `events.reopened_run_scope(run)` for the whole decision (never a
+second, nested one later, including for `"stop"` — research D29); classify. If the result is not `Paused`, refuse
+(`409 not_paused`). If `request.turn != result.turn`, refuse (`409 not_paused`, "This run's pending turn has
+already moved on.") and send nothing. Past validation, emit `run.decided` once. For `"stop"`, call `mark_active`
+(this is a user-triggered exit, research D26) then call `stop_run(..., triggered_by="user")` — **within this same,
+already-open scope**, never opening another — instead of any `Command` call. For `"approve"`/`"run_to_end"`, check
+preconditions (research D15/D16), call `mark_active`, then call `ainvoke(Command(resume={result.interrupt_id:
+request.decision}), thread_config(run_id), context=deps, durability="sync")`.
 
-## Stop (research D7, D11): no graph call, for any resumable run
+## Stop (research D7, D11, D29): no graph call, for any resumable run — and no lease or scope of its own
 
-*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-051, FR-055, FR-056, the
-`contracts/`, and the test functions `tasks.md` names for them.*
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-040, FR-051, FR-055,
+FR-056, FR-058, the `contracts/`, and the test functions `tasks.md` names for them.*
+
+**`stop_run` is reached by three callers, each already holding `run_id`'s execution lease and each already inside
+its own open logging scope before it calls in** — the `/stop` endpoint handler acquires the lease, **validates
+the run's own plain columns (`mode == "adaptive"`, `is_checkpointed`, `status == "in_progress"`) before opening
+any scope** — refusing at once, with nothing bound, if the row is not a genuine candidate (the same validation the
+decision handler above performs for itself) — and only then opens `events.reopened_run_scope(run)`, immediately
+around its own call into this function, since it has no other scope open at that point; `check_idle_runs`
+(research D27) needs no such validation of its own — its own listing query
+(`store.list_in_progress_checkpointed_runs`) already returns only `is_checkpointed`, `in_progress` rows, so every
+row it ever reaches this far with is already a genuine candidate by construction — and, like the endpoint handler,
+opens its own scope immediately around its own call, having none already open; the decision handler (above),
+deciding `"stop"`, already holds the lease, already passed this same column validation, and already has its own
+scope open for the whole decision (`run.decided` emitted first) before it reaches this same call, and opens no
+second, nested one for it. `stop_run` itself
+therefore **neither acquires nor releases the lease, nor opens nor closes a scope, nor performs any validation of
+its own**
+— all three are the caller's own job, done before `stop_run` is ever reached. Only a **user**-triggered caller (the
+endpoint handler, or the decision handler) calls `mark_active` before calling in — never `check_idle_runs` (research
+D26, D27): an automatic stop is not one of FR-059's own accepted-exit kinds, whether it succeeds or fails.
 
 ```python
-async def stop_run(store, graph, app_state, run_id: int) -> Run:
-    with lease(app_state, run_id):
-        status = await classify(graph, run_id, leased=False)
-        if isinstance(status, (NoCheckpoint, Unreadable)):
-            # FR-056: the exact close the sweep itself performs for this shape, same reason text, no write-back —
-            # never a 409 that would otherwise trap the target until a restart.
-            run = store.finish_run(run_id, verdict="unclear", judge_used=False, stopping_condition="interrupted",
-                                    reason="Kestrel stopped while this run was in progress, so it was interrupted.")
-            store.delete_checkpoint(run_id)   # a no-op if nothing readable actually exists
-            return run
-        if isinstance(status, Incompatible):
-            raise NotStoppable(status)   # 409 — unreachable without a restart in between (the version stamp is
-                                          # this same build's own), so the sweep always resolves it first
-        run = store.get_run(run_id)
-        state = (status.snapshot.values if isinstance(status, Resumable)
-                 else (await graph.aget_state(thread_config(run_id))).values if isinstance(status, Paused)
-                 else None)
-        # an outcome already decided — whether the graph reached its own end (ReachedEnd), or the deterministic
-        # checks/judge already decided one for a turn `record` has not yet durably written (Resumable,
-        # state["outcome"] set) — is reconciled, never discarded as stopped_by_user.
-        decided = status.outcome if isinstance(status, ReachedEnd) else (state or {}).get("outcome")
-        if decided is not None:
-            # FR-051: write the pending turn only when `record` itself has not run for it — never key this on
-            # `turns_used + 1` alone, which `record` leaves already incremented (with the same turn's own pending
-            # fields still populated, uncleared) and so would re-write as a phantom turn `turns_used + 2`.
-            # `record` has not run for the pending turn exactly when the resume point names `record` itself
-            # (pending, not yet completed — `from_step` is the task's own name in that case) or names a completed
-            # `evidence`/`judge` task whose own routing goes to `record` — both collapse to one simple check:
-            # `status.from_step == "record"`. `record`'s own commit window (`from_step == "decide"`), `decide`'s
-            # (`from_step == "attacker"` or later), and the clean checkpoint after `record` all have `record`
-            # already run for this turn, so none of them writes anything here.
-            if state is not None and status.from_step == "record":
-                turn = state["turns_used"] + 1
-                store.add_turn_with_evidence(run_id, position=turn, **_pending_turn_fields(state))
-            # finish_with_outcome (shared with the sweep's own reconciliation, below) passes the run's own
-            # already-pinned judge_model/judge_prompt_id/judge_prompt_version through to finish_run whenever the
-            # outcome it is recording was judge-decided, and states a reason — never leaves either to finish_run's
-            # own column-writing UPDATE to silently null out. This is a fix to the one shared function, not
-            # something Stop does differently from the sweep.
-            run = finish_with_outcome(store, run_id, decided)
-        else:
-            last_judged = last_durably_judged_turn(store.list_turns(run_id))   # the last run_turns row with a
-                                                                                 # non-null judge_verdict
-            run = store.finish_run(run_id, verdict=(last_judged.judge_verdict if last_judged else "unclear"),
-                                   judge_used=last_judged is not None,
-                                   # Stop pins the SAME claim-time judge provenance finish_run's own UPDATE always
-                                   # writes every column of — never left at NULL, which would misattribute an
-                                   # already-judged turn to no judge at all (FR-047, Principle III).
-                                   judge_model=(run.judge_model if last_judged else None),
-                                   judge_prompt_id=(run.judge_prompt_id if last_judged else None),
-                                   judge_prompt_version=(run.judge_prompt_version if last_judged else None),
-                                   turns_used=(state or {}).get("turns_used"), tokens_used=(state or {}).get("tokens_used"),
-                                   stopping_condition="stopped_by_user", reason="stopped_by_user")
-        write_back_once(run)
-        store.delete_checkpoint(run_id)
+async def stop_run(store, graph, app_state, run_id: int, *, settings,
+                    triggered_by: Literal["user", "idle_timeout"] = "user") -> Run:
+    # The caller already holds run_id's lease and already has its own scope open; this function touches neither.
+    status = await classify(graph, run_id, leased=False)
+    if isinstance(status, (NoCheckpoint, Unreadable)):
+        # FR-056: the exact close the sweep itself performs for this shape, same reason text, no write-back —
+        # never a 409 that would otherwise trap the target until a restart; triggered_by changes nothing here.
+        run = store.finish_run(run_id, verdict="unclear", judge_used=False, stopping_condition="interrupted",
+                                reason="Kestrel stopped while this run was in progress, so it was interrupted.")
+        store.delete_checkpoint(run_id)   # a no-op if nothing readable actually exists
+        events.run_stopped(was_paused=False, reconciled=False, trigger=triggered_by,
+                            idle_hours=(settings.resume_idle_hours if triggered_by == "idle_timeout" else None))
         return run
+    if isinstance(status, Incompatible):
+        raise NotStoppable(status)   # 409 — unreachable without a restart in between (the version stamp is
+                                      # this same build's own), so the sweep always resolves it first
+    run = store.get_run(run_id)
+    state = (status.snapshot.values if isinstance(status, Resumable)
+             else (await graph.aget_state(thread_config(run_id))).values if isinstance(status, Paused)
+             else None)
+    # an outcome already decided — whether the graph reached its own end (ReachedEnd), or the deterministic
+    # checks/judge already decided one for a turn `record` has not yet durably written (Resumable,
+    # state["outcome"] set) — is reconciled, never discarded as stopped_by_user, and never renamed by triggered_by.
+    decided = status.outcome if isinstance(status, ReachedEnd) else (state or {}).get("outcome")
+    if decided is not None:
+        # FR-051: write the pending turn only when `record` itself has not run for it — never key this on
+        # `turns_used + 1` alone, which `record` leaves already incremented (with the same turn's own pending
+        # fields still populated, uncleared) and so would re-write as a phantom turn `turns_used + 2`.
+        # `record` has not run for the pending turn exactly when the resume point names `record` itself
+        # (pending, not yet completed — `from_step` is the task's own name in that case) or names a completed
+        # `evidence`/`judge` task whose own routing goes to `record` — both collapse to one simple check:
+        # `status.from_step == "record"`. `record`'s own commit window (`from_step == "decide"`), `decide`'s
+        # (`from_step == "attacker"` or later), and the clean checkpoint after `record` all have `record`
+        # already run for this turn, so none of them writes anything here.
+        if state is not None and status.from_step == "record":
+            turn = state["turns_used"] + 1
+            store.add_turn_with_evidence(run_id, position=turn, **_pending_turn_fields(state))
+        # finish_with_outcome (shared with the sweep's own reconciliation, below) passes the run's own
+        # already-pinned judge_model/judge_prompt_id/judge_prompt_version through to finish_run whenever the
+        # outcome it is recording was judge-decided, and states a reason — never leaves either to finish_run's
+        # own column-writing UPDATE to silently null out. This is a fix to the one shared function, not
+        # something Stop does differently from the sweep — and, like the shape above, untouched by triggered_by.
+        run = finish_with_outcome(store, run_id, decided)
+        events.run_stopped(was_paused=isinstance(status, Paused), reconciled=True, trigger=triggered_by,
+                            idle_hours=(settings.resume_idle_hours if triggered_by == "idle_timeout" else None))
+    else:
+        last_judged = last_durably_judged_turn(store.list_turns(run_id))   # the last run_turns row with a
+                                                                             # non-null judge_verdict
+        # FR-060: only this, ordinary, branch's own reason text depends on triggered_by; stopping_condition is
+        # "stopped_by_user" either way.
+        reason = ("stopped_by_user" if triggered_by == "user" else
+                  f"Kestrel stopped this run automatically after {settings.resume_idle_hours:g} hours with "
+                  "nobody acting on it.")
+        run = store.finish_run(run_id, verdict=(last_judged.judge_verdict if last_judged else "unclear"),
+                               judge_used=last_judged is not None,
+                               # Stop pins the SAME claim-time judge provenance finish_run's own UPDATE always
+                               # writes every column of — never left at NULL, which would misattribute an
+                               # already-judged turn to no judge at all (FR-047, Principle III).
+                               judge_model=(run.judge_model if last_judged else None),
+                               judge_prompt_id=(run.judge_prompt_id if last_judged else None),
+                               judge_prompt_version=(run.judge_prompt_version if last_judged else None),
+                               turns_used=(state or {}).get("turns_used"), tokens_used=(state or {}).get("tokens_used"),
+                               stopping_condition="stopped_by_user", reason=reason)
+        events.run_stopped(was_paused=isinstance(status, Paused), reconciled=False, trigger=triggered_by,
+                            idle_hours=(settings.resume_idle_hours if triggered_by == "idle_timeout" else None))
+    write_back_once(run)
+    store.delete_checkpoint(run_id)
+    return run
 ```
 
 Identical for a paused run (the approve node's own Stop control) and a merely-resumable one (the general way out)
-— one function, reached from `POST /api/runs/{id}/stop`. A run whose graph reached its own end, or whose pending
-turn's outcome was already decided but not yet recorded, is **finished with that outcome**, never `stopped_by_user`
-— the same reconciliation path the sweep performs, so Stop is never refused for either shape. `_pending_turn_fields`
-reads exactly the state fields `record` itself would read to make this same call under normal operation (the
-drafted message, the reply, the evidence items, the judge verdict if any) — Stop constructs no call `record`
-would not already make for the identical turn, and constructs it only when `record` has not already made it
-(FR-051) — `status.from_step == "record"`, never `turns_used` alone, which `record`'s own increment makes
-indistinguishable from "one turn further along."
+— one function, reached from `POST /api/runs/{id}/stop`, the decision handler's own `"stop"` branch, and
+`check_idle_runs`. A run whose graph reached its own end, or whose pending turn's outcome was already decided but
+not yet recorded, is **finished with that outcome**, never `stopped_by_user` — the same reconciliation path the
+sweep performs, so Stop is never refused for either shape. `_pending_turn_fields` reads exactly the state fields
+`record` itself would read to make this same call under normal operation (the drafted message, the reply, the
+evidence items, the judge verdict if any) — Stop constructs no call `record` would not already make for the
+identical turn, and constructs it only when `record` has not already made it (FR-051) — `status.from_step ==
+"record"`, never `turns_used` alone, which `record`'s own increment makes indistinguishable from "one turn further
+along."
 
 ## Write-back exactly once (research D19)
 
@@ -561,3 +630,178 @@ because the run it is bound to is not checkpointed — is unaffected by construc
 `FakeStore` (which implements only `add_log_line`) binds both a store and a run, but one whose checkpointed status
 this exit check never reads either way, for the same reason — no pre-existing test needs a new store method it
 does not already have.
+
+## Automatic stop after idle time (research D26 to D31; owner review, PR #55)
+
+*This section's code is a guide to the shape, not the spec: the binding behaviour is FR-057 to FR-062, the
+`contracts/`, and the test functions `tasks.md` names for them.*
+
+```python
+def idle_hours(run: Run, app_state) -> float:
+    last_activity = datetime.fromisoformat(run.last_activity_at)   # stored as ISO text (store.py) — parsed once
+                                                                     # here: never subtract a str from a datetime
+    return (app_state.clock() - last_activity).total_seconds() / 3600.0   # wall-clock only, no max()
+
+async def check_idle_runs(store, graph, app_state, settings) -> None:   # D27: the periodic task only, never the sweep
+    now = app_state.clock()
+    if now - app_state.started_at < min(timedelta(hours=1), timedelta(hours=settings.resume_idle_hours)):
+        return   # the restart grace period: a pure no-op tick, deliberately, for every row
+    for run in store.list_in_progress_checkpointed_runs():
+        try:
+            if idle_hours(run, app_state) < settings.resume_idle_hours:
+                continue   # not yet due by the listing's own last_activity_at alone — never even attempt a lease
+                           # for it: last_activity_at only ever moves forward, so this can only under-count idle
+                           # time, never wrongly skip a row that is genuinely due; a live user's own
+                           # resume/decision/stop on a not-yet-due row must never be refused by a check that was
+                           # never going to stop it anyway. This read sits inside the per-row try below, so a row
+                           # whose own last_activity_at cannot even be parsed is that row's own failure, never
+                           # the whole tick's.
+            with lease(app_state, store, run.id):   # raises RunLeased immediately if already held
+                # re-read, re-classify, re-measure idleness fresh, under the lease — never trust the listing above
+                fresh = store.get_run(run.id)
+                if fresh.status != "in_progress":
+                    continue
+                status = await classify(graph, fresh.id, leased=False)
+                if run_state_for(status) not in ("paused", "resumable", "stoppable"):
+                    continue
+                if idle_hours(fresh, app_state) < settings.resume_idle_hours:
+                    continue
+                # this check has no request-scope of its own, unlike the /stop endpoint handler or the decision
+                # handler — it opens its own, immediately around this one call; it never calls mark_active: an
+                # automatic stop, successful or not, is not an accepted exit (research D26)
+                failure: Exception | None = None
+                with events.reopened_run_scope(fresh):
+                    try:
+                        await stop_run(store, graph, app_state, fresh.id, settings=settings,
+                                        triggered_by="idle_timeout")
+                    except Exception as exc:
+                        # caught here, before the scope closes, so a failed attempt writes nothing kept to this
+                        # run's own log — never a kept run.interrupted for a mere stop attempt that failed, which,
+                        # with no backoff, would otherwise repeat every tick and fill the run's own log toward its
+                        # cap. Re-raised below, once the scope has already exited cleanly, so the per-row handler
+                        # beneath still logs it.
+                        failure = exc
+                if failure is not None:
+                    raise failure
+        except RunLeased:
+            continue   # skipped; reconsidered at the next tick, never waited for
+        except Exception as exc:
+            events.emit("idle_stop.check_failed", logging.ERROR, scoped=False, run_id=run.id,
+                         exc_type=type(exc).__name__)
+            continue   # this run's own failure never stops the rest of the tick, or a later tick
+
+async def idle_stop_loop(app_state, store, graph, settings, interval_s: float = IDLE_CHECK_INTERVAL_S) -> None:
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await check_idle_runs(store, graph, app_state, settings)
+        except asyncio.CancelledError:
+            raise   # teardown asking the task to stop — never swallowed, never logged as a failure
+        except Exception as exc:
+            # a failure outside any single run's own handling (for example, the listing call itself raising) —
+            # named with no run_id at all, since none is implicated (never a literal null); the loop task itself
+            # still survives for the next interval — a per-row catch alone cannot reach a failure this far outside it
+            events.emit("idle_stop.check_failed", logging.ERROR, scoped=False, exc_type=type(exc).__name__)
+        # teardown's own cancel()+await is itself guarded the same way: neither a clean CancelledError nor any
+        # other exception (already logged above) is left to escape and interrupt tracing shutdown
+```
+
+**The idle clock (D26)**: `runs.last_activity_at` is set once at claim (to the claim's own moment) and updated
+only on an **accepted** exit from this run's execution lease — a pause, an in-process error the process survives,
+or a resume/decision/stop whose own preconditions passed and which therefore actually invoked the graph or
+performed the stop. The lease itself carries a `mark_active()` flag, set by the handler immediately before it
+acts (never before its preconditions are checked); its own exit touches `last_activity_at` only if that flag was
+set, so a refused request (which never calls `mark_active()`) structurally cannot reset the clock — this is the
+fix for a request that takes the lease, fails a precondition, and would otherwise look like activity. A run's
+idle time is plain wall-clock `now - last_activity_at`, with **no** `max()` against anything — a genuine process
+death updates nothing (nothing runs to record it), which is exactly why the grace period below exists, rather
+than trusting this timestamp the instant a new process starts.
+
+**The check (D27)**: `check_idle_runs` runs **only** from the periodic `asyncio` background task (`lifespan`,
+started after the sweep, for as long as the app stays up, cancelled **and awaited** at teardown, before tracing
+shuts down) — **never** as a separate pass during the start-up sweep itself, which has nothing left for it to
+find (every reached-end/no-checkpoint/unreadable row the sweep would itself reconcile or close is already handled
+before any idle check could run, and a genuinely resumable/paused row's wall-clock idle time does not depend on
+whether the process just started). Before touching any row, each tick checks the **restart grace period**: if
+less than `min(1 hour, configured window)` has elapsed since `app.state.started_at`, the whole tick is a no-op.
+Past that, for each `is_checkpointed`, `in_progress` row, inside that row's own per-row handling: **first** a
+cheap, lock-free check against the listing's own `last_activity_at` alone (parsing it first can itself raise, so
+this sits inside the same per-row handling as everything else, never ahead of it): a row not yet idle by that
+reading is skipped **without ever attempting its lease** — `last_activity_at` only ever moves forward, so this can
+only under-count idle time, never wrongly skip a row that is genuinely due, and it keeps a live user's own
+resume/decision/stop on a not-yet-due row from ever being refused by a check that was never going to stop it
+anyway. Only a row that already looks overdue proceeds: skip outright if already leased; otherwise take the lease
+and, **under it**, re-read the row, re-classify it, and recompute its idleness fresh — never trusting the listing
+read before the lease was acquired, since a resume or decision can be accepted in between — skipping if the row is
+no longer `in_progress`, no longer `"paused"`/`"resumable"`/`"stoppable"`, or no longer idle by that fresh read.
+Past all of that, this check opens its **own** `events.reopened_run_scope(run)` (it has no request-scope of its
+own to reuse, unlike the `/stop` endpoint handler or the decision handler) and calls `stop_run` with
+`triggered_by="idle_timeout"` — **never** `mark_active` (research D26): an automatic stop, successful or not, is
+not one of FR-059's own accepted-exit kinds, so it must never reset the very clock it is itself reading. **A
+failed stop attempt is caught inside that scope, before it closes**, so the scope exits cleanly and writes nothing
+kept to the failing run's own log (never a kept `run.interrupted` for a mere stop attempt — which, with no
+backoff, would otherwise repeat on every retry and fill that run's own log toward its cap); the caught failure is
+then re-raised once the scope has already closed, reaching the same per-row handler any other row's own failure
+would. Any exception **raised by one run's own
+handling** is caught **per run**, logged as one catalogued `ERROR` line naming `run_id` and the exception's own
+class (never its text), and the tick continues to the next row. A failure **outside** any single run's own
+handling — the listing call itself raising, for instance — is caught **per iteration**, one level up in
+`idle_stop_loop`, logged the same way but with no `run_id` at all (never a literal `null`, since none is
+implicated); either way the background task itself survives for the next interval, never ending for the rest of
+the process's uptime — only `CancelledError` (teardown asking the task to stop) is let all the way through, never
+caught or logged as a failure, and teardown's own cancel-and-await is itself guarded the same way, so neither a
+clean cancellation nor an already-logged failure can escape and interrupt tracing shutdown. A run whose own stop
+attempt fails is retried, with no backoff, at every subsequent check for which it is still due — `mark_active` is
+never called for it either way, so a failed attempt never looks like fresh activity. `IDLE_CHECK_INTERVAL_S` is a
+small constant (a few minutes);
+`idle_stop_loop`'s own interval and `app_state.clock()` are both parameters with that constant and a real clock as
+their defaults — the one seam a test needs to drive many ticks and arbitrary idle times without a real sleep.
+
+**The setting (D28)**: `KESTREL_RESUME_IDLE_HOURS` is parsed by a new, narrower function than the existing
+`non_negative_float_or_off` (which permits zero and an `"off"` sentinel this setting has no use for) — strictly
+positive, finite, numeric, and no larger than `87,600` (ten years), or Kestrel refuses to start.
+`Settings.resume_idle_hours: float`, default `24`, reported on `GET /api/config` as `idle_hours` in its own new
+`resume` group — never folded into the existing `adaptive` group, which `test_api_config_adaptive.py` already
+asserts as an exact, closed object with no room for a new key.
+
+**The outcome (D29)**: `stop_run` gains `triggered_by: Literal["user", "idle_timeout"] = "user"` but **neither
+acquires a lease nor opens a scope of its own** — both belong entirely to whichever of its three callers reaches
+it (the `/stop` endpoint handler, the decision handler's own `"stop"` branch, or `check_idle_runs`), each already
+holding the lease and already inside its own open scope before calling in (the endpoint handler and
+`check_idle_runs` each open one immediately around their own call, having none already open; the decision handler
+reuses the one scope it already opened for the whole decision, `run.decided` included, rather than opening a
+second, nested one for a `"stop"` decision specifically) — so a manual Stop and an automatic one still log
+identically, a kept `run.stopped` and the scope's own eventual `run.end` either way, without `stop_run` itself
+needing to know which caller it was reached from. Each of the three branches keeps its own, already-correct
+`stopping_condition` and reason exactly as research D7/D11 define them — `triggered_by` only changes the
+**ordinary** branch's own reason text (the automatic sentence, reading `resume_idle_hours` at the moment of the
+stop, never a value captured at claim time, since the setting could change in between); the **reconciled** branch
+and the **no-checkpoint-or-unreadable** branch are completely untouched by it. `run.stopped`
+(`contracts/log-records-delta.md`) gains `trigger` (`"user"`/`"idle_timeout"`, always present) and `idle_hours`
+(present only when `trigger == "idle_timeout"`) — these two fields are the *only* place an automatic stop is
+actually named as such; nothing about `stopping_condition` or the stored `reason` changes shape because of them.
+
+**Visibility (D30)**: `idle_stop_at = max(last_activity_at + resume_idle_hours, app_state.started_at + min(1 hour,
+resume_idle_hours))` whenever classification currently reads `"paused"`, `"resumable"`, or `"stoppable"`, computed
+alongside `run_state` from the same classification call (never a second store read); `null` otherwise — the
+*earliest* time an automatic stop may happen, never a promise of exactly when (the real stop waits for the first
+tick that finds it idle past this, up to one check interval later). The second term of that `max()` matters
+precisely when a run is already overdue before a restart: without it, `idle_stop_at` would show a time already
+in the past throughout the grace period FR-059 itself grants it — exactly when a returning user most needs an
+honest deadline, not one that looks already missed. Because `uq_runs_active` limits a target to at most one
+`in_progress` run, a target's own run list shows this run, if it has one, **at the top of that one target's own
+list** — never a cross-target grouping, which this feature does not build; a stuck run on a *different* target is
+surfaced through a small cue on the target selector itself instead (D31). The UI test proving this (T063/T064)
+checks structurally — this run appears ahead of the rest of its own target's list, and shows its own
+`idle_stop_at` — never a hard-coded exact heading string, so a later wording tweak to either label does not break
+it, and never seeds two `in_progress` runs on one target, a shape `uq_runs_active` already forbids.
+
+**The selector cue is backed by a real API field, not a UI guess (D31)**: `GET /api/targets`'s own `TargetSummary`
+gains `needs_attention: bool` (FR-062) — `true` when that target's one possible `in_progress` run currently
+classifies `"paused"`, `"resumable"`, or `"stoppable"`; `false` when it has none, or that run is currently leased.
+Computed by calling the identical classification function (research D13) already used for `run_state`/
+`idle_stop_at`, over that one run if it exists — never a second, independent check, so the three fields can never
+disagree about the same run. `GET /api/targets` becomes `async def` for this, the same change research D14 already
+made to the run-detail and run-list endpoints for the identical reason. The UI reads this field alone for its cue
+— never a per-target `GET /api/targets/{id}/runs` call on every rerun, and never a guess from a field
+`TargetSummary` already carried, since the UI holds no logic of its own (CLAUDE.md).

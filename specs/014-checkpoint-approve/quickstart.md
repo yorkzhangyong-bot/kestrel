@@ -25,6 +25,15 @@ PowerShell, from the repo root. Needs `OPENROUTER_API_KEY` only for the HS-code 
    at all (a leased run displays neither Resume nor Stop) — to actually provoke the race, call
    `POST /api/runs/{id}/resume` twice back to back against the API directly. Confirm the second request gets a 409
    naming that the run is currently executing — never a second, concurrent execution.
+9. Set `KESTREL_RESUME_IDLE_HOURS=0.02` (72 seconds) and restart the API. Interrupt an adaptive run, restart again,
+   and leave Kestrel running. Within a few minutes, confirm the run is stopped automatically: `GET /api/runs/{id}`
+   shows it finished, its own `reason` names the automatic stop and the configured hours (never claiming a person
+   stopped it), and its run log (via the Log expander) shows a `run.stopped` line marked `trigger: "idle_timeout"`.
+   Confirm `GET /api/config` reports `idle_hours` in its own `resume` group. (The restart grace period
+   itself — `min(1 hour, the configured window)` — is too short at this tiny a window to observe separately from
+   the periodic check's own few-minute interval, which is already past it by the time the first tick ever runs;
+   `test_idle_clock.py`'s own simulated-clock test, T059, is what actually proves the grace period holds, including
+   at a window far larger than the check interval.) Set the variable back (or unset it) afterward.
 
 ## Part 2 — the approve node (User Story 2, User Story 3, User Story 4's part-2 half)
 

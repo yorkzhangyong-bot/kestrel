@@ -43,6 +43,13 @@ confused for each other:
    checkpoint are, by construction, exactly as FR-042 leaves them), and `error` carries the exception's class name.
    Replaces `run.end` for that exit (below) — never emitted alongside it.
 
+A failed automatic-stop attempt (FR-058) is deliberately **not** a third source: `check_idle_runs` catches that
+failure itself, inside the scope it opened around the attempt, before the scope can exit on it — so that scope
+closes cleanly and writes neither `run.interrupted` nor `run.end`. With no backoff on the retry, treating a failed
+attempt as source 2 would otherwise write a kept line into that run's own log on every tick until it is either
+fixed or fills the log toward its cap. The failure's only record is the unscoped `idle_stop.check_failed` line
+below.
+
 ## New: `run.resumed` (a resumable or paused run's resume/decision actually proceeds)
 
 | Field | Type | Meaning |
@@ -82,10 +89,44 @@ Emitted once per decision, before the run continues (or ends, for `stop`).
 | (scoped: `run_id`) | | |
 | `was_paused` | bool | whether the run was paused (the approve node's own Stop control) or merely resumable (the general way out) when stopped |
 | `reconciled` | bool | `true` when the run's graph had already reached its own end and Stop finished it with that outcome instead of `stopped_by_user`; `false` for the ordinary case |
+| `trigger` | str | `"user"` (a person clicked Stop, or decided `"stop"` on a paused turn) or `"idle_timeout"` (the automatic idle-stop check, FR-058) — always present |
+| `idle_hours` | float | the configured `KESTREL_RESUME_IDLE_HOURS` that elapsed — present **only** when `trigger == "idle_timeout"` |
 
-Emitted once, from the Stop handler itself — distinct from `run.decided`'s `"stop"` value, which covers only a
-paused run's Stop button reaching the same underlying mechanism; `run.stopped` is emitted either way, so a reader
-can find every Stop regardless of which control surfaced it.
+Emitted once, inside whichever scope its caller already has open when it calls into the shared `stop_run`
+mechanism — never a scope `stop_run` opens itself: the `/stop` endpoint handler and the automatic idle check
+(FR-058) each open one immediately around their own call, having no other scope open; the decision handler's own
+`"stop"` branch reuses the single scope it already opened for the whole decision (`run.decided` first), never a
+second, nested one. A manual Stop and an automatic one are kept the same way regardless of which of these three
+opened the scope. Distinct from `run.decided`'s `"stop"`
+value, which covers only a paused run's Stop button reaching the same underlying mechanism; `run.stopped` is
+emitted either way, so a reader can find every Stop regardless of which control surfaced it. `stopping_condition`
+on the run's own `run.end` line is **not** uniformly `"stopped_by_user"` — it is whatever that branch's own
+manual Stop would already record (`"stopped_by_user"` for the ordinary branch; the already-decided outcome's own
+value for the reconciled branch; `"interrupted"` for the no-checkpoint-or-unreadable branch, FR-060) — `trigger`
+(and `idle_hours` when it applies) is the one field that is *always* the automatic marker, regardless of which of
+those three values `stopping_condition` itself carries.
+
+## New: `idle_stop.check_failed` (one run's own failure, or one tick's own failure, never silences the periodic check)
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `run_id` | int \| *(omitted)* | the row the periodic idle-stop check (FR-058) was trying to stop when this failed; **omitted entirely** (never a literal `null`) for the one-level-up case below, which names no particular run |
+| `exc_type` | str | the escaped exception's own class name, **never its text** |
+
+Unscoped (the automatic check runs with no run's own logging scope open until it opens one itself, immediately
+around its own call into the shared stop mechanism, for a run it actually proceeds to stop). Two distinct sources:
+
+1. **One run's own attempt**, inside `check_idle_runs`'s own per-run handling: one line per run whose own attempt
+   raised anything other than `RunLeased` (which is the expected, silent skip-and-retry-next-tick case, and is
+   never logged at all) — `run_id` present.
+2. **A failure outside any single run's own handling** — for example, the call that lists candidate runs itself
+   raising — caught one level up, in `idle_stop_loop`, around the whole tick: `run_id` omitted, since none is
+   implicated.
+
+Logged at `ERROR` either way. Emitting this line, and continuing — to the next row for source 1, to the next tick
+for source 2 — is what keeps one run's own failure (for example, a person's Stop finishing it moments before the
+check's own lease attempt), or one tick's own entirely unrelated failure, from ending the periodic task for good,
+or from blocking every other row still due at that same tick.
 
 ## `run.end` — withheld only for a checkpointed, still-unfinished scope
 

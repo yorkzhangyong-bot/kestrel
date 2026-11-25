@@ -82,16 +82,17 @@ satisfy and so could never fail loudly) and verified to agree between `pyproject
 constants by a `tomllib`-based test, parsing a version as two or three dotted components (the declared upper bound
 `<1.3` itself has only two).
 
-**Storage**: One store (`kestrel.db`) — no second file, no second migration story. Additive only: four columns on
+**Storage**: One store (`kestrel.db`) — no second file, no second migration story. Additive only: five columns on
 `runs` (`ask_before_each_turn`; `is_checkpointed`, the claim-time flag that is the one and only classification
 input the sweep needs; `attacker_prompt_id`/`attacker_prompt_version`, new columns that pin a resumed run's
 attacker-prompt provenance — `judge_model`/`judge_prompt_id`/`judge_prompt_version` already exist as columns and
-simply gain a claim-time write path alongside their existing finish-time one), one unique index
+simply gain a claim-time write path alongside their existing finish-time one; `last_activity_at`, this run's own
+idle clock, touched only on an accepted lease release, research D26), one unique index
 (`uq_run_turns_position`, created inside the migration itself, after a check that refuses to start loudly if an
 existing database already holds a duplicate `(run_id, position)` pair — never in the database's initial schema
 script, which runs unconditionally before that check could ever see a duplicate), and two new tables for the custom
 saver itself (`checkpoints`, `checkpoint_writes`, the latter carrying a `task_path` column) — **no rebuild**:
-nothing here changes a `CHECK` constraint or a column's identity. All four new `runs` columns are added to
+nothing here changes a `CHECK` constraint or a column's identity. All five new `runs` columns are added to
 `RUNS_COLUMNS_SQL` itself, not only a later `ALTER`, so a fresh database and every future migration agree with what
 an `ALTER` produces on an existing one. A run's own turn row and its evidence items are now written in one atomic
 transaction, closing a gap where an interruption between two separate writes could leave a turn with no evidence,
@@ -177,9 +178,9 @@ entry needed.*
 | IV — secrets never leave the vault | Preserved by construction: the checkpointed state is exactly #49's existing conversation/counters, which already excludes every secret; the runtime context (which holds them) is never part of what a checkpointer persists, confirmed directly against the installed checkpoint shape. The configuration passed to look up a checkpoint carries nothing but the thread id (FR-004). ✓ |
 | V — learn from every run | Strengthened: write-back is now a property of the one shared function every finishing path calls (research D19), including the sweep's own reconciliation of a thread that reached its own end and a decision reaching a stopping point — not left to each call site to remember on its own; a pause explicitly writes back 0 times. ✓ |
 | VI — OWASP-mapped, fix-ready | Strengthened: the report now excludes every `in_progress` run (paused, resumable, or merely executing), the same way it already excludes a replay (research D25). ✓ |
-| VII — tests first, thin slices, one e2e | TDD per story; vertical slice store (four columns, one index, two tables) → saver → graph (the per-app copy, the `approve` node, the lease, Stop) → API (resume/decision/stop endpoints, the async sweep) → UI. One e2e attempted against the HS-code target; currently blocked by an OpenRouter guardrail change unrelated to this feature (CLAUDE.md gotcha, first recorded 2026-11-21, recurred 2026-11-24) — not a failure of this feature; part 1's own automated scenario is an offline, in-process one (two `create_app` instances, one database), since a browser test cannot restart Kestrel (FR-030, SC-010). ✓ |
+| VII — tests first, thin slices, one e2e | TDD per story; vertical slice store (five columns, one index, two tables) → saver → graph (the per-app copy, the `approve` node, the lease, Stop) → API (resume/decision/stop endpoints, the async sweep) → UI. One e2e attempted against the HS-code target; currently blocked by an OpenRouter guardrail change unrelated to this feature (CLAUDE.md gotcha, first recorded 2026-11-21, recurred 2026-11-24) — not a failure of this feature; part 1's own automated scenario is an offline, in-process one (two `create_app` instances, one database), since a browser test cannot restart Kestrel (FR-030, SC-010). ✓ |
 | VIII — only attack owned, hard caps | A resumable or paused run keeps its target locked for the entire gap, by the same mechanism that already enforces one active run per target (FR-015) — Stop (FR-040) is what releases it when nobody intends to continue. The turn/token/time caps are pinned at resume (FR-047), never loosened; the time limit's own accounting is corrected, not relaxed, to exclude only genuine downtime (FR-016, research D24). An execution lease additionally guarantees a run is never driven by two requests at once (FR-038). ✓ |
-| IX — simple for a vibe coder | Two new button pairs ("Resume"/"Stop"; "Approve"/"Run to end"/"Stop"), both driven entirely by fields the API already computes — no new settings screen, no checkpoint-backend chooser in the UI (Out of Scope). An unanswered pause has no invented timeout; Stop is the one, always-available way out of *any* resumable run, paused or not (FR-040). ✓ |
+| IX — simple for a vibe coder | Two new button pairs ("Resume"/"Stop"; "Approve"/"Run to end"/"Stop"), both driven entirely by fields the API already computes — no new settings screen beyond the one existing-style environment variable (`KESTREL_RESUME_IDLE_HOURS`), no checkpoint-backend chooser in the UI (Out of Scope). An unanswered pause has no *invented, pause-specific* timeout; it shares the one deployment-wide idle window every stuck run already does (FR-058), which exists so a single user is never left permanently locked out of a target by a run nobody can act on; Stop is the one, always-available *manual* way out of *any* resumable run, paused or not (FR-040). ✓ |
 | X — stack fixed; new dep needs justification | **No new dependency**, justified above and in `spec.md`'s Clarifications: a custom saver constructed with its own explicit serializer, reusing `langgraph-checkpoint`'s own serializer class, already installed transitively. Its own tables live inside `store.py`'s own schema; its own tested version range is pinned in one constant, checked against `pyproject.toml` by a test (FR-037). ✓ |
 
 ## Complexity Tracking
@@ -238,38 +239,66 @@ src/kestrel/
 │                                  #   (research D18); `aput_writes`'s replace/ignore rule + task_path (research
 │                                  #   D10); `SUPPORTED_LANGGRAPH_CHECKPOINT`/`SUPPORTED_LANGGRAPH` constants and
 │                                  #   `check_supported_versions()`; `thread_config`, `classify` (research D13), the
-│                                  #   per-app execution-lease helper (research D12)
+│                                  #   per-app execution-lease helper (research D12), whose own release now also
+│                                  #   calls `store.touch_last_activity(run_id)`, but only when `mark_active()` was
+│                                  #   called inside the `with` block — never on a refused exit (research D26)
 ├── store.py                        # additive schema bump (RUNS_COLUMNS_SQL itself, not only ALTER); the
 │                                  #   duplicate-(run_id,position) check inside _migrate, before the new index;
 │                                  #   runs.ask_before_each_turn/is_checkpointed/attacker_prompt_id/
-│                                  #   attacker_prompt_version; claim_run(...) gains these plus optional
-│                                  #   judge_model/judge_prompt_id/judge_prompt_version keywords, and rejects
-│                                  #   ask_before_each_turn=True for a non-adaptive mode; has_turn/
-│                                  #   add_turn_with_evidence (research D6); delete_checkpoint; the start-up
-│                                  #   sweep's own classification query (is_checkpointed rows only)
+│                                  #   attacker_prompt_version/last_activity_at (research D26); claim_run(...)
+│                                  #   gains these plus optional judge_model/judge_prompt_id/judge_prompt_version
+│                                  #   keywords, and rejects ask_before_each_turn=True for a non-adaptive mode; also
+│                                  #   gains an explicit now= keyword (default the real wall clock), passed
+│                                  #   app.state.clock() by the live run-start path so last_activity_at agrees with
+│                                  #   whatever clock a test substitutes; has_turn/add_turn_with_evidence
+│                                  #   (research D6); touch_last_activity (D26); delete_checkpoint; the start-up
+│                                  #   sweep's own classification query (is_checkpointed rows only, no idle-stop
+│                                  #   check of its own, research D27)
 ├── runs.py                        # execute_adaptive_run gains ask_before_each_turn/is_checkpointed/provenance-pin
-│                                  #   passthrough; new execute_resume/execute_decision/execute_stop, each
-│                                  #   funnelling through one shared finishing function (write-back once,
-│                                  #   checkpoint delete, lease release, research D19)
+│                                  #   passthrough; new execute_resume/execute_decision/stop_run (one name
+│                                  #   throughout — never a second name for this one function), each funnelling
+│                                  #   through one shared finishing function (write-back once, checkpoint delete, lease
+│                                  #   release, research D19); stop_run gains
+│                                  #   triggered_by: Literal["user", "idle_timeout"] = "user" but takes no lease and
+│                                  #   opens no scope of its own — both owned by whichever of its three callers
+│                                  #   reaches it (the /stop handler, the decision handler's "stop" branch, or
+│                                  #   check_idle_runs, research D29); new check_idle_runs (research D27), called
+│                                  #   **only** by lifespan's own periodic task, never the start-up sweep — it takes
+│                                  #   the lease and opens its own scope per row it actually stops, and never calls
+│                                  #   mark_active (research D26)
+├── settings.py                    # Settings.resume_idle_hours: float (default 24), a new, strictly-positive
+│                                  #   parser distinct from the existing non_negative_float_or_off (research D28),
+│                                  #   reported on GET /api/config
 ├── evidence/checker.py             # rebuild_live_checker (research D17): constructs the planted-override state
 │                                  #   directly from the stored token and its recorded prompt version, looked up
 │                                  #   against the run's own seed by its recorded prompt_id; note_sent gains
 │                                  #   emit_disarm_event (default True)
 ├── events.py                        # CATALOGUE: run.start's ask_before_each_turn omitted when false; new
 │                                  #   run.interrupted (kept, only for a checkpointed row, research D20),
-│                                  #   run.resumed (+from_step), run.paused, run.decided, run.stopped; run.end
-│                                  #   withheld only for a checkpointed, still-in_progress scope (research D21);
-│                                  #   whole-run accumulators (cost, tokens, time, dropped-line count) persisted in
-│                                  #   checkpointed state for a multi-segment run; RunLogHandler's seq continuation
-│                                  #   across a resume
+│                                  #   run.resumed (+from_step), run.paused, run.decided, run.stopped (+trigger,
+│                                  #   +idle_hours when automatic, research D29), idle_stop.check_failed (ERROR,
+│                                  #   per-run with run_id and per-iteration with run_id omitted, research D27);
+│                                  #   run.end withheld only for a
+│                                  #   checkpointed, still-in_progress scope (research D21); whole-run accumulators
+│                                  #   (cost, tokens, time, dropped-line count) persisted in checkpointed state for
+│                                  #   a multi-segment run; RunLogHandler's seq continuation across a resume
 ├── api/schemas.py                 # RunRequest + ask_before_each_turn; RunSummary/RunDetail +
-│                                  #   ask_before_each_turn/resumable/paused/pending_turn (with interrupt_id);
-│                                  #   DecisionRequest {turn, decision}
+│                                  #   ask_before_each_turn/resumable/paused/run_state/idle_stop_at/pending_turn
+│                                  #   (with interrupt_id, research D30); DecisionRequest {turn, decision};
+│                                  #   TargetSummary + needs_attention (research D31, FR-062)
 ├── api/main.py                    # the lifespan: construct the saver, run the version guard, build each app's own
-│                                  #   LIVE_GRAPH.copy(...), run the (now async, classifying) sweep, all before
-│                                  #   serving; POST /api/runs/{id}/resume, /decision, /stop; GET /api/runs/{id}
-│                                  #   and the run-list endpoint become async def; target_report filters to
-│                                  #   status == "finished" (research D25)
+│                                  #   LIVE_GRAPH.copy(...), run the (now async, classifying) sweep (unchanged by
+│                                  #   this addition — no idle-stop check of its own), capture app.state.started_at,
+│                                  #   start a periodic background task calling check_idle_runs on an interval
+│                                  #   (cancelled **and awaited** at teardown, guarded against both CancelledError
+│                                  #   and any other exception, research D27), all before serving;
+│                                  #   POST /api/runs/{id}/resume, /decision, /stop; GET /api/runs/{id} and the
+│                                  #   run-list endpoint become async def; GET /api/config reports
+│                                  #   resume_idle_hours as idle_hours in its own new resume group (never folded
+│                                  #   into adaptive, which a pre-existing test asserts as an exact, closed shape);
+│                                  #   target_report filters to
+│                                  #   status == "finished" (research D25); GET /api/targets becomes async def too,
+│                                  #   reporting needs_attention per target (research D31, FR-062)
 └── experiments/engine.py          # UNCHANGED — keeps calling bare, checkpointer-free LIVE_GRAPH directly
                                    #   (research D2); never sets is_checkpointed or ask_before_each_turn
 ui/
@@ -277,10 +306,15 @@ ui/
 │                                  #   timeout (both can drive a run all the way to completion); stop_run(run_id),
 │                                  #   its own short timeout (it never drives a run further, only ends it)
 └── app.py                        # the pending-turn display and its three (or two) controls, rendered on the run
-                                   #   page ahead of any early-return branch; a leased ("running") run shows
-                                   #   neither control pair; the run-list's own status reflects
-                                   #   resumable/paused/running where relevant; the STOPPED label table gains
-                                   #   "stopped_by_user"
+                                   #   page ahead of any early-return branch, from run_state alone (FR-054), with
+                                   #   idle_stop_at shown next to them whenever present; a leased ("running") run
+                                   #   shows neither control pair; a target's own run list shows its one
+                                   #   paused/resumable/stoppable run (if any) at the top of that list with its own
+                                   #   idle_stop_at (research D30 — never a cross-target grouping, since at most one
+                                   #   in_progress run exists per target); the target selector carries a small cue,
+                                   #   read directly from GET /api/targets's own needs_attention field (research
+                                   #   D31, FR-062), for a target whose run needs attention, so one on another
+                                   #   target stays visible; the STOPPED label table gains "stopped_by_user"
 docs/roadmap.md, CLAUDE.md, README.md   # part 1's docs task: rename "014 — Community prompt feed" to "015" in
                                    #   living documentation only — never a merged feature's own historical spec
                                    #   (FR-028); part 2's docs task: move "LangGraph idioms" to Done; a CLAUDE.md

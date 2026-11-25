@@ -43,6 +43,14 @@ allows keeps changing); that is not a failure of this feature. Open a spec-only 
   worktree has `4.3.0`, so adopting it would also have forced a `langgraph-checkpoint` bump) — three new or bumped
   dependencies for a package whose own correctness Kestrel would still be trusting sight unseen, against exactly
   the failure mode (a crash) this feature exists to survive.
+- **Owner review of spec pull request #55 (2026-11-25), verbatim**: "changes: a paused or crashed run that nobody
+  acts on is stopped automatically after a configurable idle time (KESTREL_RESUME_IDLE_HOURS, default 24), with the
+  same outcome as a manual Stop and a log line saying it was automatic. Until then, behaviour stays as specified.
+  The run list shows paused and crashed runs prominently." This adds FR-057 to FR-061 and SC-021/SC-022, all
+  carried as part 1 (the mechanism checks every classification this feature already defines as holding a target
+  locked waiting for a person — paused, resumable, or stoppable — but "paused" itself is unreachable until part 2's
+  approve node ships, the same way `run_state`'s own "paused" value already was, FR-054); part 2 adds only the
+  test proving a paused run is caught by the same, already-generic mechanism once pausing exists.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -142,8 +150,8 @@ both fail cleanly with nothing additional sent.
 4. **Given** a paused run, **When** the user clicks **Stop**, **Then** the run ends immediately without sending the
    pending message, recorded as stopped by the user, distinguishably from a turn/token/time cap being hit.
 5. **Given** a paused run, **When** nobody answers for any length of time, **Then** the run simply stays paused —
-   its time limit does not advance while it waits — until a decision is made; there is no separate timeout that
-   stops it on its own.
+   its time limit does not advance while it waits — until a decision is made, an explicit Stop, or the automatic
+   stop after `KESTREL_RESUME_IDLE_HOURS` of nobody acting on it (FR-058).
 6. **Given** a paused run, **When** the user tries to start a new run or a replay against the same target, **Then**
    Kestrel refuses, exactly as it refuses against any other run already in progress.
 7. **Given** the checkbox unticked, **When** an adaptive run is started, **Then** it never pauses, and behaves
@@ -277,6 +285,18 @@ this feature adds.
 - **Nothing persisted for this feature may ever contain a secret**: an auth header value, the target's URL, or its
   display name must never appear in a checkpoint, the run log, or any event line this feature adds — the same bar
   every other store and log boundary in this project already holds itself to (Principle IV).
+- **A paused, resumable, or stoppable run that nobody acts on for the configured idle window**: Kestrel stops it
+  automatically, with the identical outcome a manual Stop on the same persisted state would have produced — for
+  two of the three shapes that outcome matches in every field; for the one shape that was never already decided,
+  only its own reason text differs, naming the automatic stop instead of a person — plus the log line's own
+  automatic marker, present in every shape regardless (FR-057 to FR-060) — never left to sit open, holding its
+  target locked, indefinitely.
+- **The idle window is measured in wall-clock hours since the run's own last activity, never reset by a restart
+  beyond the one short, fixed grace period**: a restart does **not** grant an already-stuck run a fresh, full
+  window of its own — only the lesser of one hour or the configured window, after which the first periodic check
+  stops it if it is still overdue (FR-059). This is deliberate: an install whose own uptime pattern is shorter than
+  the configured window (stopped every evening, started every morning, say) must still eventually free a run
+  nobody is acting on, which a window that reset on every restart could never do.
 
 ## Requirements *(mandatory)*
 
@@ -378,8 +398,14 @@ this feature adds.
   it was somehow already recorded) and MUST then finish the row with that already-decided outcome, the same way the
   start-up sweep would reconcile a thread that reached its own end, never with a fresh `stopped_by_user` verdict:
   a deterministic confirmation already reached MUST NOT be silently discarded just because Stop was the path that
-  ended the run (Principle II). This MUST be the one documented way out of a resumable run that is not paused —
-  resuming one whose own crash cause keeps recurring would otherwise have no escape short of deleting its target.
+  ended the run (Principle II). This MUST be the one documented *manual* way out of a resumable run that is not
+  paused — resuming one whose own crash cause keeps recurring would otherwise have no escape short of deleting its
+  target or waiting out the configured idle window, which reaches this identical mechanism automatically (FR-058).
+  Because the dedicated endpoint, a decision resolved as Stop (FR-023), and the automatic idle check (FR-058) each
+  already hold the run's own execution lease (FR-038) before reaching this mechanism, this mechanism itself MUST
+  NOT attempt to acquire a second lease on the same run — doing so would make a call from any of those three
+  indistinguishable from a genuinely conflicting concurrent request, refusing to run at all and silently turning
+  the caller into a no-op.
 - **FR-041**: Resuming or deciding a run MUST be refused, before anything is sent, by the same preconditions a
   fresh run already enforces — the target's permission box confirmed, its terms of service current, an attacker
   model configured, and the attack library available — using the same codes and messages `POST /api/runs` already
@@ -424,8 +450,9 @@ this feature adds.
 - **FR-015**: A run sitting resumable or paused MUST keep its target locked for the entire time it sits
   `in_progress` — including the time between an interruption and its resume, or a pause and its decision — so that
   no other run or replay may be claimed against that target meanwhile. This MUST be the same mechanism that already
-  locks a target for any `in_progress` run today (one active run per target), not a new one; Stop (FR-040) is what
-  releases it when nobody intends to continue the run.
+  locks a target for any `in_progress` run today (one active run per target), not a new one; a manual Stop
+  (FR-040), or the automatic stop after the configured idle window (FR-058), is what releases it when nobody
+  intends to continue the run.
 - **FR-016**: A run's time limit MUST be measured as the wall-clock time actually spent executing it — the sum of
   every invocation's own elapsed time, from when that invocation started running the graph to when it next stopped
   (a finish, a pause, or a cut) — never wall-clock time elapsed since the run was first claimed. Only the gaps
@@ -470,9 +497,10 @@ this feature adds.
   row is finished directly, without ever resuming its graph (so the pending message is never sent), recorded with
   its own distinct stopping condition, and with whatever verdict the run had already reached from an earlier,
   judged turn, if any — `unclear` otherwise.
-- **FR-024**: While a run is paused and nobody has yet decided it, it MUST simply remain paused, for any length of
-  time, with no separate timeout of its own that resolves it automatically — consistent with FR-016, its time limit
-  does not advance while it waits. Only a user's own decision, or an explicit Stop, ends the wait.
+- **FR-024**: While a run is paused and nobody has yet decided it, it MUST simply remain paused — consistent with
+  FR-016, its time limit does not advance while it waits — until a decision, an explicit Stop, or the automatic
+  stop after `KESTREL_RESUME_IDLE_HOURS` (FR-058) ends the wait; there MUST be no second, separate timeout of this
+  feature's own invention beyond that one, configurable window.
 - **FR-025**: Starting an adaptive run MUST stay synchronous, exactly as it is today: the request completes once the
   run reaches its first stopping point — a pause (FR-019), a finish, or a refusal — with no separate
   poll-for-progress step. Resuming (FR-014), deciding a paused turn (FR-021 to FR-023), and stopping (FR-040) MUST
@@ -581,12 +609,115 @@ this feature adds.
   own close of that identical shape exactly — the same recorded reason text, and no write-back attempt — never
   merely a close that is similar in spirit.
 
+**Automatic stop after idle time (owner review, PR #55)**
+
+- **FR-057**: Kestrel MUST read a configurable idle window, `KESTREL_RESUME_IDLE_HOURS` (hours, decimals allowed,
+  default `24`), naming how long a run may sit paused, resumable, or stoppable with nobody acting on it before
+  Kestrel stops it automatically. A non-positive, non-finite, or non-numeric value MUST refuse to start, the same
+  way every other such setting already does; so MUST a value above a stated bound of `87,600` hours (ten years) —
+  not chosen because of any arithmetic limit (`idle_stop_at`'s own addition does not overflow until far past this
+  point), but as a deliberate policy ceiling: a window this large has no honest use as "a configurable number of
+  hours," and is really an attempt to disable the automatic stop outright, which this setting does not offer. The
+  configured value MUST be reported on `GET /api/config`, as `idle_hours` in its own `resume` group — never
+  folded into the existing `adaptive` group, which a pre-existing test already asserts as a closed, exact-shape
+  object with no room for a new key.
+- **FR-058**: Kestrel MUST periodically check every `in_progress`, `is_checkpointed` run whose classification
+  currently reads `"paused"`, `"resumable"`, or `"stoppable"` — never one that reads `"running"` (currently
+  leased) — and automatically stop one that has been idle at least the configured window, through the exact
+  mechanism FR-040, FR-051, and FR-056 already define for a manual Stop, recording exactly what that same manual
+  mechanism would have recorded for the identical persisted state (FR-060). This check MUST run periodically for
+  as long as the API process stays up, on an interval short relative to the configured idle window (for example, a
+  few minutes against a default of 24 hours); it MUST NOT run as a separate, one-time pass during the start-up
+  sweep — the first periodic check after the restart grace period (FR-059) already covers a run that became
+  overdue while the process was down, so a second, start-up-only pass would be redundant and would, in fact, never
+  find anything left to stop (every reached-end, no-checkpoint, and unreadable row has already been reconciled or
+  closed by the sweep's own classification before any idle check could run). Each run MUST be re-checked, fresh,
+  under its own execution lease — re-read, re-classified, and re-measured for idleness from its current
+  `last_activity_at` — immediately before Kestrel acts on it, since time passes between when a check first reads a
+  run and when it acquires that run's lease; a run no longer `in_progress`, no longer one of the three idle-eligible
+  classifications, or no longer idle by that fresh measurement MUST be left alone. A run already leased by another
+  request at the moment of the check MUST be skipped, never waited for, and reconsidered at the next check. This
+  automatic check MUST never hold a run's lease for longer than performing that one Stop takes, and MUST answer
+  nothing to any caller — it is not a response to any request. A failure stopping one run (for example, a person's
+  own Stop request having just finished that same run first) MUST NOT stop the check from considering every other
+  run due at that same check, or from running again at the next interval — one run's own failure MUST be logged by
+  kind, never silencing the mechanism for the rest of the process's uptime. This per-run failure MUST leave nothing
+  kept on the failing run's own log — the unscoped line above is the entire record of it; a failed attempt MUST NOT
+  be treated as an interruption of that run, which (with no backoff, below) would otherwise write a kept line on
+  every retry and fill that run's own log toward its cap purely from repeated automatic-stop failures, never from
+  anything the run itself did. A failure outside any single run's own
+  handling — for example, the call that lists candidate runs itself failing — MUST be isolated the same way, at
+  the level of one periodic check as a whole: that one check then stops nothing, but the background task itself
+  MUST keep running and MUST check again at the next interval, with this failure, too, logged by kind. A run whose
+  own automatic stop attempt fails MUST NOT be excused from the next check by that failure: with no backoff of any
+  kind, it MUST be reconsidered, and retried, at every subsequent check until it either succeeds or the run is no
+  longer eligible some other way.
+- **FR-059**: A run's idle time MUST be measured as the wall-clock time elapsed since the moment its own execution
+  lease was last released *on an accepted exit* — pausing, an in-process error the process survives, or a
+  resume/decision/stop request the API actually accepted (one that is not itself refused, for example by a `409`,
+  which MUST NOT reset this time) — reaching a stopping point that still leaves the run paused, resumable, or
+  stoppable again. The automatic stop itself (FR-058) is deliberately never one of these accepted exits, whether
+  it succeeds or fails: it MUST NOT update this timestamp — a successful automatic stop finishes the run, so its
+  idle clock no longer matters, and a failed one MUST remain exactly as overdue as it already was, so the next
+  periodic check retries it immediately, logging that failure each time (FR-058), rather than silently deferring
+  the retry by a full window's worth of newly-reset idle time. A genuine process death updates nothing (nothing
+  runs to record it), so a run whose process died MUST NOT be measured as having gone idle at that instant; instead, to protect such a run from being stopped
+  the moment Kestrel restarts for idle time that really only reflects the process being down, no automatic stop
+  MUST happen within a short, fixed grace period of the API process's own start — the lesser of one hour and the
+  configured window, never itself configurable. The first periodic check (FR-058) after that grace period elapses
+  MUST still catch any run that became overdue while the process was down, so that a run is always freed
+  eventually, whatever pattern of restarts a deployment happens to have — never measured from, or reset by, the
+  process's own start time beyond that one bounded grace period.
+- **FR-060**: An automatic stop MUST produce, for whichever of the three shapes FR-040/FR-051/FR-056 already
+  define a manual Stop can find, exactly what that same shape's own manual branch records — never a single,
+  uniform outcome applied regardless of shape:
+  - the ordinary shape (no outcome of its own yet) MUST record `stopping_condition: "stopped_by_user"`, with the
+    run's own reason instead saying plainly that Kestrel stopped it automatically after the configured number of
+    hours with nobody acting on it, so the run's own page never reads as if a person stopped it;
+  - the reconciled shape (the graph already reached its own end, or a turn's outcome was already decided but not
+    yet durably recorded) MUST record that decided outcome's own `stopping_condition` and its own reason, both
+    completely unchanged by being triggered automatically — the whole point of this shape is that it is never
+    `stopped_by_user` at all, manually or automatically, and an automatic trigger MUST NOT make it one;
+  - the no-checkpoint-or-unreadable shape MUST record `stopping_condition: "interrupted"` with the exact reason
+    text FR-056 already defines for it, unchanged — never the automatic sentence, since this shape already has its
+    own fixed, distinct explanation.
+  In every one of the three shapes, the `run.stopped` log line MUST additionally carry a field naming that this
+  particular stop was automatic, and the configured hours that elapsed, so a reader of the log can always tell an
+  automatic stop from a manual one there, regardless of which shape's own `stopping_condition`/reason it produced.
+- **FR-061**: `RunSummary`/`RunDetail` MUST expose `idle_stop_at` — the earliest time, on the same clock an
+  automatic stop itself uses, at which Kestrel may stop this run automatically if nothing changes before then (the
+  actual stop happens at the first check at or after that time, never exactly at it, up to one check interval
+  later). This time MUST itself respect the restart grace period (FR-059): it is whichever is **later** of
+  `last_activity_at` plus the configured window, and the API process's own `started_at` plus that same short,
+  fixed grace period — never a time already in the past while that grace period is still running, which would
+  otherwise show a returning user a deadline that looks already missed during the one window they most need to act
+  within. It is present whenever the run's own classification currently reads `"paused"`, `"resumable"`, or
+  `"stoppable"`, and `null` otherwise. A target's own run list MUST show such a run, if it has one, at the top of
+  that list, with its own `idle_stop_at`; since at most one `in_progress` run ever exists per target (FR-015), this
+  is never a cross-target grouping — a run on a *different* target that needs attention MUST still be visible some
+  other way: a cue on the target selector itself, backed by the `needs_attention` field FR-062 defines, so it is
+  never only discoverable by opening that other target directly. The run's own page MUST show the identical time
+  next to its controls.
+- **FR-062**: `GET /api/targets`'s own `TargetSummary` MUST expose `needs_attention` (bool), computed from the
+  same per-run classification FR-054 already performs on that target's one possible `in_progress` run, if it has
+  one: `true` when that run currently reads `"paused"`, `"resumable"`, or `"stoppable"`; `false` otherwise —
+  including when the target has no `in_progress` run at all, or that run is currently leased. This is the one fact
+  the target-selector cue FR-061 requires MUST be built from; since the UI holds no logic of its own (CLAUDE.md),
+  it MUST NOT derive this by any other means — neither a separate per-target call nor a guess from a field
+  `TargetSummary` already carries. `GET /api/targets` MUST become asynchronous to compute it. `TargetDetail` (which
+  extends `TargetSummary`) MUST expose this identical, identically computed field too — never left as a required
+  field with no value to compute on a single-target response, and never defaulted to `false` there independently
+  of the list's own value — so a target's own detail page and its row on the target list can never disagree about
+  whether it needs attention.
+
 **Delivery: two pull requests, one spec**
 
 - **FR-027**: This feature MUST ship as two pull requests after this spec merges: the checkpointer (part 1, User
   Story 1 and the parts of User Story 4 that concern it) first, the approve node (part 2, User Story 2, User Story
   3, and the rest of User Story 4) second — each independently tested and independently mergeable, with no
-  user-facing change to existing behaviour from part 1 alone beyond what User Story 1 and FR-013/FR-014 describe.
+  user-facing change to existing behaviour from part 1 alone beyond what User Story 1, FR-013/FR-014, and the
+  automatic idle stop (FR-057 to FR-062, added to part 1 by a later owner review and the review rounds that
+  followed it) describe.
 - **FR-028**: Part 1's own documentation task MUST rename the roadmap's planned **"Feature 014 — Community prompt
   feed"** entry to **"Feature 015"**, and any other reference to it as 014 in the project's own living documentation
   (the roadmap, the README, CLAUDE.md, and the rest of `docs/`), since this spec claims the number 014 for itself.
@@ -611,8 +742,8 @@ this feature adds.
   - it is now checkpointed and, if interrupted — by a process death or by an unhandled in-process error alike —
     resumable at once rather than left stuck `in_progress` until the next restart, or closed unconditionally by one
     (FR-001, FR-013, FR-042);
-  - above all, **its target now stays locked across a restart until someone explicitly resumes or stops it**
-    (FR-015, FR-040), where today a restart always released it immediately;
+  - above all, **its target now stays locked across a restart until someone explicitly resumes or stops it, or
+    the automatic idle stop does** (FR-015, FR-040, FR-058), where today a restart always released it immediately;
   - its time limit is now measured as time actually spent executing, excluding any interruption or pause gap,
     rather than wall-clock time since claim (FR-016);
   - `RunSummary`/`RunDetail`, for every run of every mode, gain the fields FR-014/contracts/api.md define
@@ -622,7 +753,13 @@ this feature adds.
     replay (FR-050);
   - `run.end` keeps today's rule — emitted on every scope's own exit — for every run **except** a checkpointed
     adaptive run whose scope ends without the row being finished (a pause, or any interruption): for that one case
-    only, `run.end` is withheld until whichever later request actually finishes the run (FR-046).
+    only, `run.end` is withheld until whichever later request actually finishes the run (FR-046);
+  - a run left paused, resumable, or stoppable with nobody acting on it is now stopped automatically after a
+    configurable idle window (FR-058), with the identical outcome a manual Stop would have produced; its
+    `RunSummary`/`RunDetail` additionally gain `idle_stop_at` (FR-061), and the run list shows it at the top of its
+    target's own list while that is true;
+  - `GET /api/targets` becomes asynchronous, and every target's own `TargetSummary`/`TargetDetail` gains
+    `needs_attention` (FR-062), the fact the target selector's own cue is built from.
   A swept `in_progress` row that is **not** checkpointed (a single-turn run, a replay, an experiment repetition)
   gains none of this: it is closed exactly as today, with no new kept line and no new field behaviour beyond the
   always-present, always-`false` fields above.
@@ -750,6 +887,21 @@ this feature adds.
   attacker/judge provenance, never a changed current configuration, 100% of the time; a resume or decision whose
   pinned model or prompt version is no longer available is refused with a message naming the problem, and Stop
   still succeeds in that case (FR-047).
+- **SC-021**: Across the offline test suite, using a simulated clock: a run idle for less than the configured
+  window is never auto-stopped, 100% of the time; one idle for at least that long is auto-stopped with the
+  identical outcome a manual Stop on the same persisted state would produce — for the reconciled and
+  no-checkpoint-or-unreadable shapes, every field, with no exception; for the ordinary shape, every field except
+  its own reason text, which instead names the automatic stop and the configured hours — with `run.stopped`
+  additionally carrying the automatic trigger and the elapsed hours in every shape, 100% of the time; a
+  currently-leased run is skipped at a check and reconsidered at the next one, 100% of the time; and a simulated
+  restart never auto-stops an already-overdue run within the shorter of one hour or the configured window of the
+  new process's own start time, but does stop it at the first check at or after that grace period elapses, 100% of
+  the time (FR-058, FR-059, FR-060).
+- **SC-022**: Across the offline test suite, a paused, resumable, or stoppable run's `idle_stop_at` matches its
+  own computed idle deadline exactly (grace period included), and is `null` for every run outside those three
+  classifications, 100% of the time; that run's own target's run list (at its top) and the run's own page both
+  show it (FR-061); a target other than the one currently open, with such a run of its own, reports
+  `needs_attention: true` from `GET /api/targets`, 100% of the time (FR-062).
 
 *Note on FR-046*: the requirement that `run.end` is emitted exactly once, with whole-run totals, and that a
 resumed turn reopens its own context, is measured by SC-017 and SC-018 together — no separate SC is needed beyond
@@ -768,10 +920,12 @@ them.
 - A paused run and a merely-interrupted (crashed) run share one mechanism — the checkpointer — and differ only in
   whether the loaded checkpoint holds a pending decision (User Story 3); the approve node is built on the
   checkpointer, not beside it.
-- Kestrel's primary user runs it single-user (Principle IX); an unanswered pause has no invented server-side
-  timeout of its own because there is no second user it would be protecting from the wait — the user's own Stop
-  action is the only bound, by design (FR-024). This is independent of whether a given deployment runs in local or
-  hosted mode (`KESTREL_MODE`); nothing about this feature assumes one or the other.
+- Kestrel's primary user runs it single-user (Principle IX); an unanswered pause has no *second*, separate
+  server-side timeout of its own, beyond the one configurable idle window every paused/resumable/stoppable run
+  already shares (FR-058) — there is no second user a shorter, pause-specific timeout would be protecting from the
+  wait. A user's own decision, an explicit Stop, or that automatic stop are the only three bounds, by design
+  (FR-024). This is independent of whether a given deployment runs in local or hosted mode (`KESTREL_MODE`);
+  nothing about this feature assumes one or the other.
 - The custom-saver decision (Clarifications) and its one-line Principle X justification are carried into
   `plan.md`'s Constitution Check and Technical Context.
 - The roadmap bookkeeping the owner specified (renaming the planned "014 — Community prompt feed" to "015"; moving
@@ -783,7 +937,10 @@ them.
 
 - Resuming a replay, an experiment repetition, or a single-turn run (FR-001, FR-032).
 - Any change to how the experiment harness's own batch loop handles a crashed repetition.
-- A configurable timeout for an unanswered pause (FR-024) — Stop is the only bound there. For how long an
+- A timeout for an unanswered pause *shorter or separate from* the one, deployment-wide idle window every
+  paused/resumable/stoppable run already shares (FR-058) — there is exactly one configurable window
+  (`KESTREL_RESUME_IDLE_HOURS`), set per deployment, never per run or per pause; FR-024's own bound is that one
+  window, a user's own decision, or an explicit Stop, never a fourth, pause-specific mechanism. For how long an
   execution lease itself is held, there is no configurable timeout either, but Stop is **not** the bound in this
   case: Stop is itself refused (`409 run_executing`) while a run's lease is held, exactly like any other request
   about that run, so a request that hangs while holding the lease is bounded only by whatever per-call timeouts
@@ -792,6 +949,11 @@ them.
   Approve, Run to end and Stop are the only three decisions; there is no "edit and resend."
 - A UI control for choosing or configuring the checkpoint storage mechanism — that is an environment/settings
   concern (if any), never a per-run form field.
+- A per-run override of the idle window, or a UI control for changing `KESTREL_RESUME_IDLE_HOURS` — one setting
+  for the whole deployment, the same way every other environment-level setting this project already has works.
+- A user-facing warning or notification *before* an idle run is auto-stopped (an email, a toast, anything
+  time-based beyond `idle_stop_at` itself being visible) — the run list and the run page already show the
+  deadline; nothing else counts it down or alerts on it.
 - Extending resumability or the approve node to the HS-code target's own conversational loop — that target's agent
   is what is being attacked, not Kestrel's own attacker.
 - Any new history, time-travel, or audit view over a run's own sequence of checkpoints — the saver implements the
