@@ -4,6 +4,8 @@ Covers the pure mirrors `next_action` and `already_fresh` (contracts/pr-rules.md
 `run_recheck()` orchestration against a stub, injected API client - no network, no `gh`. A `_FakeClock` stands in
 for `time.sleep`/`time.monotonic` so a 30-minute budget runs in microseconds of real test time.
 """
+import json
+
 import pytest
 
 import qa_recheck as qr
@@ -120,6 +122,11 @@ FRESHNESS_CASES = [
     ("2026-11-24T10:00:00Z", "", False),
     ("not a timestamp", "2026-11-24T10:00:00Z", False),
     ("2026-11-24T10:00:00Z", "not a timestamp", False),
+    # review finding 5: a naive timestamp beside an aware one raises TypeError on `>=` in the stdlib; treated as
+    # unparsable instead (never raises).
+    ("2026-11-24T10:00:00Z", "2026-11-24T10:00:00", False),   # created naive, attempt aware
+    ("2026-11-24T10:00:00", "2026-11-24T10:00:00Z", False),   # attempt naive, created aware
+    ("2026-11-24T10:00:00", "2026-11-24T10:00:00", False),    # both naive
 ]
 
 
@@ -185,7 +192,45 @@ def test_refused_then_reread_shows_completed_is_final_posts_the_comment_exits_1(
     assert len(client.comments) == 1
     assert "stale" in client.comments[0].lower()
     assert "refused" in client.comments[0]
+    assert "do not merge" in client.comments[0].lower()   # finding 3: the contract's merge-rule sentence
     assert "VERDICT: PASS" not in client.comments[0] and "VERDICT: FAIL" not in client.comments[0]
+
+
+def test_refusal_then_a_fresh_job_on_the_resumed_run_skips_the_second_post():
+    """Review finding 1: the retry after a refusal must go back through step 3 (re-fetch the job) and step 4a
+    (redo already_fresh) before any new POST - never re-POST the job id captured before the other attempt ran."""
+    job_before = qr.JobInfo(job_id="9", started_at="2026-01-01T00:10:00Z")
+    job_after = qr.JobInfo(job_id="99", started_at="2026-01-01T00:30:00Z")   # a new attempt's job, started later
+    client = StubClient(
+        get_job=_sequence(job_before, job_after),
+        get_recheck_run_created_at=_sequence("2026-01-01T00:20:00Z"),
+        get_run=_sequence("in_progress", "completed"),   # the post-refusal re-read, then the resumed poll
+        request_rerun=_sequence("refused"),
+    )
+    code, _ = _run(client)
+    assert code == 0
+    assert client.comments == []
+    assert client.request_rerun.calls == 1   # never re-POSTed once the re-fetched job is fresh
+    assert client.get_job.calls == 2         # re-fetched, not reused
+
+
+def test_request_rerun_error_is_retried_via_a_reread_then_accepts():
+    client = StubClient(request_rerun=_sequence(qr.RecheckApiError("boom"), "accepted"))
+    code, _ = _run(client)
+    assert code == 0
+    assert client.comments == []
+    assert client.request_rerun.calls == 2
+
+
+def test_error_on_the_post_refusal_reread_is_retried_then_accepts():
+    client = StubClient(
+        get_run=_sequence(qr.RecheckApiError("boom"), "completed"),
+        request_rerun=_sequence("refused", "accepted"),
+    )
+    code, _ = _run(client)
+    assert code == 0
+    assert client.comments == []
+    assert client.request_rerun.calls == 2
 
 
 def test_budget_exhausted_while_waiting_posts_the_comment_reason_timeout_exits_1():
@@ -280,8 +325,10 @@ def test_the_comment_post_is_retried_once_before_giving_up():
     assert code == 1
     assert client.comments == ["The `traceability` check's result for this commit may be stale (reason: "
                                 "refused - the re-run request was refused and no new attempt started). "
-                                "Refresh it with a push, or a manual re-run of the `traceability` job, "
-                                "before merging."]
+                                "Refresh it with a push, or a manual re-run of the `traceability` job. Do not "
+                                "merge before a `traceability` attempt that started after this comment has "
+                                "passed - a push, a manual re-run, or a later automatic recheck re-run all "
+                                "count."]
 
 
 def test_the_comment_post_failing_twice_still_exits_1_without_raising():
@@ -290,3 +337,110 @@ def test_the_comment_post_failing_twice_still_exits_1_without_raising():
     code, _ = _run(client)
     assert code == 1
     assert client.comments == []
+
+
+# ---- RecheckApiClient: the real client, subprocess.run monkeypatched (review findings 2 and 6) ----
+
+class _Done:
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _client() -> qr.RecheckApiClient:
+    return qr.RecheckApiClient("o/r", "51", "777")
+
+
+def test_request_rerun_201_is_accepted(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0))
+    assert _client().request_rerun("9") == "accepted"
+
+
+def test_request_rerun_403_is_refused(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run",
+                        lambda *a, **k: _Done(1, stderr="gh: This workflow is already running (HTTP 403)"))
+    assert _client().request_rerun("9") == "refused"
+
+
+@pytest.mark.parametrize("stderr", ["gh: Bad Gateway (HTTP 502)", "error connecting to api.github.com",
+                                    "gh: Not Found (HTTP 404)"])
+def test_request_rerun_anything_else_raises(monkeypatch, stderr):
+    # Finding 2: the endpoint documents only 201 and 403; a 5xx, a network error, 401/404/422 etc. must raise
+    # RecheckApiError (retried as run_status="error"), never be read as "refused".
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(1, stderr=stderr))
+    with pytest.raises(qr.RecheckApiError):
+        _client().request_rerun("9")
+
+
+def test_request_rerun_timeout_raises(monkeypatch):
+    def raise_timeout(*args, **kwargs):
+        raise qr.subprocess.TimeoutExpired(cmd="gh", timeout=30)
+    monkeypatch.setattr(qr.subprocess, "run", raise_timeout)
+    with pytest.raises(qr.RecheckApiError):
+        _client().request_rerun("9")
+
+
+@pytest.mark.parametrize("stdout", [
+    "[]",                                     # a JSON array, not an object
+    "{}",                                     # an object without workflow_runs
+    '{"workflow_runs": null}',                # workflow_runs present but null
+    '{"workflow_runs": [{"id": 5}]}',         # a run entry missing status
+])
+def test_get_latest_run_raises_on_a_malformed_2xx_body(monkeypatch, stdout):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, stdout))
+    with pytest.raises(qr.RecheckApiError):
+        _client().get_latest_run("abc")
+
+
+def test_get_latest_run_returns_none_for_a_genuinely_empty_list(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, '{"workflow_runs": []}'))
+    assert _client().get_latest_run("abc") is None
+
+
+def test_get_latest_run_parses_a_well_formed_run(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run",
+                        lambda *a, **k: _Done(0, '{"workflow_runs": [{"id": 5, "status": "completed"}]}'))
+    assert _client().get_latest_run("abc") == qr.RunInfo(run_id="5", status="completed")
+
+
+@pytest.mark.parametrize("stdout", ["[]", "{}"])
+def test_get_run_raises_on_a_malformed_2xx_body(monkeypatch, stdout):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, stdout))
+    with pytest.raises(qr.RecheckApiError):
+        _client().get_run("5")
+
+
+def test_get_run_parses_status(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, '{"status": "in_progress"}'))
+    assert _client().get_run("5") == "in_progress"
+
+
+@pytest.mark.parametrize("stdout", ["[]", "{}"])
+def test_get_job_raises_on_a_malformed_2xx_body(monkeypatch, stdout):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, stdout))
+    with pytest.raises(qr.RecheckApiError):
+        _client().get_job("5", "traceability")
+
+
+def test_get_job_returns_none_for_a_genuinely_missing_job(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run",
+                        lambda *a, **k: _Done(0, json.dumps({"jobs": [{"id": 9, "name": "quality"}]})))
+    assert _client().get_job("5", "traceability") is None
+
+
+def test_get_job_parses_a_matching_job(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(
+        0, json.dumps({"jobs": [{"id": 9, "name": "traceability", "started_at": "x"}]})))
+    assert _client().get_job("5", "traceability") == qr.JobInfo(job_id="9", started_at="x")
+
+
+def test_get_recheck_run_created_at_raises_on_a_malformed_2xx_body(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, "{}"))
+    with pytest.raises(qr.RecheckApiError):
+        _client().get_recheck_run_created_at()
+
+
+def test_get_recheck_run_created_at_parses_a_well_formed_body(monkeypatch):
+    monkeypatch.setattr(qr.subprocess, "run", lambda *a, **k: _Done(0, '{"created_at": "2026-11-24T10:00:00Z"}'))
+    assert _client().get_recheck_run_created_at() == "2026-11-24T10:00:00Z"

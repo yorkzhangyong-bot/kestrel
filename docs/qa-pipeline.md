@@ -106,14 +106,19 @@ current commit, and only when the PR **body** actually changed or the `refactor`
 removed**; a title or base-branch edit, or any other label, re-runs nothing. `quality` and `review` never re-run
 for these events.
 
+**No QA run to refresh.** When there is no `qa.yml` run yet for the commit (a merge conflict), or the only one has
+not started for lack of approval, the recheck has nothing to re-run: it logs a notice and exits 0, touching
+nothing.
+
 **If the recheck cannot refresh it** — a pull request from a fork (read-only token), GitHub's cap of 50 re-runs
-per workflow run, a QA run that does not complete within its 30-minute bound, or a re-run still refused when that
-bound runs out — `traceability` keeps its last attempt's result, which may be stale, and the recheck posts one
-fixed-text PR comment saying so and how to refresh it. **Owner's merge rule:** after such a comment, do not merge
-until a `traceability` attempt that started after it has passed — a push, a manual re-run, or a later automatic
-recheck re-run all count, since each reads the live state; on a fork PR, which gets no comment, refresh
-`traceability` with a push or a manual re-run after the last body or label change before merging, whatever the
-recheck shows.
+per workflow run, a QA run that does not complete within its 30-minute bound, a re-run still refused when that
+bound runs out, or a GitHub API call that keeps failing (including a completed run with no `traceability` job to
+re-run) — `traceability` keeps its last attempt's result, which may be stale, and the recheck posts one
+fixed-text PR comment naming the reason class (`timeout`, `refused`, or `error`) and how to refresh it. **Owner's
+merge rule:** after such a comment, do not merge until a `traceability` attempt that started after it has passed
+— a push, a manual re-run, or a later automatic recheck re-run all count, since each reads the live state; on a
+fork PR, which gets no comment, refresh `traceability` with a push or a manual re-run after the last body or
+label change before merging, whatever the recheck shows.
 
 **Rollout note.** A pull request already open when this gate merges carries `qa.yml` runs from the previous
 script (which read the event payload, with no honest path); its recheck re-runs that old `traceability` job,

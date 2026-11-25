@@ -9,6 +9,8 @@ Added 2026-11-24, the honest Spec-PR path for refactor and bug-fix PRs: 006/FR-0
 matrix of specs/006-human-approved-spec/contracts/pr-rules.md over ``spec_pr_rule_problems``, ``parse_pr_state``,
 ``pr_state``, ``parse_issue_lookup``, ``issue_exists_in_repo`` and ``pr_rule_problems``.
 """
+import time
+
 import check_traceability as ct
 import pytest
 
@@ -88,7 +90,7 @@ _ROW4 = "needs exactly one 'Spec-PR:' line"
 _ROW5 = "needs a 'Spec-PR-reason:' line"
 _ROW6 = "more than one 'Spec-PR-reason:' line"
 _ROW7 = "malformed reason"
-_ROW8 = "(FR-015)"
+_ROW8 = "(FR-015, FR-016)"
 _ROW9 = "contradicts the reason"
 _ROW10 = "is not an issue of this repository"
 _HINT_ROWS = {_ROW2, _ROW4, _ROW6}
@@ -156,6 +158,7 @@ SPEC_PR_RULE_CASES = [
      "Spec-PR: none\nSpec-PR-reason: refactor\n", ["refactor"], _stub(False), None),
     ("numbered form, lookup stub says no (never called)", "Spec-PR: #12\n", ["bugfix"], _stub(False), None),
     ("numbered, no labels", "Spec-PR: #12\n", [], _stub(True), None),
+    ("numbered, refactor label alone", "Spec-PR: #12\n", ["refactor"], _stub(True), None),
     ("numbered, both labels", "Spec-PR: #12\n", ["refactor", "bugfix"], _stub(True), None),
     ("numbered + second number", "Spec-PR: #12\nSpec-PR: #13\n", [], _stub(True), None),
     ("numbered + TBD", "Spec-PR: #12\nSpec-PR: TBD\n", [], _stub(True), None),
@@ -204,6 +207,20 @@ def test_spec_pr_rule_problems_matrix(title, body, labels, issue_exists, expecte
     assert message.endswith(ct._ACCEPTED_FORMS), (title, message)
     assert "\r" not in message, (title, message)   # a raw CR could start a runner log line; repr() escapes it
     assert (ct._HINT in message) == (expected in _HINT_ROWS), (title, message)
+
+
+def test_row_10_message_names_the_issue_number():
+    problems = ct.spec_pr_rule_problems("Spec-PR: none\nSpec-PR-reason: bugfix: #37\n", ["bugfix"], _stub(False))
+    assert len(problems) == 1
+    assert "37" in problems[0]
+
+
+def test_cr_injection_shows_the_escaped_literal_not_a_raw_cr():
+    problems = ct.spec_pr_rule_problems("Spec-PR: none\r::warning::x\nSpec-PR-reason: refactor\n",
+                                        ["refactor"], _stub(True))
+    assert len(problems) == 1
+    assert "\\r" in problems[0]          # the two literal characters backslash + r, from repr()
+    assert "::warning::x" in problems[0]   # repr() does not escape ordinary printable characters
 
 
 def test_issue_lookup_called_exactly_once_on_the_row_11_bugfix_pass():
@@ -257,6 +274,8 @@ PARSE_ISSUE_LOOKUP_CASES = [
     (_ISSUE_JSON.replace("yorkzhangyong-bot/kestrel", "someone-else/kestrel"), _REPO, "37", False),
     (_ISSUE_JSON, _REPO, "38", False),
     ('{"number": 37, "state": "open"}', _REPO, "37", False),
+    ('{"state": "open", "repository_url": "https://api.github.com/repos/yorkzhangyong-bot/kestrel"}',
+     _REPO, "37", False),   # missing "number" entirely
     ("[1, 2]", _REPO, "37", False),
     ("not json", _REPO, "37", False),
     (None, _REPO, "37", False),
@@ -267,6 +286,22 @@ PARSE_ISSUE_LOOKUP_CASES = [
 @pytest.mark.parametrize("raw,repository,number,expected", PARSE_ISSUE_LOOKUP_CASES)
 def test_parse_issue_lookup(raw, repository, number, expected):
     assert ct.parse_issue_lookup(raw, repository, number) is expected
+
+
+def test_parse_issue_lookup_fails_closed_on_a_number_past_pythons_int_conversion_limit():
+    # Review finding 10: int(number) raises ValueError past ~4,300 digits; caught so the row-10 path still
+    # reports cleanly instead of an uncaught traceback.
+    huge = "9" * 5000
+    assert ct.parse_issue_lookup(_ISSUE_JSON, _REPO, huge) is False
+
+
+def test_spec_pr_line_re_is_linear_on_a_long_padded_line():
+    # Review finding 10: the old `(.*?)[ \t\r]*$` pattern was quadratic; a 65,000-character padded value must
+    # finish quickly, not in tens of seconds.
+    body = "Spec-PR: x" + " " * 65_000 + "y\n"
+    start = time.monotonic()
+    ct.spec_pr_rule_problems(body, [], _stub(True))
+    assert time.monotonic() - start < 2.0
 
 
 class _Done:
@@ -297,24 +332,34 @@ def test_pr_state_non_zero_gh_exit_is_empty_and_leaks_no_body(monkeypatch, capsy
     assert "SECRET-BODY-VALUE" not in capsys.readouterr().out
 
 
-def test_pr_state_timeout_is_empty(monkeypatch):
+def test_pr_state_timeout_is_empty(monkeypatch, capsys):
     monkeypatch.setenv("PR_NUMBER", "5")
     monkeypatch.setattr(ct.subprocess, "run", _raise(ct.subprocess.TimeoutExpired(cmd="gh", timeout=30)))
     assert ct.pr_state() == ("", [])
+    out = capsys.readouterr().out
+    assert "TimeoutExpired" in out
+    assert "5" not in out   # PR_NUMBER itself is never echoed into the notice
 
 
-def test_pr_state_no_gh_on_path_is_empty(monkeypatch):
+def test_pr_state_no_gh_on_path_is_empty(monkeypatch, capsys):
     monkeypatch.setenv("PR_NUMBER", "5")
     monkeypatch.setattr(ct.subprocess, "run", _raise(FileNotFoundError("gh")))
     assert ct.pr_state() == ("", [])
+    out = capsys.readouterr().out
+    assert "FileNotFoundError" in out
+    assert "5" not in out
 
 
 def test_pr_state_success_parses_stdout(monkeypatch):
     monkeypatch.setenv("PR_NUMBER", "5")
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPO)
-    monkeypatch.setattr(ct.subprocess, "run",
-                         lambda *a, **k: _Done(0, '{"body": "Spec-PR: none", "labels": [{"name": "refactor"}]}'))
+    calls = []
+    monkeypatch.setattr(ct.subprocess, "run", lambda argv, **kwargs: (calls.append((argv, kwargs)), _Done(
+        0, '{"body": "Spec-PR: none", "labels": [{"name": "refactor"}]}'))[1])
     assert ct.pr_state() == ("Spec-PR: none", ["refactor"])
+    argv, kwargs = calls[0]
+    assert argv == ["gh", "pr", "view", "5", "--repo", _REPO, "--json", "body,labels"]
+    assert kwargs["timeout"] == 30
 
 
 def test_issue_exists_in_repo_non_zero_gh_exit_is_false_and_leaks_no_body(monkeypatch, capsys):
@@ -326,16 +371,22 @@ def test_issue_exists_in_repo_non_zero_gh_exit_is_false_and_leaks_no_body(monkey
     assert "37" in out
 
 
-def test_issue_exists_in_repo_timeout_is_false(monkeypatch):
+def test_issue_exists_in_repo_timeout_is_false(monkeypatch, capsys):
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPO)
     monkeypatch.setattr(ct.subprocess, "run", _raise(ct.subprocess.TimeoutExpired(cmd="gh", timeout=30)))
     assert ct.issue_exists_in_repo("37") is False
+    out = capsys.readouterr().out
+    assert "TimeoutExpired" in out
+    assert "37" in out
 
 
-def test_issue_exists_in_repo_no_gh_on_path_is_false(monkeypatch):
+def test_issue_exists_in_repo_no_gh_on_path_is_false(monkeypatch, capsys):
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPO)
     monkeypatch.setattr(ct.subprocess, "run", _raise(FileNotFoundError("gh")))
     assert ct.issue_exists_in_repo("37") is False
+    out = capsys.readouterr().out
+    assert "FileNotFoundError" in out
+    assert "37" in out
 
 
 def test_issue_exists_in_repo_invalid_json_is_false(monkeypatch):
@@ -346,8 +397,13 @@ def test_issue_exists_in_repo_invalid_json_is_false(monkeypatch):
 
 def test_issue_exists_in_repo_success_parses_stdout(monkeypatch):
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPO)
-    monkeypatch.setattr(ct.subprocess, "run", lambda *a, **k: _Done(0, _ISSUE_JSON))
+    calls = []
+    monkeypatch.setattr(ct.subprocess, "run",
+                        lambda argv, **kwargs: (calls.append((argv, kwargs)), _Done(0, _ISSUE_JSON))[1])
     assert ct.issue_exists_in_repo("37") is True
+    argv, kwargs = calls[0]
+    assert argv == ["gh", "api", f"repos/{_REPO}/issues/37"]
+    assert kwargs["timeout"] == 30
 
 
 def test_issue_exists_in_repo_success_but_a_pull_request_is_false(monkeypatch):

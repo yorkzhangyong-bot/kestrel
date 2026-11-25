@@ -155,8 +155,8 @@ def has_spec_pr_reference(pr_body: str | None) -> bool:
 
 # ---- the honest Spec-PR path for refactor and bug-fix PRs (feature 006, FR-015-FR-024) ----
 
-SPEC_PR_LINE_RE = re.compile(r"(?im)^Spec-PR:[ \t]*(.*?)[ \t\r]*$")        # every keyed Spec-PR: line, value captured
-REASON_LINE_RE = re.compile(r"(?im)^Spec-PR-reason:[ \t]*(.*?)[ \t\r]*$")  # every reason line, value captured
+SPEC_PR_LINE_RE = re.compile(r"(?im)^Spec-PR:[ \t]*(.*)$")        # every keyed Spec-PR: line, raw value captured
+REASON_LINE_RE = re.compile(r"(?im)^Spec-PR-reason:[ \t]*(.*)$")  # every reason line, raw value captured
 REASON_VALUE_RE = re.compile(r"(?i)^(?:(refactor)|(bugfix):[ \t]*#([0-9]+))$")   # a well-formed reason; group 3 digits
 REASON_LABELS = {"refactor": "refactor", "bugfix": "bugfix"}              # reason keyword -> required PR label
 
@@ -180,9 +180,12 @@ def spec_pr_rule_problems(pr_body: str | None, labels: list[str],
     """
     body = pr_body or ""
     numbered = bool(SPEC_PR_RE.search(body))
-    values = SPEC_PR_LINE_RE.findall(body)
+    # `.rstrip(...)` here (not a `[ \t\r]*$` tail in the pattern) keeps the match linear: a greedy `(.*)$` plus a
+    # non-greedy `(.*?)` both followed by an optional trailing class is quadratic on a long, space-padded line
+    # (review finding 10).
+    values = [value.rstrip(" \t\r") for value in SPEC_PR_LINE_RE.findall(body)]
     none_valued = [value for value in values if value.lower().startswith("none")]
-    reasons = REASON_LINE_RE.findall(body)
+    reasons = [reason.rstrip(" \t\r") for reason in REASON_LINE_RE.findall(body)]
     names = {name.lower() for name in labels}
     if numbered and not none_valued and not reasons:
         return []   # row 1: the numbered form, unchanged behaviour (SC-009)
@@ -206,8 +209,8 @@ def spec_pr_rule_problems(pr_body: str | None, labels: list[str],
     keyword = "refactor" if match.group(1) else "bugfix"
     other = "bugfix" if keyword == "refactor" else "refactor"
     if REASON_LABELS[keyword] not in names:
-        return [f"reason '{keyword}' needs the '{REASON_LABELS[keyword]}' label (FR-015). {_ACCEPTED_FORMS}"]
-        # row 8
+        return [f"reason '{keyword}' needs the '{REASON_LABELS[keyword]}' label (FR-015, FR-016). "
+                f"{_ACCEPTED_FORMS}"]   # row 8
     if REASON_LABELS[other] in names:
         return [f"the '{REASON_LABELS[other]}' label contradicts the reason '{keyword}' (FR-016). "
                 f"{_ACCEPTED_FORMS}"]   # row 9
@@ -277,7 +280,11 @@ def parse_issue_lookup(raw: str | None, repository: str, number: str) -> bool:
         return False
     if not isinstance(data, dict) or "pull_request" in data:
         return False
-    if data.get("number") != int(number):
+    try:
+        target = int(number)
+    except ValueError:   # an absurdly long digit string (CPython's int-string conversion limit): fail closed
+        return False
+    if data.get("number") != target:
         return False
     url = data.get("repository_url")
     return isinstance(url, str) and url.lower().endswith("/repos/" + repository.lower())

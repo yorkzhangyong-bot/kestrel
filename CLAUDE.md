@@ -423,8 +423,8 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `specs/006-human-approved-spec/contracts/pr-rules.md` over the **raw** description (no comment/markup strip —
   reversed in the spec's own review round 2 — a keyed line starts in column 1). Messages are plain prose, not
   tagged `[row N]`; tests classify a failure by a distinctive substring of its own message (`"conflicting
-  declaration"`, `"(FR-015)"`, `"is not an issue of this repository"`, …), so production text stays readable and
-  the probe's row-tag convention never leaked into shipped code. `pr_state()`/`issue_exists_in_repo()` replace
+  declaration"`, `"(FR-015, FR-016)"`, `"is not an issue of this repository"`, …), so production text stays
+  readable and the probe's row-tag convention never leaked into shipped code. `pr_state()`/`issue_exists_in_repo()` replace
   `PR_BODY`: both shell out to `gh` (`pr view --json body,labels`; `api repos/.../issues/<n>`) with the job's own
   token, live at evaluation time — `qa.yml`'s traceability job carries `PR_NUMBER`/`GH_TOKEN` and
   `permissions: {contents: read, pull-requests: read, issues: read}` instead of `PR_BODY`.
@@ -447,6 +447,31 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `_FakeClock` (`now`/`sleep` injected into `run_recheck`) so a 30-minute budget exhausts in milliseconds of real
   test time. T024 (create the `refactor`/`bugfix` labels) and T031 (the live throwaway-draft-PR check) are
   owner/live steps, not run from a worker session.
+  **Review round 1 fixes.** The retry after a refused re-run must redo steps 3 **and** 4, not just resume
+  polling: once the run completes again it has to re-fetch the `traceability` job (`get_job`, `filter=latest`)
+  and redo `already_fresh` before any new POST — reusing the job id captured before the other attempt ran skips
+  the freshness check and can re-run a stale attempt; the whole steps-3-4 block is now one `while True:` loop,
+  re-entered on that path. `RecheckApiClient.request_rerun` classifies **only** a literal `(HTTP 403)` in `gh`'s
+  stderr as `"refused"` — any other non-zero exit (a 5xx, a network error, 401/404) raises `RecheckApiError`
+  instead, since the endpoint documents just `201`/`403` and a different failure must retry as `run_status =
+  "error"`, not be misread as a final refusal. Every other real-client method now raises `RecheckApiError` on an
+  undocumented 2xx shape too (a non-object body, a missing/null/non-list `workflow_runs` or `jobs`, a run or job
+  missing its `status`/`id`/`created_at`) — `None` means only a genuinely empty, well-formed result. `_poll`'s
+  signature stays exactly what it was (`fetch, elapsed, budget_s, sleep, poll_interval_s, rerun_status, give_up`,
+  no `label` parameter) because a read-only differential probe calls it directly by position; a per-call failure
+  notice is logged by wrapping each `fetch` closure in its own `try/except RecheckApiError: log; raise` instead.
+  `already_fresh` treats a timezone-**naive** parsed timestamp the same as an unparsable one (`parsed.tzinfo is
+  None` → `None`), since comparing a naive `datetime` to an aware one raises `TypeError` in the stdlib, not just
+  a `ValueError` — the one case `datetime.fromisoformat` itself doesn't raise on. `check_traceability.py`'s
+  `SPEC_PR_LINE_RE`/`REASON_LINE_RE` capture the whole rest of the line (`(.*)$`) and `.rstrip(" \t\r")` in
+  Python instead of ending the pattern in `[ \t\r]*$`: the old non-greedy-then-optional-tail shape is quadratic
+  on a long, space-padded line (tens of seconds past ~30,000 characters); `parse_issue_lookup`'s `int(number)`
+  is wrapped in its own `try/except ValueError`, since CPython refuses to convert a >4,300-digit string at all.
+  Row 8's message cites `(FR-015, FR-016)`, matching the contract exactly (was `(FR-015)` only). A probe's own
+  simulated client can bake in a since-fixed bug on purpose as a deliberate comparison point (here,
+  `real_client_model=True` still maps every `request_rerun` failure to `"refused"`, modelling finding 2's
+  pre-fix behaviour) — a lingering gap against such a probe column is not automatically a new regression; check
+  what the column is actually modelling before chasing it.
 - 2026-11-24 — **Graph typed state (refactor, no behaviour change).** `attack/graph.py` compiles its two graphs
   once at import (`LIVE_GRAPH`, `REPLAY_GRAPH`) from module-level node functions —
   `StateGraph(_State, context_schema=_LiveDeps)` / `StateGraph(_ReplayState, context_schema=_ReplayDeps)`. Every
