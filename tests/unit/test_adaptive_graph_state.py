@@ -29,7 +29,10 @@ SECRET = "test-key-123"   # the placeholder auth value every offline test regist
 
 
 class StubStore:
-    """The two store calls a record node makes, kept as a list of the turn positions written."""
+    """The store calls a record node makes, kept as a list of the turn positions written. Feature 014: the lifted
+    record step now calls has_turn/add_turn_with_evidence instead of add_turn/add_evidence directly (research D6)
+    - this stub gains both, a stub gaining the store methods its own code under test now calls, never a behaviour
+    change to what this test itself asserts (plan.md's own pre-existing-test-edit list)."""
 
     def __init__(self):
         self.turns: list[int] = []
@@ -40,6 +43,14 @@ class StubStore:
 
     def add_evidence(self, run_id, items):
         self.evidence.append(len(items))
+
+    def has_turn(self, run_id, position):
+        return position in self.turns
+
+    def add_turn_with_evidence(self, run_id, *, position, evidence_items=(), **_fields):
+        self.turns.append(position)
+        if evidence_items:
+            self.evidence.append(len(evidence_items))
 
 
 def numbered_sender(*, fail_at: int | None = None):

@@ -183,7 +183,7 @@ def connect(path) -> sqlite3.Connection:
 def test_a_fresh_database_is_created_at_version_11_with_the_four_tables(tmp_path, vault):  # FR-057
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "11"
+    assert version(path) == SCHEMA_VERSION == "12"
     assert set(NEW_TABLES) <= tables(path)
     assert {"correlation_id", "side_channel_status"} <= set(columns(path, "runs"))
     assert {"pattern_name", "pattern_set_version"} <= set(columns(path, "run_evidence"))
@@ -197,7 +197,7 @@ def test_a_v10_database_is_upgraded_additively_and_every_row_survives(v10_db, va
 
     store = TargetStore(v10_db, vault)
 
-    assert version(v10_db) == SCHEMA_VERSION == "11"
+    assert version(v10_db) == SCHEMA_VERSION == "12"
     assert foreign_key_violations(v10_db) == []
     assert set(NEW_TABLES) <= tables(v10_db)
     assert {"pattern_name", "pattern_set_version"} <= set(columns(v10_db, "run_evidence"))
@@ -211,7 +211,7 @@ def test_a_v10_database_is_upgraded_additively_and_every_row_survives(v10_db, va
     # sqlite_sequence watermark is untouched, and every child row is exactly where it was.
     runs_sql_after = table_sql(v10_db, "runs")
     assert runs_sql_after.startswith(runs_sql_before.rstrip(")").rstrip())
-    assert runs_sql_after.rstrip(")").rstrip().endswith("side_channel_status TEXT")
+    assert runs_sql_after.rstrip(")").rstrip().endswith("last_activity_at TEXT")   # the last column v12 ALTER-adds
     assert runs_sequence(v10_db) == sequence_before
     assert [t.attacker_message for t in store.list_turns(1)] == ["<turn>"]
     assert store.get_recommendation(1).recommendation == "Harden."
@@ -281,6 +281,6 @@ def test_migrating_an_already_v11_database_a_second_time_is_a_no_op(v10_db, vaul
     before = {name: table_sql(v10_db, name) for name in ("runs", *NEW_TABLES)}
     sequence = runs_sequence(v10_db)
     TargetStore(v10_db, vault)
-    assert version(v10_db) == "11"
+    assert version(v10_db) == "12"
     assert {name: table_sql(v10_db, name) for name in ("runs", *NEW_TABLES)} == before
     assert runs_sequence(v10_db) == sequence

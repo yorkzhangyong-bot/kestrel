@@ -48,7 +48,7 @@ own spec files); part 2's own Polish phase moves "LangGraph idioms" to Done (FR-
 
 ## Phase 1: Setup (Part 1)
 
-- [ ] T001 [P] Add explicit dependency lines to `pyproject.toml`: `langgraph-checkpoint>=4.3.0,<4.4.0` (already
+- [X] T001 [P] Add explicit dependency lines to `pyproject.toml`: `langgraph-checkpoint>=4.3.0,<4.4.0` (already
       resolved transitively by `langgraph`, so `uv lock` changes no resolved version, only makes the dependency and
       its narrow, tested range explicit) and widen/pin the existing `langgraph` line to `>=1.2.17,<1.3` (the range
       this saver is actually tested against, narrower than today's bare `langgraph>=0.2`). Run `uv lock` and confirm
@@ -59,7 +59,7 @@ own spec files); part 2's own Polish phase moves "LangGraph idioms" to Done (FR-
 **⚠️ Blocks every part-1 user story**: the schema, the saver (with its version guard and pending-writes contract),
 the per-app graph copy, durability, the atomic record step, and time-spent accounting every later task needs.
 
-- [ ] T002 [P] Unit test `tests/unit/test_store_migration_v12.py` (`FEATURE = "014"`, following the
+- [X] T002 [P] Unit test `tests/unit/test_store_migration_v12.py` (`FEATURE = "014"`, following the
       `test_store_migration_v<N>.py` convention): a hand-written prior-version database migrated via
       `TargetStore.__init__`/`_migrate` ends at the new schema version; all five new `runs` columns
       (`ask_before_each_turn`, `is_checkpointed`, `attacker_prompt_id`, `attacker_prompt_version`,
@@ -76,33 +76,33 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       (hand-written SQL, bypassing every application-level guard) and assert `_migrate` raises a clear, named error
       identifying the migration and the table, checked *before* the index is ever created, rather than a bare
       `sqlite3.IntegrityError` from the index itself or a silent partial migration (014/FR-003, FR-004).
-- [ ] T003 [P] Unit test `tests/unit/test_state_ask_before_each_turn.py` (`FEATURE = "014"`): `claim_run(...,
+- [X] T003 [P] Unit test `tests/unit/test_state_ask_before_each_turn.py` (`FEATURE = "014"`): `claim_run(...,
       ask_before_each_turn=True, is_checkpointed=True, attacker_prompt_id="attacker:direct_injection",
       attacker_prompt_version="1", judge_model="j/m", judge_prompt_id="judge", judge_prompt_version="1")`
       round-trips through the matching `Run` fields; **the store itself rejects `ask_before_each_turn=True` for
       `mode != "adaptive"`**, raising a clear `ValueError` the API layer turns into its own `422`; a single-turn or
       replay claim that never passes any of these keywords defaults them all to their documented defaults
       (014/FR-002, FR-018, FR-047).
-- [ ] T004 Implement schema v12 in `src/kestrel/store.py` per `data-model.md`: all five new `runs` columns in
+- [X] T004 Implement schema v12 in `src/kestrel/store.py` per `data-model.md`: all five new `runs` columns in
       `RUNS_COLUMNS_SQL` itself; the duplicate-row check and `uq_run_turns_position`, both inside `_migrate`; the
       `checkpoints`/`checkpoint_writes` tables (with `task_path`); `claim_run(..., ask_before_each_turn=False,
       is_checkpointed=False, attacker_prompt_id=None, attacker_prompt_version=None, judge_model=None,
       judge_prompt_id=None, judge_prompt_version=None, now: datetime | None = None)` with the non-adaptive rejection
       (T003), setting `last_activity_at` to `now` (defaulting to the real wall clock when omitted); the matching
       `Run` fields (014/FR-003, FR-004, FR-047, FR-059).
-- [ ] T005 [P] Unit test `tests/unit/test_record_step_atomic.py` (`FEATURE = "014"`): a new store method writing a
+- [X] T005 [P] Unit test `tests/unit/test_record_step_atomic.py` (`FEATURE = "014"`): a new store method writing a
       turn row and its evidence items in one transaction; calling it twice for the same `(run_id, position)` with
       identical arguments is a no-op the second time (no duplicate row, no duplicate evidence, no exception);
       injecting a failure *between* the turn insert and the evidence insert (monkeypatch the connection) and
       confirming — on a real retry over the same `tmp_path` database — that the method's own atomicity means
       either both exist or neither does, never one without the other (014/FR-012).
-- [ ] T006 Implement `add_turn_with_evidence`/`has_turn` in `src/kestrel/store.py` per `data-model.md`; the lifted,
+- [X] T006 Implement `add_turn_with_evidence`/`has_turn` in `src/kestrel/store.py` per `data-model.md`; the lifted,
       shared `record` step (`attack/graph.py`) calls `has_turn` first and, when a row already exists, returns the
       state delta `state` alone implies without writing anything or emitting a second `turn` log line. No
       production fallback for a store lacking either method — every real store gains both in this same schema
       bump. Add both methods to `tests/unit/test_adaptive_graph_state.py`'s own `StubStore` (plan.md's
       pre-existing-test-edit list), the one pre-existing test this specific change touches (014/FR-012).
-- [ ] T007 [P] Unit test `tests/unit/test_durability_sync.py` (`FEATURE = "014"`): a saver whose write step sleeps
+- [X] T007 [P] Unit test `tests/unit/test_durability_sync.py` (`FEATURE = "014"`): a saver whose write step sleeps
       briefly before writing; invoking the checkpointed graph with synchronous durability against it proves step
       *N*'s checkpoint read-back is durable before step *N+1*'s own node starts (assert via a shared, timestamped
       log); the library's **default** durability mode, run once for contrast in the same test, demonstrably lets
@@ -110,22 +110,22 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       call**: invoking the bare module-level `LIVE_GRAPH` (no checkpointer attached) with an explicit durability
       argument logs the library's own "has no effect" warning — assert the experiment harness's own call site never
       passes one (014/FR-003, SC-012, research D3).
-- [ ] T008 Wire synchronous durability into every call site that invokes a checkpointed live graph (`run_adaptive`'s
+- [X] T008 Wire synchronous durability into every call site that invokes a checkpointed live graph (`run_adaptive`'s
       own invocation, and the resume/decision/stop paths added below) in `src/kestrel/attack/graph.py` and
       `runs.py` — never into a call against the bare, checkpointer-free graph the experiment harness uses. The live
       run-start path's own `claim_run` call passes `is_checkpointed=True` (research D22) (014/FR-003, FR-001).
-- [ ] T009 [P] Unit test `tests/unit/test_live_graph_copy.py` (`FEATURE = "014"`): `LIVE_GRAPH.copy(update=
+- [X] T009 [P] Unit test `tests/unit/test_live_graph_copy.py` (`FEATURE = "014"`): `LIVE_GRAPH.copy(update=
       {"checkpointer": saver})` produces an object whose `.checkpointer is saver`, the **same node set** as
       `LIVE_GRAPH`, and leaves `LIVE_GRAPH.checkpointer is None` afterward; calling `LIVE_GRAPH.ainvoke(...)` with
       an empty `config` (no `thread_id`) still succeeds (proving the module-level graph is never mutated); building
       two independent apps (two `create_app` calls) each produce their own copy bound to their own `tmp_path`
       store, and nothing from one leaks into the other (research D2).
-- [ ] T010 Implement the per-app checkpointed copy in `src/kestrel/api/main.py`'s `lifespan`: construct the saver
+- [X] T010 Implement the per-app checkpointed copy in `src/kestrel/api/main.py`'s `lifespan`: construct the saver
       (T013), run the version guard (T016), build `app.state.live_graph = LIVE_GRAPH.copy(update=
       {"checkpointer": saver})`, before the sweep (T018) and before serving. `run_adaptive`/the new resume/decision/
       stop functions take which compiled graph to run against as a parameter; the experiment harness
       (`experiments/engine.py`) is **not** touched (research D2).
-- [ ] T011 [P] Unit test `tests/unit/test_time_spent_accounting.py` (`FEATURE = "014"`): **every** node's own delta
+- [X] T011 [P] Unit test `tests/unit/test_time_spent_accounting.py` (`FEATURE = "014"`): **every** node's own delta
       **sets** (never increments) `time_spent_s` to `time_spent_at_invocation_start + (clock() -
       invocation_start)`, recomputed fresh each time; calling several nodes across several turns within one
       continuous invocation never double-counts (each one's own set is a plain recomputation from the same fixed
@@ -139,7 +139,7 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       this at the primitive level), and assert the *attacker* node's own delta already persisted an up-to-date
       `time_spent_s` reflecting the drafting time — never left at the previous turn's own stale value, which would
       let a run paused every turn spend unbounded, unaccounted drafting time (014/FR-016, SC-005).
-- [ ] T012 Implement time-spent accounting in `src/kestrel/attack/graph.py` per `data-model.md`: `_State.
+- [X] T012 Implement time-spent accounting in `src/kestrel/attack/graph.py` per `data-model.md`: `_State.
       time_spent_s`/`turn_time_spent_at_start`/`turn_attacker_usage`, set fresh by **every** node's own returned
       delta, never only `record`; `time_spent_at_invocation_start`/`invocation_start` move onto the shared `_Deps`
       base (both `_LiveDeps` and `_ReplayDeps` need them, since `send`/`evidence`/`judge` are shared nodes), each
@@ -147,7 +147,7 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       `TypeError`; `_LiveDeps.deadline` keeps its existing name, type and role unchanged (research D23) — a fresh
       claim computes it exactly as today; a resume/decision/stop's own deps-construction computes it as
       `clock() + (run.time_limit_s - state["time_spent_s"])`, read from the just-loaded checkpoint.
-- [ ] T013 Implement `src/kestrel/checkpointing.py`: `KestrelCheckpointSaver(BaseCheckpointSaver)` over a
+- [X] T013 Implement `src/kestrel/checkpointing.py`: `KestrelCheckpointSaver(BaseCheckpointSaver)` over a
       `TargetStore`, its five async methods each wrapping a `with store.connect() as db: ...` block in
       `asyncio.to_thread(...)`; `__init__` constructs its own `JsonPlusSerializer(allowed_msgpack_modules=[the
       three Kestrel types])` and passes it to `super().__init__(serde=...)` (research D9 — never a post-construction
@@ -155,7 +155,7 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       the checkpoint's own metadata before persisting it (research D18); `aput_writes`'s replace-for-control/
       ignore-for-regular rule, with `task_path` stored and read back (research D10); `thread_config(run_id)`;
       `delete_checkpoint`/`adelete_thread` (014/FR-006, FR-035, FR-048, FR-049).
-- [ ] T014 [P] Unit test `tests/unit/test_checkpoint_saver_contract.py` (`FEATURE = "014"`): `aput` then
+- [X] T014 [P] Unit test `tests/unit/test_checkpoint_saver_contract.py` (`FEATURE = "014"`): `aput` then
       `aget_tuple` round-trips exactly, under both the serializer's default mode and an explicitly constructed
       strict-mode-equivalent serializer (`JsonPlusSerializer(allowed_msgpack_modules=...)` built directly in the
       test, since the library's own strict-mode flag is read once at import and cannot be toggled live within one
@@ -170,7 +170,7 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       thread; a resume through the real production live-graph copy with this saver, in the strict-equivalent
       configuration, correctly reads back the three registered types (014/FR-007, FR-036 — the owner's second
       condition, satisfied here at the saver level; T031 satisfies it again through the full adaptive loop).
-- [ ] T015 [P] Unit test `tests/unit/test_checkpoint_version_guard.py` (`FEATURE = "014"`): monkeypatching the
+- [X] T015 [P] Unit test `tests/unit/test_checkpoint_version_guard.py` (`FEATURE = "014"`): monkeypatching the
       installed-version lookup to a value outside `SUPPORTED_LANGGRAPH_CHECKPOINT`/`SUPPORTED_LANGGRAPH` fails the
       start-up guard loudly, naming the installed version and the declared range, for each package independently;
       values inside both ranges pass silently; the version parser accepts a two-component bound (`"1.3"`, not only
@@ -179,7 +179,7 @@ the per-app graph copy, durability, the atomic record step, and time-spent accou
       `langgraph` specifiers equal the two constants exactly — a deliberately mismatched test fixture file fails
       this assertion, proving the test actually compares the two rather than trivially passing (014/FR-037,
       SC-011).
-- [ ] T016 Implement `SUPPORTED_LANGGRAPH_CHECKPOINT`/`SUPPORTED_LANGGRAPH`, `check_supported_versions()` (stdlib
+- [X] T016 Implement `SUPPORTED_LANGGRAPH_CHECKPOINT`/`SUPPORTED_LANGGRAPH`, `check_supported_versions()` (stdlib
       version comparison accepting two or three components, no `packaging` dependency), and the
       `pyproject.toml`-agreement check in `checkpointing.py`; called once, in `lifespan`, before the saver is
       attached to any app copy.
@@ -189,7 +189,7 @@ tests/unit/test_state_ask_before_each_turn.py tests/unit/test_record_step_atomic
 tests/unit/test_durability_sync.py tests/unit/test_live_graph_copy.py tests/unit/test_time_spent_accounting.py
 tests/unit/test_checkpoint_saver_contract.py tests/unit/test_checkpoint_version_guard.py` green; every existing
 `attack/graph.py`/`runs.py`/`experiments/engine.py` test still green (run the full offline suite before and after
-T006/T008/T010/T012, confirm an identical pass/fail set except the four pre-existing-test edits `plan.md` names).
+T006/T008/T010/T012, confirm an identical pass/fail set except the five pre-existing-test edits `plan.md` names).
 
 ## Phase 3: User Story 1 — An interrupted adaptive run doesn't have to start over (P1)
 
@@ -522,11 +522,11 @@ the API and the UI, with write-back, logging, caps and evidence all correct.
       adaptive repetitions back to back on one target through the real experiment harness and assert every one of
       them finishes (none stays `in_progress`) and every next repetition's own claim succeeds — never refused by
       `uq_runs_active`/`RunInProgress` because a prior repetition's row was left open by a finishing function that
-      no longer runs for it. Run the **full existing offline suite**, unmodified except the four named
+      no longer runs for it. Run the **full existing offline suite**, unmodified except the five named
       pre-existing-test edits, before and after every part-1 implementation task, and confirm an identical
       pass/fail set (014/FR-001, FR-032, FR-043, FR-055, SC-002, SC-003).
 
-**Checkpoint (Part 1 complete)**: every part-1 task above green, full offline suite green (modulo the four named
+**Checkpoint (Part 1 complete)**: every part-1 task above green, full offline suite green (modulo the five named
 edits), `quickstart.md`'s Part 1 steps pass by hand. Ready for the part-1 pull request (FR-027) **once Phase 12's
 own idle-stop addition (below, added by a later owner review) is green too** — Phase 12 ships in this same part-1
 pull request despite sitting later in this file.
@@ -682,7 +682,7 @@ story is a proof of composition, per `research.md` D1.
       since it never sets the flag. An adaptive run with the checkbox left off never pauses, `run.start` omits
       `ask_before_each_turn` entirely (never a visible `false`), and its stored data is identical in shape to before
       this feature beyond the differences FR-031 names. Run the **full existing offline suite** again, before and
-      after T044–T051, confirming an identical pass/fail set, modulo only the four pre-existing-test edits (014/FR-002,
+      after T044–T051, confirming an identical pass/fail set, modulo only the five pre-existing-test edits (014/FR-002,
       FR-031, FR-032, SC-002, SC-003).
 
 **Checkpoint (Part 2 complete)**: every part-2 task above green, full offline suite green, `quickstart.md`'s Part 2

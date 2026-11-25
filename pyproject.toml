@@ -13,8 +13,12 @@ dependencies = [
     "cryptography>=50.0.2",
     "fastapi>=0.161.1",
     "httpx>=0.28.1",
-    # LangGraph drives the adaptive attacker/judge loop (feature 003); in the fixed MVP stack (Principle X).
-    "langgraph>=0.2",
+    # LangGraph drives the adaptive attacker/judge loop (feature 003); in the fixed MVP stack (Principle X). Pinned
+    # to the range the custom checkpoint saver (014) is actually tested against (checkpointing.SUPPORTED_LANGGRAPH).
+    "langgraph>=1.2.17,<1.3",
+    # Already a transitive dependency of langgraph; named explicitly because the checkpoint saver (014) is tested
+    # against this exact range (checkpointing.SUPPORTED_LANGGRAPH_CHECKPOINT) — no new dependency (Principle X).
+    "langgraph-checkpoint>=4.3.0,<4.4.0",
     # markdown-it-py derives the escaped HTML report from the Markdown source (feature 005; Principle X).
     "markdown-it-py>=4.2.0",
     "streamlit>=1.66.1",

@@ -79,14 +79,14 @@ def tables(path):
 def test_a_fresh_database_is_created_at_version_6(tmp_path, vault):
     path = tmp_path / "data" / "kestrel.db"
     TargetStore(path, vault)
-    assert version(path) == SCHEMA_VERSION == "11"   # bumped to 9 for feature 011, to 10 for feature 012
+    assert version(path) == SCHEMA_VERSION == "12"   # bumped to 9/011, 10/012, 11/013, 12/014
     assert EXPERIMENT_TABLES <= tables(path)
 
 
 def test_a_v5_database_gains_the_tables_and_moves_to_6(v5_db, vault):
     assert version(v5_db) == "5"
     store = TargetStore(v5_db, vault)
-    assert version(v5_db) == "11"
+    assert version(v5_db) == "12"
     assert EXPERIMENT_TABLES <= tables(v5_db)
     assert store.get_target(1).name == "A"   # the existing target survived
 
@@ -94,7 +94,7 @@ def test_a_v5_database_gains_the_tables_and_moves_to_6(v5_db, vault):
 def test_opening_twice_is_harmless(v5_db, vault):
     TargetStore(v5_db, vault)
     TargetStore(v5_db, vault)
-    assert version(v5_db) == "11"
+    assert version(v5_db) == "12"
 
 
 def test_a_newer_version_is_refused(tmp_path, vault):

@@ -6,8 +6,9 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from fastapi import Depends, FastAPI, Request, Response
@@ -26,8 +27,9 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  ExperimentSummaryOut, PromptVersionOut, RateOut, ReplayOut, RunLogOut,
                                  experiment_diff, validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
-from kestrel import events, prompt_registry, tracing
+from kestrel import checkpointing, events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
+from kestrel.attack.graph import LIVE_GRAPH
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
 from kestrel.evidence import unsafe_output
 from kestrel.evidence.checker import build_checker
@@ -52,7 +54,7 @@ from kestrel.logging_setup import configure_logging
 from kestrel.replay import (REPLAY_BLOCKED_REASONS, BatchTooLarge, NotReplayable, ReplayOfReplay, build_comparison,
                            check_replayable, compute_replay_status, execute_batch_replay, execute_replay,
                            is_finding)
-from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run
+from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run, finish_with_outcome
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
@@ -92,9 +94,12 @@ def _unauthorized_handler(request: Request, exc: _Unauthorized) -> JSONResponse:
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
                resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
-               attacker: Any = None, experience: Any = None, span_exporter: Any = None) -> FastAPI:
+               attacker: Any = None, experience: Any = None, span_exporter: Any = None,
+               clock: Callable[[], datetime] | None = None) -> FastAPI:
     """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker,
-    an experience store (a stub-backed one keeps tests offline) and a span exporter (an in-process collector)."""
+    an experience store (a stub-backed one keeps tests offline), a span exporter (an in-process collector), and
+    (feature 014) a wall clock - an injectable callable returning a timezone-aware `datetime`, defaulting to the
+    real one - so a test can drive the idle-stop mechanism's own notion of "now" directly."""
     settings = settings or load_settings()
     logger = configure_logging(settings)            # the JSON (or text) stream of the `kestrel` logger (feature 010)
     events.configure(prices=settings.model_prices)  # every model-request line is costed with the feature-007 prices
@@ -104,15 +109,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     vault = Vault(key)
     terms = load_terms()
     store = TargetStore(settings.db_path, vault)
+    clock = clock or (lambda: datetime.now(timezone.utc))
     # Start-up lines (feature 010): constant text, values as fields, a failure as its class and kind — never its
     # message, which may quote a path, a host or a provider error (FR-006, FR-009).
     if not store.key_matches():
         events.emit("key.mismatch", logging.ERROR,
                     message="The encryption key doesn't match the one used to save targets, so saved auth header "
                             "values can't be read. Restore the old key, or re-enter the values.")
-    closed = store.close_interrupted_runs()  # release any run the last process left in progress (FR-031)
-    if closed:
-        events.emit("message", message="Closed run(s) that were interrupted by a previous shutdown.", count=closed)
+    # Feature 014 (research D14): the start-up sweep moves into `lifespan` below - the saver's own methods are
+    # async-only, and `create_app`'s own synchronous body runs inside uvicorn's already-running event loop, where
+    # a nested asyncio.run would fail. Only the pre-existing, unconditional close of every non-checkpointed row
+    # stays a plain, synchronous call; it no longer runs here either, since every in_progress row (checkpointed or
+    # not) is now swept together, in one pass, once the app actually starts serving.
 
     if library is None:
         try:
@@ -151,7 +159,21 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             experience = None
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(app: FastAPI):
+        # Feature 014 (research D14): the version guard, the per-app checkpointed graph copy, and the classifying
+        # start-up sweep all need the saver's own async methods, so they run here - never in create_app's own
+        # synchronous body, which runs inside uvicorn's already-running event loop.
+        checkpointing.check_supported_versions()
+        saver = checkpointing.KestrelCheckpointSaver(store)
+        app.state.live_graph = LIVE_GRAPH.copy(update={"checkpointer": saver})
+        closed, classified = await _sweep_interrupted_runs(store, app.state.live_graph)
+        if closed:
+            events.emit("message", message="Closed run(s) that were interrupted by a previous shutdown.",
+                       count=closed)
+        if classified:
+            events.emit("message", message="Classified checkpointed run(s) left in progress by a previous "
+                                            "shutdown.", count=classified)
+        app.state.started_at = app.state.clock()
         yield
         await asyncio.to_thread(app_tracing.shutdown, 5.0)   # deliver what is queued, waiting at most 5 s (FR-015)
 
@@ -171,6 +193,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.injected_judge = injected_judge        # feature 007: reused for every arm in tests
     app.state.injected_attacker = injected_attacker
     app.state.experiment_tasks = set()               # keep background experiment tasks referenced (no GC)
+    # Feature 014: the execution lease (research D12) and this run's idle clock (research D26) - a plain set per
+    # app, never a bare module-level object, so two unrelated apps never collide on the same run id.
+    app.state.leases = set()
+    app.state.accepted_exits = set()
+    app.state.clock = clock
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(_Unauthorized, _unauthorized_handler)
 
@@ -352,8 +379,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                             task_texts=checker.planted_task_texts())
 
         # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
-        # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
-        with events.run_scope():
+        # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing. Feature 014 (FR-053): an
+        # adaptive run's scope is marked checkpointed from the moment it opens, before the first invocation - not
+        # only a later, reopened scope - so a pause or an unhandled error within this very first segment is
+        # governed by the same rules as any later one.
+        with events.run_scope(checkpointed=(body.mode == "adaptive")):
             try:
                 if body.mode == "adaptive":
                     run = await execute_adaptive_run(
@@ -363,7 +393,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                         max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                         time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                         resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
-                        hint_provider=hint_provider, evidence=checker)
+                        hint_provider=hint_provider, evidence=checker, graph=request.app.state.live_graph,
+                        app_state=request.app.state)
                 else:
                     run = await execute_run(store, target_id=target.id, prompt=prompt,
                                             attacker_source=library.attacker_source,
@@ -675,6 +706,54 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         return Response(content=markdown, media_type="text/markdown; charset=utf-8")
 
     return app
+
+
+INCOMPATIBLE_CHECKPOINT_REASON = ("This run's checkpoint was written by an incompatible build of Kestrel, so it "
+                                  "was closed rather than resumed.")
+INTERRUPTED_REASON = "Kestrel stopped while this run was in progress, so it was interrupted."
+
+
+async def _sweep_interrupted_runs(store: TargetStore, graph: Any) -> tuple[int, int]:
+    """The start-up sweep (014/FR-013, FR-017, research D14): every in_progress row that is not a live,
+    checkpointed adaptive run is closed exactly as today (`store.close_non_checkpointed_interrupted_runs`, no new
+    kept log line for it); every `is_checkpointed`, `mode == 'adaptive'` row is classified - a loadable, mid-run
+    checkpoint is left open, visibly resumable; a thread whose graph reached its own end is reconciled; an
+    incompatible, unreadable, or missing checkpoint is closed with its own reason - with one `run.interrupted`
+    line kept into that row's own log either way. Also reconciles any checkpoint whose own thread does not belong
+    to a currently in_progress, checkpointed run at all (an orphan left by an incomplete delete). Returns
+    (closed, classified) for the existing start-up log lines."""
+    closed = store.close_non_checkpointed_interrupted_runs()
+    classified = 0
+    for run in store.list_in_progress_checkpointed_runs():
+        status = await checkpointing.classify(graph, run.id, leased=False)
+        classified += 1
+        with events.reopened_run_scope(store, run):
+            if isinstance(status, checkpointing.ReachedEnd) and status.outcome is not None:
+                finish_with_outcome(store, run, status.outcome, turns_used=status.values.get("turns_used"),
+                                    tokens_used=status.values.get("tokens_used"))
+                events.run_interrupted(resumable=False)
+                store.delete_checkpoint(run.id)
+            elif isinstance(status, checkpointing.Incompatible):
+                store.finish_run(run.id, verdict="unclear", stopping_condition="interrupted",
+                                 reason=INCOMPATIBLE_CHECKPOINT_REASON)
+                events.run_interrupted(resumable=False)
+                store.delete_checkpoint(run.id)
+            elif isinstance(status, (checkpointing.NoCheckpoint, checkpointing.Unreadable)):
+                store.finish_run(run.id, verdict="unclear", stopping_condition="interrupted",
+                                 reason=INTERRUPTED_REASON)
+                events.run_interrupted(resumable=False)
+                store.delete_checkpoint(run.id)
+            else:   # Resumable or Paused: left in_progress, visibly resumable - untouched
+                events.run_interrupted(resumable=True)
+    # An orphaned checkpoint: its own thread's runs row is not (any longer) in_progress+checkpointed+adaptive.
+    still_open = {str(run.id) for run in store.list_in_progress_checkpointed_runs()}
+    for thread_id in store.list_checkpoint_thread_ids():
+        if thread_id not in still_open:
+            try:
+                store.delete_checkpoint(int(thread_id))
+            except ValueError:
+                continue
+    return closed, classified
 
 
 def stored_values(store: TargetStore, target_id: int) -> dict[str, str | None]:

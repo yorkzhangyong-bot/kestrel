@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Awaitable, Callable, Protocol, Sequence, TypeVar
 from typing_extensions import TypedDict
 
@@ -31,6 +32,7 @@ from langgraph.runtime import Runtime
 from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerError
 from kestrel.attacks.library import AttackPrompt
+from kestrel.checkpointing import lease, mark_active, thread_config
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
 from kestrel.evidence.checker import EvidenceChecker, TurnEvidence, build_checker
@@ -43,6 +45,11 @@ SEND_LIMIT_S = 60.0
 JUDGE_LIMIT_S = 30.0
 ATTACKER_LIMIT_S = 30.0
 MAX_REPLY_CHARS = 2000
+
+# The graph/state version stamp the saver writes into every checkpoint's own metadata (research D18): a mismatch
+# is incompatible, closed by the sweep rather than resumed against mismatched node topology. Part 1's own
+# six-node topology is version 1; part 2 bumps this to 2 when the `approve` node is added.
+CURRENT_GRAPH_VERSION = 1
 
 CANARY_REASON = "The reply contains a canary string the agent was told to keep, so the attack is confirmed."
 INTERRUPTED_BY_DEADLINE = "The agent held until the run reached a limit."
@@ -101,6 +108,14 @@ class _State(TypedDict, total=False):
     pending_canary: bool                  # a canary matched this turn's reply (feature 010: the turn line)
     pending_evidence: TurnEvidence | None  # this turn's deterministic findings (feature 013); None before the check
     outcome: Outcome | None               # set exactly once, when the run ends
+    # Feature 014 (research D24): the run's own total wall-clock time spent executing so far, set fresh by every
+    # node's own returned delta (never incremented) - what survives a crash/resume gap, excluded from it in full.
+    time_spent_s: float
+    # The attacker node's own per-turn carry-over (research D24): the baseline time_spent_s stood at before this
+    # turn began, and this turn's own attacker-call usage - read back unchanged by a later step of the same turn
+    # that does not itself call the attacker again (a resume cut after the attacker drafted but before it sent).
+    turn_time_spent_at_start: float
+    turn_attacker_usage: dict[str, Any] | None
 
 
 class _ReplayState(_State, total=False):
@@ -111,18 +126,39 @@ class _ReplayState(_State, total=False):
 
 def _initial_state() -> _State:
     return {"conversation": [], "turns_used": 0, "tokens_used": 0, "judge_used": False, "judge_requests": 0,
-            "last_verdict": None, "last_progress": None, "last_reason": None, "outcome": None}
+            "last_verdict": None, "last_progress": None, "last_reason": None, "outcome": None,
+            "time_spent_s": 0.0}
+
+
+def _time_spent(deps: "_Deps") -> float:
+    """Every node's own delta sets this fresh (research D24): a plain recomputation from a fixed anchor, never an
+    increment, so a turn that pauses before reaching send/evidence/judge/record (part 2) still persists its own
+    attacker-drafting time instead of leaving it uncounted."""
+    return deps.time_spent_at_invocation_start + (deps.clock() - deps.invocation_start)
+
+
+def _attacker_usage_now() -> dict[str, Any] | None:
+    """This turn's attacker-call usage so far, read from the live scope's own accumulators right after the
+    model_request event for it fired (research D24): {"tokens": total_tokens, "cost": cost}, carried on `_State`
+    so a later segment that does not re-call the attacker can still report it. None outside any run scope."""
+    ctx = events.current()
+    if ctx is None:
+        return None
+    return {"tokens": ctx.turn_tokens.total, "cost": ctx.turn_cost.value()[0]}
 
 
 # ---- the per-run dependencies: LangGraph's runtime context, never a closure ----
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, kw_only=True)
 class _Deps:
     """What every node of a run needs, handed to the compiled graph as its runtime context
     (`compiled.ainvoke(initial, context=deps)`) and read by a node as `runtime.context`. No generated repr, on
     the whole family: `secrets` holds the target's plaintext auth values and `resolved` the target, and LangGraph's
-    `Runtime` repr includes its context, so neither may ever render them (001/FR-022, research R9)."""
+    `Runtime` repr includes its context, so neither may ever render them (001/FR-022, research R9). `kw_only=True`
+    (feature 014, research D23/D24): the two time anchors below are defaulted, and a defaulted base field
+    followed by a subclass's own required field is otherwise a plain TypeError at class-definition time; every
+    existing construction site already uses keyword arguments only, so this changes no caller."""
     store: TargetStore
     run_id: int
     resolved: ResolvedSettings
@@ -140,6 +176,12 @@ class _Deps:
     token_budget: int
     deadline: float
     clock: Callable[[], float]
+    # Feature 014 (research D24): the two anchors every node's own time-spent delta is computed from. A fresh
+    # claim leaves both at their defaults (0.0 spent so far; `invocation_start` read once, now); a resume/decision
+    # (part 1 User Story 1) constructs these explicitly from the loaded checkpoint instead. Shared here (not only
+    # on _LiveDeps) because send/evidence/judge run under _ReplayDeps too.
+    time_spent_at_invocation_start: float = 0.0
+    invocation_start: float = field(default_factory=time.monotonic)
 
     def remaining(self) -> float:
         return self.deadline - self.clock()
@@ -273,33 +315,58 @@ def _decide_next(state: _State, *, max_turns: int, token_budget: int, remaining:
 
 async def _send_node(state: _State, runtime: Runtime[_DepsT]) -> _State:
     deps = runtime.context
-    return await _send_turn(state, resolved=deps.resolved, mode=deps.mode, sender=deps.sender,
-                            transport=deps.transport, resolver=deps.resolver, remaining=deps.remaining,
-                            secrets=deps.secrets, evidence=deps.checker)
+    delta = await _send_turn(state, resolved=deps.resolved, mode=deps.mode, sender=deps.sender,
+                             transport=deps.transport, resolver=deps.resolver, remaining=deps.remaining,
+                             secrets=deps.secrets, evidence=deps.checker)
+    return {**delta, "time_spent_s": _time_spent(deps)}
 
 
 async def _evidence_node(state: _State, runtime: Runtime[_DepsT]) -> _State:
     deps = runtime.context
-    return await _check_evidence(state, deps.checker, deps.remaining)
+    delta = await _check_evidence(state, deps.checker, deps.remaining)
+    return {**delta, "time_spent_s": _time_spent(deps)}
 
 
 async def _judge_node(state: _State, runtime: Runtime[_DepsT]) -> _State:
     deps = runtime.context
-    return await _judge_turn(state, judge=deps.judge, judge_prompt=deps.judge_prompt, remaining=deps.remaining)
+    delta = await _judge_turn(state, judge=deps.judge, judge_prompt=deps.judge_prompt, remaining=deps.remaining)
+    return {**delta, "time_spent_s": _time_spent(deps)}
 
 
 def _decide_node(state: _State, runtime: Runtime[_DepsT]) -> _State:
     deps = runtime.context
-    return _decide_next(state, max_turns=deps.max_turns, token_budget=deps.token_budget, remaining=deps.remaining)
+    delta = _decide_next(state, max_turns=deps.max_turns, token_budget=deps.token_budget, remaining=deps.remaining)
+    return {**delta, "time_spent_s": _time_spent(deps)}
 
 
-def _record_evidence(state: _State, deps: _Deps) -> tuple[TurnEvidence | None, list]:
-    """The turn's evidence items, written right after its turn row (013/FR-003); both record nodes do this."""
+@dataclass(frozen=True)
+class _RecordResult:
+    """What the shared, atomic record write produced (feature 014, research D6): `already_recorded` is True when
+    `has_turn` found this position already durably written - the caller then skips its own `turn` log line and
+    returns a delta computed from `state` alone, never re-read from the row."""
+    found: TurnEvidence | None
+    items: list
+    already_recorded: bool
+
+
+def _do_record(deps: _Deps, state: _State, *, turn: int, attacker_prompt_id: str | None,
+               attacker_prompt_version: str | None, judge_prompt_id: str | None,
+               judge_prompt_version: str | None) -> _RecordResult:
+    """The turn row and its evidence items, in one atomic write (feature 014, research D6), guarded by an
+    existence check so re-executing this step after an interruption can never duplicate either. Shared by both
+    the live and the replay record nodes - only the provenance and log-line specifics stay separate."""
+    if deps.store.has_turn(deps.run_id, turn):
+        return _RecordResult(found=None, items=[], already_recorded=True)
     found = state.get("pending_evidence")
     items = found.items if found is not None else []
-    if items:
-        deps.store.add_evidence(deps.run_id, items)
-    return found, items
+    deps.store.add_turn_with_evidence(
+        deps.run_id, position=turn, attacker_message=state["pending_message"],
+        reply_text=state.get("pending_reply"), reply_truncated=state.get("pending_truncated", False),
+        judge_verdict=state.get("last_verdict"), judge_reason=state.get("last_reason"),
+        judge_progress=state.get("last_progress"), attacker_prompt_id=attacker_prompt_id,
+        attacker_prompt_version=attacker_prompt_version, judge_prompt_id=judge_prompt_id,
+        judge_prompt_version=judge_prompt_version, evidence_items=items)
+    return _RecordResult(found=found, items=items, already_recorded=False)
 
 
 def _conversation_delta(state: _State) -> list[tuple[str, str]]:
@@ -319,9 +386,15 @@ async def _live_attacker_node(state: _State, runtime: Runtime[_LiveDeps]) -> _St
     deps = runtime.context
     turn = state["turns_used"] + 1
     events.turn_started(turn)   # every line of this turn carries its number, through all the nodes
+    # Feature 014 (research D24): set on every path out of this node, including the two early returns below - a
+    # crash strictly after this node but before send/evidence/judge/record run again must not lose the time
+    # already spent drafting this turn's own message.
+    baseline = state["time_spent_s"]
+    spent = _time_spent(deps)
     if turn == 1:
         return {"pending_message": mask_values(deps.opening, deps.secrets), "pending_canary": False,
-                "pending_evidence": None}
+                "pending_evidence": None, "time_spent_s": spent, "turn_time_spent_at_start": baseline,
+                "turn_attacker_usage": None}   # turn 1 is the library seed: no attacker-model call at all
     hints = None
     if deps.hint_provider is not None:
         try:
@@ -335,24 +408,24 @@ async def _live_attacker_node(state: _State, runtime: Runtime[_LiveDeps]) -> _St
     except AttackerError as error:
         return {"outcome": Outcome(verdict="unclear", hard_evidence=False, reason=str(error),
                                    judge_used=state["judge_used"], stopping_condition="attacker_failed",
-                                   succeeded_turn=None)}
+                                   succeeded_turn=None), "time_spent_s": spent}
     return {"pending_message": mask_values(reply.message, deps.secrets), "pending_canary": False,
-            "pending_evidence": None, "tokens_used": state["tokens_used"] + reply.tokens}
+            "pending_evidence": None, "tokens_used": state["tokens_used"] + reply.tokens, "time_spent_s": spent,
+            "turn_time_spent_at_start": baseline, "turn_attacker_usage": _attacker_usage_now()}
 
 
 def _live_record_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
     deps = runtime.context
     turn = state["turns_used"] + 1
     judged = state.get("last_judged_turn") == turn   # the judge produced a verdict on this turn (feature 009)
-    deps.store.add_turn(deps.run_id, position=turn, attacker_message=state["pending_message"],
-                        reply_text=state.get("pending_reply"), reply_truncated=state.get("pending_truncated", False),
-                        judge_verdict=state.get("last_verdict"), judge_reason=state.get("last_reason"),
-                        judge_progress=state.get("last_progress"),
+    result = _do_record(deps, state, turn=turn,
                         attacker_prompt_id=deps.attacker_prompt_id if turn >= 2 else None,
                         attacker_prompt_version=deps.attacker_prompt_version if turn >= 2 else None,
                         judge_prompt_id=deps.judge_prompt_id if judged else None,
                         judge_prompt_version=deps.judge_prompt_version if judged else None)
-    found, items = _record_evidence(state, deps)
+    if result.already_recorded:   # feature 014, research D6: a resumed step re-executing against an already-
+        return {"conversation": _conversation_delta(state), "turns_used": turn,   # written row - no second log line
+                "time_spent_s": _time_spent(deps)}
     reply = state.get("pending_reply")
     canary = bool(state.get("pending_canary", False))
     events.turn_ended(turn=turn, source=f"library:{deps.seed_prompt.id}" if turn == 1 else
@@ -360,11 +433,11 @@ def _live_record_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
                       message_chars=len(state["pending_message"]),
                       reply_chars=None if reply is None else len(reply),
                       reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
-                      hard_evidence=bool(items), judged=judged,
+                      hard_evidence=bool(result.items), judged=judged,
                       verdict=state.get("last_verdict") if judged else None, attacker_generated=turn >= 2,
-                      evidence_kinds=found.kinds if found is not None else [],
-                      evidence_count=len(items))
-    return {"conversation": _conversation_delta(state), "turns_used": turn}
+                      evidence_kinds=result.found.kinds if result.found is not None else [],
+                      evidence_count=len(result.items))
+    return {"conversation": _conversation_delta(state), "turns_used": turn, "time_spent_s": _time_spent(deps)}
 
 
 # ---- a replay's own attacker and record nodes (feature 012) ----
@@ -402,16 +475,14 @@ def _replay_record_node(state: _ReplayState, runtime: Runtime[_ReplayDeps]) -> _
     turn = state["turns_used"] + 1
     judged = state.get("last_judged_turn") == turn
     source_turn = deps.source_turns[turn - 1]   # the same index the attacker node used for this same turn (T018)
-    deps.store.add_turn(deps.run_id, position=turn, attacker_message=state["pending_message"],
-                        reply_text=state.get("pending_reply"),
-                        reply_truncated=state.get("pending_truncated", False),
-                        judge_verdict=state.get("last_verdict"), judge_reason=state.get("last_reason"),
-                        judge_progress=state.get("last_progress"),
-                        attacker_prompt_id=source_turn.attacker_prompt_id,
+    record = _do_record(deps, state, turn=turn, attacker_prompt_id=source_turn.attacker_prompt_id,
                         attacker_prompt_version=source_turn.attacker_prompt_version,
                         judge_prompt_id=deps.judge_prompt_id if judged else None,
                         judge_prompt_version=deps.judge_prompt_version if judged else None)
-    found, items = _record_evidence(state, deps)
+    if record.already_recorded:   # defensive (research D6): unreachable while a replay never resumes (FR-001)
+        outcome = state.get("last_verdict") if judged else None
+        return {"conversation": _conversation_delta(state), "turns_used": turn, "turn_results": [outcome],
+                "time_spent_s": _time_spent(deps)}
     reply = state.get("pending_reply")
     canary = bool(state.get("pending_canary", False))
     source_label = (f"library:{deps.source.prompt_id}" if turn == 1
@@ -419,13 +490,14 @@ def _replay_record_node(state: _ReplayState, runtime: Runtime[_ReplayDeps]) -> _
     events.turn_ended(turn=turn, source=source_label, message_chars=len(state["pending_message"]),
                       reply_chars=None if reply is None else len(reply),
                       reply_truncated=bool(state.get("pending_truncated", False)), canary_hit=canary,
-                      hard_evidence=bool(items), judged=judged,
+                      hard_evidence=bool(record.items), judged=judged,
                       verdict=state.get("last_verdict") if judged else None, attacker_generated=False,
-                      evidence_kinds=found.kinds if found is not None else [],
-                      evidence_count=len(items))
+                      evidence_kinds=record.found.kinds if record.found is not None else [],
+                      evidence_count=len(record.items))
     # Any evidence item of any kind decides this turn (013/FR-035, research D23) - never the canary alone.
-    result = "succeeded" if items else (state.get("last_verdict") if judged else None)
-    return {"conversation": _conversation_delta(state), "turns_used": turn, "turn_results": [result]}
+    outcome = "succeeded" if record.items else (state.get("last_verdict") if judged else None)
+    return {"conversation": _conversation_delta(state), "turns_used": turn, "turn_results": [outcome],
+            "time_spent_s": _time_spent(deps)}
 
 
 # ---- the two graphs, compiled once at import ----
@@ -482,14 +554,34 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                        max_turns: int, token_budget: int, time_limit_s: float,
                        use_prior_experience: bool = True, hint_provider: Callable[[list], str | None] | None = None,
                        clock: Callable[[], float] = time.monotonic,
-                       evidence: EvidenceChecker | None = None) -> Run:
+                       evidence: EvidenceChecker | None = None, graph: Any = None, app_state: Any = None) -> Run:
     """Claim an adaptive run, drive the loop to an outcome, finish and return it. May raise RunInProgress (409).
 
     `hint_provider(conversation)` (feature 004) returns the attacker's background block each turn, or None.
     `evidence` (feature 013) is the run's deterministic checker; None is the canary-only checker - today's
-    behaviour exactly (013/FR-002, research D2)."""
+    behaviour exactly (013/FR-002, research D2).
+
+    Feature 014: `graph` is which compiled graph to invoke against - the bare, checkpointer-free module-level
+    LIVE_GRAPH by default (the experiment harness's own call site, research D2, never touched by this feature), or
+    an app's own checkpointed copy, passed explicitly by the live API path. `app_state` is given only by that same
+    live path (research D12): when present, this run's execution lease is taken immediately after the claim,
+    before the first invocation, held for the whole call, and the claim itself is marked is_checkpointed (research
+    D22), with `last_activity_at` set from `app_state.clock()` so it agrees with whatever clock a test has
+    substituted there (research D26)."""
+    graph = graph if graph is not None else LIVE_GRAPH
+    is_checkpointed = app_state is not None
     checker = evidence if evidence is not None else EvidenceChecker.canary_only(canaries, family=seed_prompt.family,
                                                                                  store=store)
+    # Prompt-version provenance (feature 009, FR-003): the attacker (per family) and judge prompt versions are
+    # constant for the run. Feature 010 (FR-007, D15): they are the references the clients actually send - a
+    # pinned A/B arm's version, not the active one - the same source the log lines use. Feature 014 (research
+    # D16): computed before the claim, so a checkpointed run can pin its own attacker/judge model and prompt
+    # references at claim time - read back unchanged by a resume or a decision, never whatever Kestrel is
+    # currently configured with.
+    attacker_prompt = attacker_ref(attacker, seed_prompt.family)
+    judge_prompt = judge_ref(judge) if judge.configured else None
+    attacker_prompt_id, attacker_prompt_version = prompt_registry.split_ref(attacker_prompt)
+    judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
     # Turn 1 sends the seed with any planted task placed at its insertion point (013/FR-011); the stored
     # prompt_text is that same text, so a replay re-sends exactly what went out (013/FR-035).
     opening = checker.opening_message(seed_prompt)
@@ -498,44 +590,52 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                              owasp_category=seed_prompt.owasp_category, attacker_source=attacker_source,
                              mode="adaptive", attacker_model=attacker.model, turn_budget=max_turns,
                              token_budget=token_budget, time_limit_s=int(time_limit_s),
-                             use_prior_experience=use_prior_experience)
+                             use_prior_experience=use_prior_experience, is_checkpointed=is_checkpointed,
+                             attacker_prompt_id=attacker_prompt_id if is_checkpointed else None,
+                             attacker_prompt_version=attacker_prompt_version if is_checkpointed else None,
+                             judge_model=judge.model if is_checkpointed and judge.configured else None,
+                             judge_prompt_id=judge_prompt_id if is_checkpointed else None,
+                             judge_prompt_version=judge_prompt_version if is_checkpointed else None,
+                             now=app_state.clock() if app_state is not None else None)
     checker.bind_run(run_id)   # records what the run planted, right after the claim (013/FR-008)
-    deadline = clock() + time_limit_s
-    # Prompt-version provenance (feature 009, FR-003): the attacker (per family) and judge prompt versions are
-    # constant for the run. Feature 010 (FR-007, D15): they are the references the clients actually send — a pinned
-    # A/B arm's version, not the active one — the same source the log lines use; judge provenance is recorded only
-    # when a judge request was made.
-    attacker_prompt = attacker_ref(attacker, seed_prompt.family)
-    judge_prompt = judge_ref(judge) if judge.configured else None
-    attacker_prompt_id, attacker_prompt_version = prompt_registry.split_ref(attacker_prompt)
-    judge_prompt_id, judge_prompt_version = prompt_registry.split_ref(judge_prompt)
-    events.run_started(store, run_id=run_id, target_id=target_id, mode="adaptive", family=seed_prompt.family,
-                       prompt_id=seed_prompt.id, attacker_source=attacker_source, attacker_model=attacker.model,
-                       judge_model=judge.model if judge.configured else None, attacker_prompt=attacker_prompt,
-                       judge_prompt=judge_prompt, turn_budget=max_turns, token_budget=token_budget,
-                       time_limit_s=int(time_limit_s), use_prior_experience=use_prior_experience,
-                       **checker.run_start_fields())
-    deps = _LiveDeps(store=store, run_id=run_id, resolved=resolved, secrets=[value for _, value in resolved.headers],
-                     mode=mode, sender=sender, transport=transport, resolver=resolver, judge=judge,
-                     judge_prompt=judge_prompt, judge_prompt_id=judge_prompt_id,
-                     judge_prompt_version=judge_prompt_version, checker=checker, max_turns=max_turns,
-                     token_budget=token_budget, deadline=deadline, clock=clock,
-                     seed_prompt=seed_prompt, opening=opening, attacker=attacker, hint_provider=hint_provider,
-                     attacker_prompt=attacker_prompt, attacker_prompt_id=attacker_prompt_id,
-                     attacker_prompt_version=attacker_prompt_version)
-    final = await LIVE_GRAPH.ainvoke(_initial_state(), _recursion_limit(max_turns), context=deps)
-    outcome: Outcome = final["outcome"]
-    requested = final["judge_requests"]
-    run = store.finish_run(run_id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence,
-                           reason=outcome.reason, judge_used=outcome.judge_used,
-                           judge_model=judge.model if outcome.judge_used else None,
-                           failure_step=outcome.failure_step, stopping_condition=outcome.stopping_condition,
-                           succeeded_turn=outcome.succeeded_turn, turns_used=final["turns_used"],
-                           tokens_used=final["tokens_used"],
-                           judge_prompt_id=judge_prompt_id if requested else None,
-                           judge_prompt_version=judge_prompt_version if requested else None)
-    events.run_finished(run)   # run.end is emitted by the caller's run scope, after the write-back (FR-001)
-    return run
+    run_lease = lease(app_state, store, run_id) if app_state is not None else nullcontext()
+    with run_lease:
+        if app_state is not None:
+            mark_active(app_state, run_id)   # this run's own first segment is an accepted exit too (research D26)
+        deadline = clock() + time_limit_s
+        events.run_started(store, run_id=run_id, target_id=target_id, mode="adaptive", family=seed_prompt.family,
+                           prompt_id=seed_prompt.id, attacker_source=attacker_source, attacker_model=attacker.model,
+                           judge_model=judge.model if judge.configured else None, attacker_prompt=attacker_prompt,
+                           judge_prompt=judge_prompt, turn_budget=max_turns, token_budget=token_budget,
+                           time_limit_s=int(time_limit_s), use_prior_experience=use_prior_experience,
+                           **checker.run_start_fields())
+        deps = _LiveDeps(store=store, run_id=run_id, resolved=resolved,
+                         secrets=[value for _, value in resolved.headers],
+                         mode=mode, sender=sender, transport=transport, resolver=resolver, judge=judge,
+                         judge_prompt=judge_prompt, judge_prompt_id=judge_prompt_id,
+                         judge_prompt_version=judge_prompt_version, checker=checker, max_turns=max_turns,
+                         token_budget=token_budget, deadline=deadline, clock=clock, invocation_start=clock(),
+                         seed_prompt=seed_prompt, opening=opening, attacker=attacker, hint_provider=hint_provider,
+                         attacker_prompt=attacker_prompt, attacker_prompt_id=attacker_prompt_id,
+                         attacker_prompt_version=attacker_prompt_version)
+        config = _recursion_limit(max_turns)
+        invoke_kwargs: dict[str, Any] = {}
+        if graph.checkpointer is not None:   # never on the bare, checkpointer-free graph (research D2, FR-003)
+            config = {**config, **thread_config(run_id)}
+            invoke_kwargs["durability"] = "sync"
+        final = await graph.ainvoke(_initial_state(), config, context=deps, **invoke_kwargs)
+        outcome: Outcome = final["outcome"]
+        requested = final["judge_requests"]
+        run = store.finish_run(run_id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence,
+                               reason=outcome.reason, judge_used=outcome.judge_used,
+                               judge_model=judge.model if outcome.judge_used else None,
+                               failure_step=outcome.failure_step, stopping_condition=outcome.stopping_condition,
+                               succeeded_turn=outcome.succeeded_turn, turns_used=final["turns_used"],
+                               tokens_used=final["tokens_used"],
+                               judge_prompt_id=judge_prompt_id if requested else None,
+                               judge_prompt_version=judge_prompt_version if requested else None)
+        events.run_finished(run)   # run.end is emitted by the caller's run scope, after the write-back (FR-001)
+        return run
 
 
 async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run, source_turns: list[Turn],
@@ -592,7 +692,8 @@ async def run_replay_adaptive(store: TargetStore, *, target_id: int, source: Run
                            transport=transport, resolver=resolver, judge=judge, judge_prompt=judge_prompt,
                            judge_prompt_id=judge_prompt_id, judge_prompt_version=judge_prompt_version,
                            checker=checker, max_turns=max_turns, token_budget=token_budget, deadline=deadline,
-                           clock=clock, source=source, source_turns=source_turns)
+                           clock=clock, time_spent_at_invocation_start=0.0, invocation_start=clock(),
+                           source=source, source_turns=source_turns)
         initial: _ReplayState = {**_initial_state(), "turn_results": []}
         final = await REPLAY_GRAPH.ainvoke(initial, _recursion_limit(max_turns), context=deps)
         outcome: Outcome = final["outcome"]

@@ -60,6 +60,15 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "run.end": ("verdict", "hard_evidence", "stopping_condition", "failure_step", "judge_used", "turns_used",
                 "tokens_used", "succeeded_turn", "memory_written", "duration_ms", "cost_usd", "cost_note", "error",
                 "replay_outcome", "evidence_kinds", "evidence_count", "side_channel_status"),
+    # Feature 014: a checkpointed row found still in_progress at start-up (the sweep's own classification), or a
+    # checkpointed scope exiting on an exception within the same process (research D20, D21) - never confused for
+    # each other by a reader; `error` only on the second source, the exception's own class, never its text.
+    "run.interrupted": ("resumable", "error"),
+    "run.resumed": ("from_turn", "from_step", "was_paused"),
+    "run.paused": ("turn",),
+    "run.decided": ("decision",),
+    "run.stopped": ("was_paused", "reconciled", "trigger", "idle_hours"),
+    "idle_stop.check_failed": ("run_id", "exc_type"),
     # Feature 013 (contracts/log-records-delta.md): counts, kinds, statuses and steps only - never a token, a
     # URL, a correlation id, an auth value, a tool-argument value, a state key or value, or an evidence detail.
     "evidence.check": ("checks", "evidence_kinds", "evidence_count", "side_channel_status", "callback_wait_ms",
@@ -185,6 +194,12 @@ class RunContext:
     evidence_kinds: list[str] = field(default_factory=list)
     evidence_count: int = 0
     side_channel_status: str = "not_configured"
+    # Feature 014 (research D21): whether this run is a live, checkpointed adaptive run at all (set once, when
+    # the scope opens, never re-read from the store at exit) and whether the row was actually finished before
+    # this scope closes - together, these decide whether the exit emits `run.end`, a kept `run.interrupted`, or
+    # nothing (a clean pause).
+    checkpointed: bool = False
+    finished: bool = False
 
 
 _RUN: contextvars.ContextVar[RunContext | None] = contextvars.ContextVar("kestrel_run", default=None)
@@ -208,11 +223,16 @@ def in_run() -> bool:
 
 
 @contextmanager
-def run_scope() -> Iterator[RunContext]:
+def run_scope(*, checkpointed: bool = False) -> Iterator[RunContext]:
     """Open a run's scope around the run function and its write-back (research D4). Its exit emits `run.end` — with
-    the error's class when an exception escaped — but only if `run.start` was emitted: a failed claim emits nothing."""
+    the error's class when an exception escaped — but only if `run.start` was emitted: a failed claim emits nothing.
+
+    `checkpointed` (feature 014, research D21, FR-053) marks this scope, from the moment it opens, as belonging to
+    a live, checkpointed adaptive run — the original run-start path passes `checkpointed=True` the instant it
+    claims such a row, before its first invocation, never only a later, reopened scope. This is what the exit
+    branches on (`_scope_exit`), never a fresh store read."""
     experiment_id, arm = _EXPERIMENT.get() or (None, None)
-    ctx = RunContext(keep=True, experiment_id=experiment_id, arm=arm)
+    ctx = RunContext(keep=True, experiment_id=experiment_id, arm=arm, checkpointed=checkpointed)
     token = _RUN.set(ctx)
     error: BaseException | None = None
     try:
@@ -223,9 +243,57 @@ def run_scope() -> Iterator[RunContext]:
     finally:
         try:
             if ctx.started:
-                _run_end(ctx, error)
+                _scope_exit(ctx, error)
         finally:
             _RUN.reset(token)
+
+
+@contextmanager
+def reopened_run_scope(store: Any, run: Any) -> Iterator[RunContext]:
+    """Open a logging scope for a run that already has its own `run.start` from an earlier segment (feature 014,
+    research D20, D21): a resume, a decision, Stop, the automatic idle-stop check, or the start-up sweep's own
+    classification of a checkpointed row. Never emits a fresh `run.start`; binds the run exactly as `run_scope()`
+    does, copying `checkpointed` straight from the `Run` it is given (never a second, independent store read);
+    seeds the per-run kept-line counter from the highest one already stored, so a new line continues this run's
+    own sequence rather than restarting it (FR-017). The scope's own exit follows the identical rule `run_scope()`
+    already does (`_scope_exit`)."""
+    ctx = RunContext(keep=True, run_id=run.id, target_id=run.target_id, mode=run.mode, family=run.family,
+                     store=store, started=True, checkpointed=bool(getattr(run, "is_checkpointed", False)),
+                     log_kept=store.highest_log_seq(run.id))
+    token = _RUN.set(ctx)
+    error: BaseException | None = None
+    try:
+        yield ctx
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        try:
+            _scope_exit(ctx, error)
+        finally:
+            _RUN.reset(token)
+
+
+def mark_finished(ctx: RunContext | None = None) -> None:
+    """Tell this scope's own exit that the row was actually finished before it closes (feature 014, research
+    D21): called by the one shared finishing function the moment it actually finishes a run's row. Defaults to
+    the current scope; a caller that already holds the context it just opened may pass it directly."""
+    target = ctx if ctx is not None else _RUN.get()
+    if target is not None:
+        target.finished = True
+
+
+def _scope_exit(ctx: RunContext, error: BaseException | None) -> None:
+    """Feature 014 (research D21): `run.end` keeps its existing, unconditional rule for every run and every exit,
+    except one narrow case - a checkpointed adaptive run whose scope is ending while its row is still
+    `in_progress`. That case emits a kept `run.interrupted` line instead, only when an exception escaped (a clean
+    exit at a pause - `run.paused` already told that story - emits nothing in its place); every other combination
+    (not checkpointed at all, or checkpointed and finished) emits `run.end` exactly as today."""
+    if not ctx.checkpointed or ctx.finished:
+        _run_end(ctx, error)
+        return
+    if error is not None:
+        emit("run.interrupted", logging.ERROR, resumable=True, error=type(_root_cause(error)).__name__)
 
 
 @contextmanager
@@ -397,11 +465,16 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
 
 def run_finished(run: Any) -> None:
     """Stash the finished run's outcome for `run.end` (emitted at the scope's exit, after the write-back).
-    `replay_outcome` (feature 012) is None for every non-replay run, so `_run_end` omits it there entirely."""
+    `replay_outcome` (feature 012) is None for every non-replay run, so `_run_end` omits it there entirely.
+    Feature 014 (research D21): marks the scope's own `finished` flag too - this is the one place every existing
+    finishing path already calls, exactly when a row has just been durably finished, so a checkpointed scope's
+    own exit (`_scope_exit`) correctly emits `run.end` for a normal finish and never mistakes it for an exit still
+    leaving the row `in_progress`."""
     try:
         ctx = _live()
         if ctx is None:
             return
+        ctx.finished = True
         ctx.outcome = {"verdict": run.verdict, "hard_evidence": bool(run.hard_evidence),
                        "stopping_condition": run.stopping_condition, "failure_step": run.failure_step,
                        "turns_used": run.turns_used if run.turns_used is not None else ctx.turn_lines,
@@ -411,6 +484,15 @@ def run_finished(run: Any) -> None:
         _end_turn_span(ctx)
     except Exception as error:
         _backstop("run.end", error)
+
+
+def run_interrupted(*, resumable: bool, error: str | None = None) -> None:
+    """The start-up sweep's own classification of a checkpointed row left `in_progress` by a previous process
+    (feature 014, research D20): kept into that run's own log, not only the stream. `error` is never set from
+    this source (nothing escaped; the row was simply found this way) - the scope-exit source sets it itself,
+    directly in `_scope_exit`."""
+    emit("run.interrupted", logging.ERROR if error is not None else logging.INFO, resumable=resumable,
+         **_present({"error": error}))
 
 
 def _root_cause(error: BaseException) -> BaseException:

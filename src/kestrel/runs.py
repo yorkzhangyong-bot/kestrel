@@ -171,15 +171,35 @@ def _finish(store: TargetStore, run_id: int, prompt: AttackPrompt, message: str,
     return run
 
 
+def finish_with_outcome(store: TargetStore, run: Run, outcome, *, turns_used: int | None = None,
+                        tokens_used: int | None = None) -> Run:
+    """Finish `run`'s row with an outcome the deterministic checks or the judge already decided, but that was not
+    yet durably recorded (feature 014, research D7, D11): shared by the start-up sweep's own reconciliation of a
+    thread whose graph reached its own end, and by Stop's identical reconciliation branch. Preserves the run's
+    own pinned judge provenance whenever the outcome was judge-decided - never left null by `finish_run`'s own
+    column-writing UPDATE, which would otherwise misattribute an already-judge-scored turn to no judge at all
+    (Principle III, FR-047). `turns_used`/`tokens_used` come from the checkpoint's own persisted state, never the
+    stale, never-finished `run` row (which has not had either written yet)."""
+    return store.finish_run(
+        run.id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence, reason=outcome.reason,
+        judge_used=outcome.judge_used, judge_model=run.judge_model if outcome.judge_used else None,
+        failure_step=outcome.failure_step, stopping_condition=outcome.stopping_condition,
+        succeeded_turn=outcome.succeeded_turn, turns_used=turns_used, tokens_used=tokens_used,
+        judge_prompt_id=run.judge_prompt_id if outcome.judge_used else None,
+        judge_prompt_version=run.judge_prompt_version if outcome.judge_used else None)
+
+
 async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,
                                attacker, judge, max_turns, token_budget, time_limit_s, sender=run_test,
                                transport=None, resolver=default_resolver, use_prior_experience=True,
-                               hint_provider=None, evidence=None):
+                               hint_provider=None, evidence=None, graph=None, app_state=None):
     """Run an adaptive (multi-turn) attack via the LangGraph loop (feature 003). Single-turn keeps execute_run.
 
     `hint_provider` (feature 004) supplies the attacker's background each turn; `evidence` (feature 013) is the
-    run's deterministic checker, None for the canary-only default. Imported lazily so runs.py and attack.graph
-    have no import cycle."""
+    run's deterministic checker, None for the canary-only default. `graph`/`app_state` (feature 014) pass through
+    to `run_adaptive` unchanged: the experiment harness leaves both None (the bare, checkpointer-free LIVE_GRAPH,
+    no execution lease), exactly as before this feature. Imported lazily so runs.py and attack.graph have no
+    import cycle."""
     from kestrel.attack.graph import run_adaptive
 
     return await run_adaptive(store, target_id=target_id, seed_prompt=seed_prompt, attacker_source=attacker_source,
@@ -187,4 +207,4 @@ async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source
                               mode=mode, transport=transport, resolver=resolver, max_turns=max_turns,
                               token_budget=token_budget, time_limit_s=time_limit_s,
                               use_prior_experience=use_prior_experience, hint_provider=hint_provider,
-                              evidence=evidence)
+                              evidence=evidence, graph=graph, app_state=app_state)
