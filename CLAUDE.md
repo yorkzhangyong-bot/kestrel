@@ -473,6 +473,14 @@ same commit. Before opening any implementation PR, review this file and add anyt
   `created_at`), and re-reading it inside the loop only widens the window in which the just-fetched `job` goes
   stale while that read's own retries sleep — a job id POSTed after such a window can belong to an attempt a
   concurrent recheck has already superseded (review round 2, finding 1).
+  **Found live, T031.** `next_action`'s `run_status = "no_job"` is transient, exactly like `"error"` — not an
+  immediate failure. A completed run's newest attempt can briefly list no `traceability` job at all right after
+  GitHub creates it (confirmed on the draft PR's QA run `45587259204`: one recheck's re-run request created
+  attempt 7 at `09:50:49`; a second, concurrent recheck read the run completed 2 s later and called
+  `get_job(filter=latest)` before attempt 7's own job existed yet — created at `09:50:52` — reading a genuinely
+  empty, successful job list and posting a false stale-result comment). `_poll`'s existing retry loop already
+  handles this once `next_action` classifies `"no_job"` like `"error"` (`wait` within the budget, the comment
+  only once it runs out); no other orchestration change was needed.
 - 2026-11-24 — **Graph typed state (refactor, no behaviour change).** `attack/graph.py` compiles its two graphs
   once at import (`LIVE_GRAPH`, `REPLAY_GRAPH`) from module-level node functions —
   `StateGraph(_State, context_schema=_LiveDeps)` / `StateGraph(_ReplayState, context_schema=_ReplayDeps)`. Every

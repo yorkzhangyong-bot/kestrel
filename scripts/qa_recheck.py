@@ -67,15 +67,15 @@ def next_action(run_status: str | None, rerun_status: str | None, elapsed: float
     """The recheck's steps 1-5 as a pure state machine (contracts/pr-rules.md "Recheck workflow" /
     "Recheck script"). ``run_status``: ``None`` (no QA run for the SHA), the run's own status, ``"error"`` (a
     failed read of steps 1-3 or the post-refusal re-read: never read as "no run"), or ``"no_job"`` (step 3 found
-    the run completed with no job named ``traceability``: not transient, nothing to retry toward).
+    the run completed with no job named ``traceability`` yet - treated as transient, like a failed read: the
+    newest attempt is usually still being set up, so this is retried at the next poll within the budget, exactly
+    like `"error"` - found live on the throwaway draft PR of quickstart scenario 6, 2026-11-25).
     ``rerun_status``: ``None`` (not requested yet), ``"accepted"``, or ``"refused"`` (any cause - GitHub's job
     re-run endpoint documents only `201`/`403` and sends the same `403` whether another attempt is in progress or
     the refusal is final, so a refusal is classified by re-reading the run, never by that code).
     """
-    if run_status == "no_job":
-        return "fail-error"                                  # step 3: completed, but no job to rerun - no retry
-    if run_status == "error":
-        return "wait" if elapsed < budget else "fail-error"   # a failed read: retry, or give up at the budget
+    if run_status in ("no_job", "error"):
+        return "wait" if elapsed < budget else "fail-error"   # transient: retry, or give up at the budget
     if run_status is None or run_status in NOT_STARTED:
         return "exit-0-no-run"                                # step 1: nothing to refresh
     if rerun_status == "accepted":

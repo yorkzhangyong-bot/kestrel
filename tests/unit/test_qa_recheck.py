@@ -99,8 +99,14 @@ STEP_CASES = [
     ("error", None, 2400, "fail-error"),
     ("error", "refused", 10, "wait"),
     ("error", "accepted", 1800, "fail-error"),
-    ("no_job", None, 0, "fail-error"),
+    # no_job (found live on the draft PR, 2026-11-25): transient, exactly like "error" - the newest attempt is
+    # usually still being set up, so this is retried within the budget rather than failing at once.
+    ("no_job", None, 0, "wait"),
+    ("no_job", None, 1799, "wait"),
     ("no_job", None, 1800, "fail-error"),
+    ("no_job", None, 2400, "fail-error"),
+    ("no_job", "refused", 10, "wait"),
+    ("no_job", "accepted", 1800, "fail-error"),
 ]
 
 
@@ -304,13 +310,36 @@ def test_get_job_error_is_retried_like_any_other_step_3_failure():
     assert len(client.comments) == 1 and "error" in client.comments[0]
 
 
-def test_get_job_succeeding_with_no_traceability_job_comments_at_once_no_retry_spent():
-    client = StubClient(get_job=_sequence(None))
+def test_no_job_once_then_a_fresh_job_appears_exits_0_no_comment_no_post():
+    """Found live on the draft PR (quickstart scenario 6, step 2e, 2026-11-25): the newest attempt's job can take
+    a moment to show up in `get_job(filter=latest)` even though the run itself already reads `completed` - treated
+    as transient, like a failed read, not an immediate failure."""
+    fresh_job = qr.JobInfo(job_id="9", started_at="2026-01-01T00:30:00Z")   # later than the default created_at
+    client = StubClient(get_job=_sequence(None, fresh_job))
+    code, clock = _run(client)
+    assert code == 0
+    assert client.comments == []
+    assert client.request_rerun.calls == 0
+    assert client.get_job.calls == 2
+    assert clock.t == 30   # one poll_interval_s wait, then the job is found
+
+
+def test_no_job_once_then_a_stale_job_appears_sends_one_post():
+    stale_job = qr.JobInfo(job_id="9", started_at="2026-01-01T00:10:00Z")   # earlier than the default created_at
+    client = StubClient(get_job=_sequence(None, stale_job))
+    code, _ = _run(client)
+    assert code == 0
+    assert client.comments == []
+    assert client.request_rerun.calls == 1
+    assert client.get_job.calls == 2
+
+
+def test_no_job_until_the_budget_runs_out_posts_the_comment_reason_error():
+    client = StubClient(get_job=_sequence(None))   # never finds the traceability job
     code, clock = _run(client, budget_s=90, poll_interval_s=30)
     assert code == 1
     assert len(client.comments) == 1 and "error" in client.comments[0]
-    assert client.get_job.calls == 1
-    assert clock.t == 0   # no sleep spent: a completed run with no job is not transient
+    assert clock.t >= 90
 
 
 def test_get_recheck_run_created_at_error_is_retried_post_still_sent_once_it_succeeds():
