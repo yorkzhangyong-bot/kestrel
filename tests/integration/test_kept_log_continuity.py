@@ -34,7 +34,7 @@ def test_a_run_resumed_twice_has_no_seq_collision_and_run_interrupted_is_kept(se
     target = _target(store)
 
     # Segment 1 (the original start): cut mid-turn-1, before any outcome.
-    _swap_saver(api, 3)
+    _swap_saver(api, 4)
     with pytest.raises(RuntimeError):
         api.post("/api/runs", json={"target_id": target, "family": "system_prompt_leak", "mode": "adaptive",
                                     "adaptive_max_turns": 3})

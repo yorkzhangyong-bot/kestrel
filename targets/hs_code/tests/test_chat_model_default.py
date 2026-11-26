@@ -1,8 +1,6 @@
 """The default chat model is one shared constant, read the same way by load_settings() and app.chat_model(),
 so the two can never drift onto different models (app.py:56, agent/config.py:81 before this fix hard-coded the
-same string twice). openai/gpt-4o-mini's only tool-capable OpenRouter endpoint is excluded by this account's
-guardrail (a 404 "ZDR violation"); openai/gpt-oss-120b is a ZDR, tool-capable endpoint. No network calls:
-ChatOpenAI's constructor only builds a client object, never invokes it."""
+same string twice). No network calls: ChatOpenAI's constructor only builds a client object, never invokes it."""
 from agent.config import DEFAULT_CHAT_MODEL, load_settings
 
 

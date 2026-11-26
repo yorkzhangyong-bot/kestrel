@@ -38,7 +38,8 @@ ANY_EVENT_FIELDS = ("message", "exc_type", "stack")
 CATALOGUE: dict[str, tuple[str, ...]] = {
     "run.start": ("prompt_id", "attacker_source", "attacker_model", "judge_model", "attacker_prompt", "judge_prompt",
                   "turn_budget", "token_budget", "time_limit_s", "use_prior_experience", "source_run_id",
-                  "side_channel", "callback_listener", "override_planted", "callback_planted"),
+                  "side_channel", "callback_listener", "override_planted", "callback_planted",
+                  "ask_before_each_turn"),
     "turn": ("source", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "cost_note",
              "attacker_model", "attacker_prompt", "judge_model", "judge_prompt", "message_chars", "reply_chars",
              "reply_truncated", "canary_hit", "hard_evidence", "judged", "verdict", "evidence_kinds",
@@ -429,13 +430,16 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
                 token_budget: int | None = None, time_limit_s: int | None = None,
                 use_prior_experience: bool | None = None, source_run_id: int | None = None,
                 side_channel: str | None = None, callback_listener: str | None = None,
-                override_planted: bool | None = None, callback_planted: bool | None = None) -> None:
+                override_planted: bool | None = None, callback_planted: bool | None = None,
+                ask_before_each_turn: bool | None = None) -> None:
     """Emit `run.start` right after the run row is claimed and bind the run on its scope. With no scope open (a
     direct call) the line still goes to the stream, with no run identifiers, and is not kept (SC-005).
     `source_run_id` (feature 012) names the run a replay re-tests; omitted entirely for a non-replay run.
     Feature 013 adds four more, each omitted unless the caller passes it (the real run starters always do):
     whether the target has a side channel, whether the listener is enabled at all (which `callback_planted`
-    alone cannot distinguish from "this family carries no callback task"), and what this run planted."""
+    alone cannot distinguish from "this family carries no callback task"), and what this run planted.
+    Feature 014 part 2 (FR-031): `ask_before_each_turn` is `true` only on an adaptive run started with the
+    checkbox ticked, omitted entirely otherwise - never a visible `false`."""
     try:
         fields = _present({"prompt_id": prompt_id, "attacker_source": attacker_source,
                            "attacker_model": attacker_model, "judge_model": judge_model,
@@ -443,7 +447,8 @@ def run_started(store: Any, *, run_id: int, target_id: int, mode: str, family: s
                            "turn_budget": turn_budget, "token_budget": token_budget, "time_limit_s": time_limit_s,
                            "use_prior_experience": use_prior_experience, "source_run_id": source_run_id,
                            "side_channel": side_channel, "callback_listener": callback_listener,
-                           "override_planted": override_planted, "callback_planted": callback_planted})
+                           "override_planted": override_planted, "callback_planted": callback_planted,
+                           "ask_before_each_turn": ask_before_each_turn})
         ctx = _RUN.get()
         if ctx is None or not ctx.keep or ctx.started:
             emit("run.start", **fields)
@@ -498,6 +503,14 @@ def run_paused(*, turn: int) -> None:
     exception and the row still unfinished, already withholds both `run.end` and `run.interrupted` for this case
     (events.py's own `_scope_exit`) - this line is the only one telling that story."""
     emit("run.paused", turn=turn)
+
+
+def run_decided(*, turn: int, decision: str) -> None:
+    """One of the three controls was exercised on a paused run's pending turn (feature 014 part 2, FR-026): emitted
+    once per decision, before the run continues (or ends, for "stop"). `turn` rides on the scope as a field (a
+    scope field, not a catalogue field, so it is recorded through the ordinary scope-field merge), `decision` is
+    the one catalogued field."""
+    emit("run.decided", turn=turn, decision=decision)
 
 
 def reopen_turn(*, turn: int, elapsed_s: float, attacker_usage: Mapping[str, Any] | None = None) -> None:

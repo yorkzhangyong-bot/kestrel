@@ -147,6 +147,16 @@ this feature, **except** for exactly these ten, each edited only for its own sta
 There is no production-code fallback for a store that lacks `has_turn`/`add_turn_with_evidence` — every real store
 gains both in the same schema bump (T006), so the `record` step is written against them unconditionally.
 
+Part 2's own topology change adds one more class, also mechanical: the `approve` node inserts one extra checkpoint
+write per turn, so the fault-injection `fail_at` numbers in part 1's own test files
+(`tests/unit/test_start_up_sweep_classification.py`'s put-number table, `test_checkpoint_gc.py`,
+`test_idle_auto_stop.py`, `test_kept_log_continuity.py`, `test_live_checker_rebuild.py`,
+`test_owasp_excludes_in_progress.py`, `test_resume_adaptive_run.py`, `test_resume_api.py`,
+`test_resume_pinned_caps.py`, `test_stop_endpoint.py`, `test_write_back_once.py`) each shift by +1, and
+`_STATIC_NEXT_STEP` gains the one plain edge the node adds (`"approve": "send"`, research D4) — the same
+empirically-verified put-numbering technique T017 established, never a behaviour change to what any of those
+tests asserts (FR-032's own part-2 half, SC-003).
+
 **Target Platform**: local/hosted FastAPI service + Streamlit UI (Windows 11 dev; PowerShell), unchanged.
 
 **Project Type**: web service (FastAPI API) + Streamlit UI that only calls the API, unchanged. No new top-level

@@ -328,86 +328,73 @@ def _pinned_judge(run: Run, *, settings: Any, transport: Any) -> JudgeClient:
                       transport=transport, system_prompt=pinned)
 
 
-async def execute_resume(store: TargetStore, graph: Any, app_state: Any, settings: Any, library: Any,
-                         terms_version: str, run_id: int) -> Run:
-    """Continue a resumable (not paused) run (014/FR-014, FR-041, FR-047, contracts/api.md). The caller already
-    holds `run_id`'s own execution lease and has already validated its plain columns before opening any scope
-    (research D29); this builds a fresh `_LiveDeps`, pinned to the run's own claim-time caps/model/prompt
-    references, and resumes the real compiled graph from its last durably committed step. Raises `NotResumable`
-    (the documented 409s) or `PinnedModelUnavailable`."""
-    from kestrel.attack.graph import LIVE_GRAPH, Outcome, _LiveDeps   # lazy: avoids a module-level import cycle
+PINNED_UNAVAILABLE_MESSAGE = ("This run's own attacker or judge model (or its prompt version, or its own library "
+                              "seed) is no longer available; stop it instead.")
 
-    status = await checkpointing.classify(graph, run_id, leased=False)
-    if isinstance(status, checkpointing.ReachedEnd):
-        return await stop_run(store, graph, settings, run_id, triggered_by="user")
-    if isinstance(status, (checkpointing.NoCheckpoint, checkpointing.Unreadable, checkpointing.Incompatible)):
-        raise NotResumable(run_id, "not_resumable", "This run cannot be resumed.")
-    if isinstance(status, checkpointing.Paused):
-        raise NotResumable(run_id, "paused", "This run is paused awaiting a decision; decide it instead.")
-    # `leased=False` above means Running is unreachable; the remaining shape is the resumable one.
-    assert isinstance(status, checkpointing.Resumable)
-    run = store.get_run(run_id)
+
+def _pinned_deps(store: TargetStore, app_state: Any, settings: Any, library: Any, run: Run, state: dict,
+                 terms_version: str) -> tuple[Any, EvidenceChecker]:
+    """The preconditions and the fresh, claim-time-pinned `_LiveDeps` for a resumed or decided run (FR-041,
+    FR-047): the target's *current* connection settings and secrets (feature 012's "current, not as it was"
+    meaning, FR-047's Assumptions), but the run's own stored caps and attacker/judge model and prompt references -
+    never whatever Kestrel is currently configured with. Raises `NotResumable` (the documented 409s) or
+    `PinnedModelUnavailable`. Returns `(deps, checker)` so the caller can `note_sent` the in-flight message when
+    the resume point is past send."""
+    from kestrel.attack.graph import _LiveDeps   # lazy: avoids a module-level import cycle
+
     target = store.get_target(run.target_id)
     if not target.permission_confirmed_at:
-        raise NotResumable(run_id, "permission_missing",
+        raise NotResumable(run.id, "permission_missing",
                            "Tick the permission box and save the target before attacking it.")
     if target.terms_version != terms_version:
-        raise NotResumable(run_id, "terms_outdated",
+        raise NotResumable(run.id, "terms_outdated",
                            "The terms of service have changed; read them and tick the box again.")
     if not settings.attacker_api_key:
-        raise NotResumable(run_id, "attacker_unavailable",
+        raise NotResumable(run.id, "attacker_unavailable",
                            "No attacker model is configured, so an adaptive attack can't run.")
     if library is None:
-        raise NotResumable(run_id, "library_unavailable", "The attack library is not available.")
+        raise NotResumable(run.id, "library_unavailable", "The attack library is not available.")
     try:
         seed = library.pick(run.family, run.prompt_id)
         attacker = _pinned_attacker(run, settings=settings, transport=app_state.transport)
         judge = _pinned_judge(run, settings=settings, transport=app_state.transport)
         if run.judge_model and not settings.judge_api_key:
-            raise PinnedModelUnavailable(
-                "This run's own attacker or judge model (or its prompt version, or its own library seed) is no "
-                "longer available; stop it instead.")
+            raise PinnedModelUnavailable(PINNED_UNAVAILABLE_MESSAGE)
     except LookupError as error:
-        raise PinnedModelUnavailable(
-            "This run's own attacker or judge model (or its prompt version, or its own library seed) is no "
-            "longer available; stop it instead.") from error
+        raise PinnedModelUnavailable(PINNED_UNAVAILABLE_MESSAGE) from error
 
-    state = status.snapshot.values
-    stored_turns = store.list_turns(run_id)
-    # The target's *current* connection settings and secrets (feature 012's own "current, not as it was" meaning,
-    # FR-047's Assumptions) - never api/main.py's own stored_values helper, to avoid a module-level import cycle.
+    stored_turns = store.list_turns(run.id)
+    # Never api/main.py's own stored_values helper, to avoid a module-level import cycle.
     stored = {h.name.lower(): h.value for h in store.resolve_headers(target.id)}
     resolved_headers = tuple((h.name, stored.get(h.name.lower()) or "") for h in target.headers)
     resolved = ResolvedSettings(url=target.url, method=target.method, headers=resolved_headers,
                                 body_template=target.body_template, response_path=target.response_path)
     checker = rebuild_live_checker(store, library, run, stored_turns,
                                    mask=[value for _, value in resolved_headers] + [resolved.url])
-    if status.completed and status.from_step in ("evidence", "judge", "decide", "record"):
-        checker.note_sent(state["pending_message"], state["turns_used"] + 1, emit_disarm_event=True)
-
     clock = time.monotonic
     deadline = clock() + max(0.0, (run.time_limit_s or 0) - state.get("time_spent_s", 0.0))
-    deps = _LiveDeps(store=store, run_id=run_id, resolved=resolved,
+    deps = _LiveDeps(store=store, run_id=run.id, resolved=resolved,
                      secrets=[value for _, value in resolved_headers], mode=app_state.settings.mode,
                      sender=run_test, transport=app_state.transport, resolver=app_state.resolver, judge=judge,
                      judge_prompt=(f"{run.judge_prompt_id}@{run.judge_prompt_version}"
-                                  if run.judge_prompt_id else None),
+                                   if run.judge_prompt_id else None),
                      judge_prompt_id=run.judge_prompt_id, judge_prompt_version=run.judge_prompt_version,
                      checker=checker, max_turns=run.turn_budget or 0, token_budget=run.token_budget or 0,
                      deadline=deadline, clock=clock, time_spent_at_invocation_start=state.get("time_spent_s", 0.0),
                      invocation_start=clock(), seed_prompt=seed, opening=run.prompt_text, attacker=attacker,
                      hint_provider=None,
                      attacker_prompt=(f"{run.attacker_prompt_id}@{run.attacker_prompt_version}"
-                                     if run.attacker_prompt_id else None),
+                                      if run.attacker_prompt_id else None),
                      attacker_prompt_id=run.attacker_prompt_id, attacker_prompt_version=run.attacker_prompt_version)
-    events.run_resumed(from_turn=state["turns_used"] + 1, from_step=status.from_step, was_paused=False)
-    events.reopen_turn(turn=state["turns_used"] + 1,
-                       elapsed_s=state.get("time_spent_s", 0.0) - state.get("turn_time_spent_at_start", 0.0),
-                       attacker_usage=state.get("turn_attacker_usage"))
-    final = await graph.ainvoke(None, checkpointing.thread_config(run_id), context=deps, durability="sync")
-    outcome: Outcome = final["outcome"]
+    return deps, checker
+
+
+def _finish_resumed(store: TargetStore, run: Run, final: dict) -> Run:
+    """Finish a resumed/decided run's row from the graph's terminal `Outcome`, preserving the run's own pinned
+    judge provenance, then stash it for `run.end` (FR-047)."""
+    outcome = final["outcome"]
     requested = final["judge_requests"]
-    run = store.finish_run(run_id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence,
+    run = store.finish_run(run.id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence,
                            reason=outcome.reason, judge_used=outcome.judge_used,
                            judge_model=run.judge_model if outcome.judge_used else None,
                            failure_step=outcome.failure_step, stopping_condition=outcome.stopping_condition,
@@ -419,6 +406,82 @@ async def execute_resume(store: TargetStore, graph: Any, app_state: Any, setting
     return run
 
 
+def _reopen_paused_turn(state: dict) -> None:
+    """Re-open the turn a resumed/decided run continues from, discounting the interruption/pause gap and carrying
+    over the attacker call's own already-recorded usage (research D21)."""
+    events.reopen_turn(turn=state["turns_used"] + 1,
+                       elapsed_s=state.get("time_spent_s", 0.0) - state.get("turn_time_spent_at_start", 0.0),
+                       attacker_usage=state.get("turn_attacker_usage"))
+
+
+async def execute_resume(store: TargetStore, graph: Any, app_state: Any, settings: Any, library: Any,
+                         terms_version: str, run_id: int) -> Run:
+    """Continue a resumable (not paused) run (014/FR-014, FR-041, FR-047, contracts/api.md). The caller already
+    holds `run_id`'s own execution lease and has already validated its plain columns before opening any scope
+    (research D29); this builds a fresh `_LiveDeps`, pinned to the run's own claim-time caps/model/prompt
+    references, and resumes the real compiled graph from its last durably committed step. Raises `NotResumable`
+    (the documented 409s) or `PinnedModelUnavailable`."""
+    status = await checkpointing.classify(graph, run_id, leased=False)
+    if isinstance(status, checkpointing.ReachedEnd):
+        return await stop_run(store, graph, settings, run_id, triggered_by="user")
+    if isinstance(status, (checkpointing.NoCheckpoint, checkpointing.Unreadable, checkpointing.Incompatible)):
+        raise NotResumable(run_id, "not_resumable", "This run cannot be resumed.")
+    if isinstance(status, checkpointing.Paused):
+        raise NotResumable(run_id, "paused", "This run is paused awaiting a decision; decide it instead.")
+    # `leased=False` above means Running is unreachable; the remaining shape is the resumable one.
+    assert isinstance(status, checkpointing.Resumable)
+    run = store.get_run(run_id)
+    state = status.snapshot.values
+    deps, checker = _pinned_deps(store, app_state, settings, library, run, state, terms_version)
+    if status.completed and status.from_step in ("evidence", "judge", "decide", "record"):
+        checker.note_sent(state["pending_message"], state["turns_used"] + 1, emit_disarm_event=True)
+    events.run_resumed(from_turn=state["turns_used"] + 1, from_step=status.from_step, was_paused=False)
+    _reopen_paused_turn(state)
+    final = await graph.ainvoke(None, checkpointing.thread_config(run_id), context=deps, durability="sync")
+    if final.get("outcome") is None:
+        # The run paused again (its own flag was on): the scope's clean exit withholds run.end; run.paused names it.
+        events.run_paused(turn=final["turns_used"] + 1)
+        return store.get_run(run_id)
+    return _finish_resumed(store, run, final)
+
+
+async def execute_decision(store: TargetStore, graph: Any, app_state: Any, settings: Any, library: Any,
+                           terms_version: str, run_id: int, turn: int, decision: str) -> Run:
+    """Decide a paused run's pending turn (014/FR-020 to FR-023, FR-039, FR-041, FR-047, contracts/api.md). The
+    caller already holds `run_id`'s own execution lease and has already validated its plain columns and opened its
+    one scope before calling in (research D29): this classifies, refuses (`NotResumable`, code `not_paused`) on any
+    mismatch between the request's own `turn` and the pending interrupt's actual turn, emits `run.decided` once past
+    validation, then - for `"stop"` - calls `mark_active` and dispatches to `stop_run`, or - for `"approve"`/
+    `"run_to_end"` - checks preconditions, calls `mark_active`, and resumes with `Command(resume={interrupt_id:
+    decision})`. `mark_active` is called here, only past every validation, so a refused decision never resets the
+    run's idle clock (research D26)."""
+    from langgraph.types import Command
+
+    status = await checkpointing.classify(graph, run_id, leased=False)
+    if not isinstance(status, checkpointing.Paused):
+        raise NotResumable(run_id, "not_paused", "This run has no pending turn to decide.")
+    if turn != status.turn:
+        raise NotResumable(run_id, "not_paused", "This run's pending turn has already moved on.")
+    events.run_decided(turn=status.turn, decision=decision)
+    if decision == "stop":
+        checkpointing.mark_active(app_state, run_id)
+        return await stop_run(store, graph, settings, run_id, triggered_by="user")
+
+    run = store.get_run(run_id)
+    snap = await graph.aget_state(checkpointing.thread_config(run_id))
+    state = snap.values
+    deps, _checker = _pinned_deps(store, app_state, settings, library, run, state, terms_version)
+    checkpointing.mark_active(app_state, run_id)
+    events.run_resumed(from_turn=state["turns_used"] + 1, from_step="approve", was_paused=True)
+    _reopen_paused_turn(state)
+    final = await graph.ainvoke(Command(resume={status.interrupt_id: decision}),
+                                checkpointing.thread_config(run_id), context=deps, durability="sync")
+    if final.get("outcome") is None:
+        events.run_paused(turn=final["turns_used"] + 1)
+        return store.get_run(run_id)
+    return _finish_resumed(store, run, final)
+
+
 def finish_api_run(store: TargetStore, run: Run, *, experience: Any, dedupe_threshold: float | None,
                    planted_values: Sequence[str] = (), task_texts: Sequence[str] = ()) -> Run:
     """The one shared step every API-driven finishing path (other than the original start, whose own equivalent
@@ -426,11 +489,14 @@ def finish_api_run(store: TargetStore, run: Run, *, experience: Any, dedupe_thre
     write-back, skipped if already attempted (`run.memory_written is not None` - Stop's own no-checkpoint branch
     pre-sets it False, FR-056), then checkpoint deletion. Lease release is never a step here - it is the caller's
     own `with checkpointing.lease(...):` block exiting, exactly like `run_adaptive`'s own self-contained use of
-    it (FR-055)."""
+    it (FR-055). A run still `in_progress` (a pause, part 2) is returned untouched - nothing to write back and no
+    checkpoint to delete yet (FR-043, FR-006)."""
+    if run.status != "finished":
+        return run
     if run.memory_written is None:
         turns = store.list_turns(run.id) if run.mode == "adaptive" else []
         write_back(experience, store, run, turns, dedupe_threshold=dedupe_threshold,
-                  planted_values=list(planted_values), task_texts=list(task_texts))
+                   planted_values=list(planted_values), task_texts=list(task_texts))
         run = store.get_run(run.id)
     store.delete_checkpoint(run.id)
     return run
@@ -439,14 +505,15 @@ def finish_api_run(store: TargetStore, run: Run, *, experience: Any, dedupe_thre
 async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,
                                attacker, judge, max_turns, token_budget, time_limit_s, sender=run_test,
                                transport=None, resolver=default_resolver, use_prior_experience=True,
-                               hint_provider=None, evidence=None, graph=None, app_state=None):
+                               hint_provider=None, evidence=None, graph=None, app_state=None,
+                               ask_before_each_turn=False):
     """Run an adaptive (multi-turn) attack via the LangGraph loop (feature 003). Single-turn keeps execute_run.
 
     `hint_provider` (feature 004) supplies the attacker's background each turn; `evidence` (feature 013) is the
     run's deterministic checker, None for the canary-only default. `graph`/`app_state` (feature 014) pass through
     to `run_adaptive` unchanged: the experiment harness leaves both None (the bare, checkpointer-free LIVE_GRAPH,
-    no execution lease), exactly as before this feature. Imported lazily so runs.py and attack.graph have no
-    import cycle."""
+    no execution lease), exactly as before this feature. `ask_before_each_turn` (feature 014 part 2, FR-018) is the
+    checkbox, only ever true on the live API path. Imported lazily so runs.py and attack.graph have no import cycle."""
     from kestrel.attack.graph import run_adaptive
 
     return await run_adaptive(store, target_id=target_id, seed_prompt=seed_prompt, attacker_source=attacker_source,
@@ -454,4 +521,5 @@ async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source
                               mode=mode, transport=transport, resolver=resolver, max_turns=max_turns,
                               token_budget=token_budget, time_limit_s=time_limit_s,
                               use_prior_experience=use_prior_experience, hint_provider=hint_provider,
-                              evidence=evidence, graph=graph, app_state=app_state)
+                              evidence=evidence, graph=graph, app_state=app_state,
+                              ask_before_each_turn=ask_before_each_turn)

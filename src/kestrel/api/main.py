@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse
 
 from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, BatchReplayEntryOut,
                                  BatchReplayResultOut, ConfigOut, ConnectionSettingsIn,
-                                 ConnectionTestRequest, ConnectionTestResult, EvidenceConfigOut, EvidenceItemOut,
-                                 ExperienceOut, FormDefaults, HeaderOut,
+                                 ConnectionTestRequest, ConnectionTestResult, DecisionRequest, EvidenceConfigOut,
+                                 EvidenceItemOut, ExperienceOut, FormDefaults, HeaderOut,
                                  JudgeOut, PendingTurnOut, PlantedTokenOut, ProfileOut, ReplayComparisonOut,
                                  RunDetail, RunRequest, RunSummary,
                                  SaveTargetRequest, TargetDetail, TargetSummary, TermsOut, TurnComparisonOut, TurnOut,
@@ -55,7 +55,8 @@ from kestrel.replay import (REPLAY_BLOCKED_REASONS, BatchTooLarge, NotReplayable
                            is_finding)
 from kestrel.evidence.checker import rebuild_live_checker
 from kestrel.runs import (NotResumable, NotStoppable, PinnedModelUnavailable, TOTAL_DEADLINE_S, execute_run,
-                          execute_adaptive_run, execute_resume, finish_api_run, finish_with_outcome, stop_run)
+                          execute_adaptive_run, execute_decision, execute_resume, finish_api_run,
+                          finish_with_outcome, stop_run)
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
@@ -397,6 +398,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
+        if body.ask_before_each_turn and body.mode != "adaptive":
+            return form_errors([{"field": "ask_before_each_turn",
+                                 "message": "Ask before each turn is only available for an adaptive attack."}])
         canaries = store.list_canaries(target.id)
         # The run's deterministic checker (feature 013): the one shared builder the experiment engine uses too.
         checker = build_checker(store=store, family=prompt.family, canaries=canaries, mode=settings.mode,
@@ -428,7 +432,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                         time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                         resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
                         hint_provider=hint_provider, evidence=checker, graph=request.app.state.live_graph,
-                        app_state=request.app.state)
+                        app_state=request.app.state, ask_before_each_turn=body.ask_before_each_turn)
                 else:
                     run = await execute_run(store, target_id=target.id, prompt=prompt,
                                             attacker_source=library.attacker_source,
@@ -486,9 +490,48 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                                       experience=request.app.state.experience, settings=settings)
         target = store.get_target(finished.target_id)
         in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
+        classification = await classify_run(finished, graph=request.app.state.live_graph,
+                                            leases=request.app.state.leases,
+                                            started_at=request.app.state.started_at,
+                                            resume_idle_hours=settings.resume_idle_hours)
         return run_detail(store, finished, target=target, terms_version=terms.version,
                           adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
-                          turns=store.list_turns(finished.id))
+                          turns=store.list_turns(finished.id), classification=classification)
+
+    @app.post("/api/runs/{run_id}/decision", response_model=RunDetail)
+    async def decide_run_endpoint(run_id: int, body: DecisionRequest, request: Request) -> Any:
+        """Decide a paused run's pending turn (014/FR-020 to FR-023, contracts/api.md). The handler - never
+        execute_decision - acquires the lease and validates the run's own plain columns before opening any scope,
+        so a refused request never binds one (research D29)."""
+        try:
+            run = store.get_run(run_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+        if run_id in request.app.state.leases:
+            return api_error(409, "run_executing", "This run is currently executing.")
+        if run.mode != "adaptive" or not run.is_checkpointed or run.status != "in_progress":
+            return api_error(409, "not_paused", "This run has no pending turn to decide.")
+        with checkpointing.lease(request.app.state, store, run_id):
+            with events.reopened_run_scope(store, run):
+                try:
+                    finished = await execute_decision(store, request.app.state.live_graph, request.app.state,
+                                                      settings, library, terms.version, run_id, body.turn,
+                                                      body.decision)
+                except NotResumable as error:
+                    return api_error(409, error.code, error.message)
+                except PinnedModelUnavailable as error:
+                    return api_error(409, "pinned_model_unavailable", error.message)
+                finished = _finish_api_run_with_scrub(store, finished, library=request.app.state.library,
+                                                      experience=request.app.state.experience, settings=settings)
+        target = store.get_target(finished.target_id)
+        in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
+        classification = await classify_run(finished, graph=request.app.state.live_graph,
+                                            leases=request.app.state.leases,
+                                            started_at=request.app.state.started_at,
+                                            resume_idle_hours=settings.resume_idle_hours)
+        return run_detail(store, finished, target=target, terms_version=terms.version,
+                          adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
+                          turns=store.list_turns(finished.id), classification=classification)
 
     @app.post("/api/runs/{run_id}/stop", response_model=RunDetail)
     async def stop_run_endpoint(run_id: int, request: Request) -> Any:
@@ -948,7 +991,11 @@ def _finish_api_run_with_scrub(store: TargetStore, run: Run, *, library: Any, ex
     """`finish_api_run`'s own write-back, scrubbed through a freshly rebuilt checker (014/FR-063, research D17) -
     Stop never needs the checker for anything else, and must never be blocked by a missing seed or pinned prompt
     version (Stop remains available regardless, spec.md Edge Cases): a rebuild failure here skips write-back
-    entirely (never attempted with no scrub at all) rather than refusing a stop that has already happened."""
+    entirely (never attempted with no scrub at all) rather than refusing a stop that has already happened. A run
+    still `in_progress` (a pause, part 2) is returned untouched - never write back or delete a checkpoint for a
+    run that has not finished (FR-043, FR-006)."""
+    if run.status != "finished":
+        return run
     planted_values: list[str] = []
     task_texts: list[str] = []
     if run.mode == "adaptive" and run.memory_written is None:

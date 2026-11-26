@@ -58,12 +58,13 @@ def real_store(tmp_path) -> TargetStore:
     return TargetStore(tmp_path / "kestrel.db", Vault(Fernet.generate_key()))
 
 
-# put #1 = the input checkpoint (attacker pending); #2 = attacker turn 1 done (send pending); #3 = send done
-# (evidence pending); #4 = evidence done (judge pending, nothing found); #5 = judge done (record pending, the
-# static judge->record edge); #6 = record done (decide pending, the static record->decide edge - the fix this
-# feature's own analyze pass made to data-model.md); #7 = decide done (attacker turn 2 pending, looping back).
+# put #1 = the input checkpoint (attacker pending); #2 = attacker turn 1 done (approve pending, part 2); #3 =
+# approve done (send pending); #4 = send done (evidence pending); #5 = evidence done (judge pending, nothing
+# found); #6 = judge done (record pending, the static judge->record edge); #7 = record done (decide pending, the
+# static record->decide edge); #8 = decide done (attacker turn 2 pending, looping back); #9 = attacker turn 2 done.
 @pytest.mark.parametrize("fail_at, expected_step", [
-    (2, "attacker"), (3, "send"), (4, "evidence"), (5, "judge"), (6, "record"), (7, "decide"), (8, "attacker"),
+    (2, "attacker"), (3, "approve"), (4, "send"), (5, "evidence"), (6, "judge"), (7, "record"), (8, "decide"),
+    (9, "attacker"),
 ])
 def test_from_step_matches_the_compiled_graphs_own_next_node(real_store, fail_at, expected_step):
     # 014/FR-001, FR-013, FR-017, FR-032, FR-043, FR-045, FR-048, FR-052, SC-006, SC-015, SC-017
@@ -123,8 +124,8 @@ def _canary_sender():
 
 
 @pytest.mark.parametrize("fail_at, deps_kwargs", [
-    (7, {"sender": "canary", "judge_verdict": "failed"}),
-    (8, {"sender": "numbered", "judge_verdict": "succeeded"}),
+    (8, {"sender": "canary", "judge_verdict": "failed"}),
+    (9, {"sender": "numbered", "judge_verdict": "succeeded"}),
 ])
 def test_a_run_whose_outcome_was_already_decided_classifies_as_reached_end_even_when_decides_own_commit_failed(
         real_store, fail_at, deps_kwargs):

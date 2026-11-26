@@ -37,7 +37,7 @@ def test_a_stop_leaves_no_checkpoint(settings, make_client):
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    saver = _FailingPutSaver(store, 3)
+    saver = _FailingPutSaver(store, 4)
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=numbered_sender(), judge=StubJudge(verdict="failed"),
@@ -87,7 +87,7 @@ def test_deleting_a_target_removes_every_checkpoint_thread_for_its_own_runs(sett
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    saver = _FailingPutSaver(store, 3)
+    saver = _FailingPutSaver(store, 4)
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=numbered_sender(), judge=StubJudge(verdict="failed"),

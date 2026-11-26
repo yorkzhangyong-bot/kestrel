@@ -290,6 +290,7 @@ def start_run() -> None:
         "prompt_id": st.session_state.get("attack_prompt") or None,
         "mode": "adaptive" if st.session_state.get("attack_mode") == "Adaptive" else "single_turn",
         "use_prior_experience": bool(st.session_state.get("use_prior_experience", True)),
+        "ask_before_each_turn": bool(st.session_state.get("ask_before_each_turn", False)),
     }
 
 
@@ -336,11 +337,13 @@ def run_pending_resume() -> None:
     st.session_state["pending_resume"] = None
     try:
         with st.spinner("Resuming…"):
-            api_client.resume_run(run_id)
+            resumed = api_client.resume_run(run_id)
+        st.session_state["run_result"] = resumed   # the card refreshes, never the stale pre-resume state
         st.session_state["runs"] = None   # reload the runs list for this target
         st.session_state["targets"] = None
     except api_client.ApiError as error:
         st.session_state["resume_stop_notice"] = api_message(error)
+    st.rerun()
 
 
 def run_pending_stop() -> None:
@@ -350,11 +353,35 @@ def run_pending_stop() -> None:
     st.session_state["pending_stop"] = None
     try:
         with st.spinner("Stopping…"):
-            api_client.stop_run(run_id)
+            stopped = api_client.stop_run(run_id)
+        st.session_state["run_result"] = stopped   # the card refreshes, never the stale pre-stop state
         st.session_state["runs"] = None
         st.session_state["targets"] = None
     except api_client.ApiError as error:
         st.session_state["resume_stop_notice"] = api_message(error)
+    st.rerun()
+
+
+def start_decision(run_id: int, turn: int, decision: str) -> None:
+    """Approve/Run to end/Stop callback (014/FR-020 to FR-023): capture now; it runs on the next pass, mirroring
+    start_resume - a decision can itself drive a run all the way to completion."""
+    st.session_state["pending_decision"] = {"run_id": run_id, "turn": turn, "decision": decision}
+
+
+def run_pending_decision() -> None:
+    pending = st.session_state.get("pending_decision")
+    if pending is None:
+        return
+    st.session_state["pending_decision"] = None
+    try:
+        with st.spinner("Deciding…"):
+            decided = api_client.decide_run(pending["run_id"], pending["turn"], pending["decision"])
+        st.session_state["run_result"] = decided   # the card refreshes to the run's new state, never the stale pause
+        st.session_state["runs"] = None   # reload the runs list for this target
+        st.session_state["targets"] = None
+    except api_client.ApiError as error:
+        st.session_state["resume_stop_notice"] = api_message(error)
+    st.rerun()
 
 
 def open_source_run(run_id: int) -> None:
@@ -441,12 +468,19 @@ def show_error(field: str) -> None:
 
 
 def render_picker(targets: list[dict]) -> None:
-    labels = {t["id"]: f"{t['name']} · {t['url']}" + (" · needs attention" if t.get("needs_attention") else "")
-              for t in targets}
+    # The option labels are stable (`name · url`, nothing else): Streamlit's selectbox round-trips the *formatted*
+    # option string, so a label that changes between passes (a cue that flips when a run finishes) deserializes
+    # into a stale string and silently resets the picker to "New target", blanking the form (014/FR-062).
+    labels = {t["id"]: f"{t['name']} · {t['url']}" for t in targets}
     if st.session_state.get("target_select") not in labels:
         st.session_state["target_select"] = NEW_TARGET
     st.selectbox("Target", [NEW_TARGET, *labels], key="target_select", on_change=select_target,
                  format_func=lambda target_id: "New target" if target_id == NEW_TARGET else labels[target_id])
+    # The cue rides a caption directly beneath the selector, read from the API's own needs_attention field alone -
+    # visible without opening the target, never part of an option label (014/FR-062, research D31).
+    for target in targets:
+        if target.get("needs_attention"):
+            st.caption(f"{target['name']} · needs attention")
 
 
 def render_form(config: dict, targets: list[dict]) -> None:
@@ -553,6 +587,9 @@ def _render_attack_form(config: dict, families: list[dict]) -> None:
             st.caption(f"Adaptive: attacker {attacker.get('model')}, up to {adaptive.get('max_turns')} turns")
         else:
             st.caption("No attacker model is configured, so an adaptive attack can't run.")
+        st.checkbox("Ask before each turn", key="ask_before_each_turn")
+        st.caption("On: the run pauses before sending each attacker-written message (from turn 2 on) for you to "
+                   "approve, run to the end, or stop.")
 
     labels = {f["key"]: f"{f['label']} · {f['owasp_category']} ({f['prompt_count']} prompts)" for f in families}
     st.selectbox("Attack family", list(labels), key="attack_family", format_func=lambda key: labels[key])
@@ -682,9 +719,41 @@ def _render_resume_stop_controls(run: dict, key_prefix: str) -> None:
                  disabled=pending)
 
 
+def _render_approve_controls(run: dict, key_prefix: str) -> None:
+    """The pending message and its three controls, rendered from `run_state == "paused"` alone (014/FR-020,
+    FR-054): the drafted message verbatim, then exactly Approve / Run to end / Stop, with the run's own
+    `idle_stop_at` shown beside them. Ahead of `_render_finding`'s own early returns, the same way the
+    Resume/Stop controls are, since a paused run has neither a verdict nor a failure step."""
+    if run.get("run_state") != "paused":
+        return
+    if run.get("idle_stop_at"):
+        st.caption(f"Auto-stops if left idle: {run['idle_stop_at'][:16].replace('T', ' ')}")
+    pending_turn = run.get("pending_turn") or {}
+    message = pending_turn.get("message")
+    turn = pending_turn.get("turn")
+    if message:
+        st.caption(f"Turn {turn} awaits your decision:")
+        st.code(message, language=None, wrap_lines=True)
+    pending = st.session_state.get("pending_decision") is not None
+    if st.session_state.get("resume_stop_notice"):
+        st.error(st.session_state["resume_stop_notice"])
+        st.session_state["resume_stop_notice"] = None
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.button("Approve", key=f"approve_button_{key_prefix}_{run['id']}", on_click=start_decision,
+                  args=(run["id"], turn, "approve"), disabled=pending)
+    with col2:
+        st.button("Run to end", key=f"run_to_end_button_{key_prefix}_{run['id']}", on_click=start_decision,
+                  args=(run["id"], turn, "run_to_end"), disabled=pending)
+    with col3:
+        st.button("Stop", key=f"decide_stop_button_{key_prefix}_{run['id']}", on_click=start_decision,
+                  args=(run["id"], turn, "stop"), disabled=pending)
+
+
 def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:
     _render_replay_action(run, key_prefix)
     _render_resume_stop_controls(run, key_prefix)
+    _render_approve_controls(run, key_prefix)
     if run.get("failure_step"):
         # Prefer Kestrel's own wording for the step (feature 001); fall back for any unmapped step.
         fallback = f"The attack could not be sent: {run.get('reason') or run['failure_step']}."
@@ -1172,6 +1241,7 @@ def main() -> None:
     run_pending_replay()
     run_pending_resume()
     run_pending_stop()
+    run_pending_decision()
     render_metrics(loaded_id())
     tab_runs, tab_profile, tab_report, tab_experiments = st.tabs(["Runs", "Profile", "Report", "Experiments"])
     with tab_runs:

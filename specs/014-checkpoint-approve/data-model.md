@@ -495,8 +495,9 @@ calls (a resume reaching a stopping point, a decision reaching one, Stop, and th
 original start's own equivalent is `api/main.py::start_run`, reading the already-finished `Run` back from
 `run_adaptive`) adds only three things **on top of** an already-finished row: `write_back(...)` (skipped if
 `run.memory_written is not None`, i.e. already attempted) → `store.delete_checkpoint(run.id)` → lease release —
-it never calls `finish_run` a second time. A pause returns from the request handler *before* this function is
-ever called, so its write-back status stays unset. **The lease taken at the start of any of these five paths is
+it never calls `finish_run` a second time. A pause returns a still-`in_progress` row, which the function returns
+untouched (a `status != "finished"` guard): nothing is written back and the checkpoint is not deleted yet, so the
+run's write-back status stays unset (FR-043, FR-006). **The lease taken at the start of any of these five paths is
 released on every exit, an exception included** — the lease's own `with` block (above) already guarantees this
 structurally, regardless of whether the row it wraps was finished, paused, or left `in_progress` by an exception;
 nothing about this function's own addition changes that.
@@ -821,4 +822,9 @@ Computed by calling the identical classification function (research D13) already
 disagree about the same run. `GET /api/targets` becomes `async def` for this, the same change research D14 already
 made to the run-detail and run-list endpoints for the identical reason. The UI reads this field alone for its cue
 — never a per-target `GET /api/targets/{id}/runs` call on every rerun, and never a guess from a field
-`TargetSummary` already carried, since the UI holds no logic of its own (CLAUDE.md).
+`TargetSummary` already carried, since the UI holds no logic of its own (CLAUDE.md). The cue is a caption rendered
+directly beneath the selector, **never part of an option label**: Streamlit's selectbox round-trips the *formatted*
+option string, so a label that changed between passes — the cue flipping when the run finishes — deserializes into
+a stale string and silently resets the picker to "New target", blanking the form; the option labels stay exactly
+`name · url` for this reason (found live: approving the final turn blanked the form, disabled "Run attack", and
+made the next connection test 422).

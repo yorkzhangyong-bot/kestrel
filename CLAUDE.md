@@ -77,9 +77,10 @@ default `google/gemini-3.8-flash`.
 - Commit/push only when asked.
 
 ## HS-code target (local demo / e2e)
-Its conversational agent's default chat model is `openai/gpt-oss-120b` (`CARGOLINT_CHAT_MODEL`, one shared
+Its conversational agent's default chat model is `openai/gpt-4o-mini` (`CARGOLINT_CHAT_MODEL`, one shared
 `DEFAULT_CHAT_MODEL` constant in `targets/hs_code/agent/config.py`, read by both it and `app.py`) — a Zero Data
-Retention (ZDR), tool-capable OpenRouter endpoint; see the Gotchas entry below for why.
+Retention (ZDR), tool-capable OpenRouter endpoint; the Gotchas entries below record the guardrail history that
+moved the default between models.
 Start from the repo root (needs `OPENROUTER_API_KEY` for its conversational agent):
 ```
 # PowerShell: $env:HS_TARGET_API_KEY="test-key-123"; $env:HS_TARGET_CANARY="KESTREL-CANARY-..."
@@ -529,3 +530,42 @@ same commit. Before opening any implementation PR, review this file and add anyt
   from the same classification call (null unless paused/resumable/stoppable), and `needs_attention` (bool, on
   `TargetSummary`/`TargetDetail`, `GET /api/targets` now `async def`) is the same classification over the target's
   one possible in_progress run, feeding the target selector's cue. Schema v12 (five new `runs` columns).
+- 2026-11-26 — **The approve node (014, part 2).** A dedicated `approve` node, wired `attacker → approve → send`
+  into `LIVE_GRAPH`'s one topology only (`_wire(graph, with_approve=True)`; `REPLAY_GRAPH` keeps the `attacker →
+  send` edge, so `CURRENT_GRAPH_VERSION` bumps to `2`). Its whole body is a no-op when `state.get(
+  "ask_before_each_turn", False)` is false or `turn == 1`, else `interrupt({"turn", "message":
+  state["pending_message"]})`; `"run_to_end"` is the only branch left in the node (it flips the state flag off,
+  so no later turn pauses again), and there is no `"stop"` branch — Stop never reaches the graph. The flag is
+  **seeded into the initial state exactly once, at claim**, in `run_adaptive` (`initial["ask_before_each_turn"] =
+  deps.ask_before_each_turn`), and never re-seeded by a resume/decision (which construct no initial state and
+  `ainvoke(None)`/`Command(resume=...)` from the checkpoint, whose own state already reflects any `"run_to_end"`
+  flip) — so a restart after Run to end never pauses again even though the `runs.ask_before_each_turn` column is
+  never rewritten. `_LiveDeps` also gains the field (defaulted, `kw_only`), read only to seed the initial state.
+  **Adding the node shifted every fault-injection `fail_at` put number by one** (the no-op approve node still
+  commits a checkpoint per turn): the `test_from_step_matches_the_compiled_graphs_own_next_node` table and ~10
+  integration tests' `_FailingPutSaver(store, N)` values each gained `+1` (N ≥ 3), and `_STATIC_NEXT_STEP` gained
+  `"approve": "send"` (a plain edge, so it has no routing write). `POST /api/runs/{run_id}/decision` (body
+  `{turn, decision ∈ approve|run_to_end|stop}`) validates the run's plain columns before opening **one**
+  `reopened_run_scope` for the whole decision (never a second, nested one for `"stop"`, which dispatches to
+  `stop_run(triggered_by="user")` in the same scope), classifies, refuses `409 not_paused` on a turn mismatch,
+  emits `run.decided` once past validation, then — only past preconditions — `mark_active` and
+  `ainvoke(Command(resume={interrupt_id: decision}))` (or `stop_run` for stop); the lease is one per decision, so
+  two concurrent correctly-addressed decisions resolve to exactly one success and one `409 run_executing`.
+  `execute_resume` and `execute_decision` share `_pinned_deps` (preconditions + pinned clients + rebuilt checker +
+  deps) and `_finish_resumed`; a resume/decision that pauses again returns the still-`in_progress` row, and the
+  shared finishing function gained an `if run.status != "finished": return run` guard so a pause never triggers
+  write-back or checkpoint deletion. The resume/decision responses must carry `classify_run(...)` (not the default
+  `run_state == "finished"`), or a re-paused run reports `paused: false` wrongly.
+- 2026-11-26 — **Streamlit's selectbox round-trips the formatted label (found live against PR #57).**
+  `st.selectbox` serializes the selection through `format_func`, and the frontend holds that *formatted string*;
+  `SelectboxSerde.deserialize` maps it back through the current options' index and, when it is not found, returns
+  the stale string itself as the widget value. A label that changes between passes therefore poisons the picker's
+  value, and the app's own "value not in labels → New target" guard resets it — the part-1 `needs_attention` cue
+  was appended to the target picker's label, so it flipped on every run finish: approving the final turn blanked
+  the form (`select_target(NEW_TARGET)` → `fill_form(None)`), disabled "Run attack" (`loaded_target` gone) and made
+  the next connection test 422 with "Enter the endpoint URL." (mechanism proven by driving `SelectboxSerde`
+  serialize/deserialize across two label sets; AppTest cannot reproduce it because it replays raw values, never
+  formatted strings). Fix: **the cue is a caption directly beneath the selector and option labels stay exactly
+  `name · url`** — never mutate a selectbox label between passes. The decision/resume/stop handlers now store the
+  API response in `run_result`, so the result card refreshes to the run's real state instead of showing the stale
+  pause with live-looking buttons.

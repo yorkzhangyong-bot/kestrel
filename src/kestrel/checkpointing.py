@@ -290,8 +290,9 @@ class Paused:
 ClassificationResult = Running | NoCheckpoint | Unreadable | Incompatible | ReachedEnd | Resumable | Paused
 
 # The plain, statically single-target edges with no routing write of their own (FR-052) - every other node's own
-# outgoing edge is conditional and so always carries its own `branch:to:` write.
-_STATIC_NEXT_STEP = {"judge": "record", "record": "decide"}
+# outgoing edge is conditional and so always carries its own `branch:to:` write. `approve -> send` (feature 014
+# part 2, research D4) is the one plain edge the approve node added on top of part 1's own two.
+_STATIC_NEXT_STEP = {"judge": "record", "record": "decide", "approve": "send"}
 
 
 async def classify(graph: Any, run_id: int, *, leased: bool) -> ClassificationResult:
