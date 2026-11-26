@@ -77,9 +77,10 @@ default `google/gemini-3.8-flash`.
 - Commit/push only when asked.
 
 ## HS-code target (local demo / e2e)
-Its conversational agent's default chat model is `openai/gpt-oss-120b` (`CARGOLINT_CHAT_MODEL`, one shared
+Its conversational agent's default chat model is `openai/gpt-4o-mini` (`CARGOLINT_CHAT_MODEL`, one shared
 `DEFAULT_CHAT_MODEL` constant in `targets/hs_code/agent/config.py`, read by both it and `app.py`) — a Zero Data
-Retention (ZDR), tool-capable OpenRouter endpoint; see the Gotchas entry below for why.
+Retention (ZDR), tool-capable OpenRouter endpoint; the Gotchas entries below record the guardrail history that
+moved the default between models.
 Start from the repo root (needs `OPENROUTER_API_KEY` for its conversational agent):
 ```
 # PowerShell: $env:HS_TARGET_API_KEY="test-key-123"; $env:HS_TARGET_CANARY="KESTREL-CANARY-..."

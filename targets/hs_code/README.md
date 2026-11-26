@@ -25,7 +25,7 @@ HS_TARGET_API_KEY=test-key-123 OPENROUTER_API_KEY=sk-or-... \
 | `HS_TARGET_API_KEY` | yes | The only accepted `X-API-Key` value. The app won't start without it. |
 | `OPENROUTER_API_KEY` | for replies | The model key CargoLint uses. Also turns on the conversational agent. Without it, `/chat` answers 502. |
 | `HS_TARGET_CANARY` | no | A string placed in the agent's system prompt. Declare the same value as a canary on the target in Kestrel to detect a system-prompt leak. |
-| `CARGOLINT_CHAT_MODEL` | no | The model, `openai/gpt-oss-120b` by default — a Zero Data Retention (ZDR), tool-capable OpenRouter endpoint (`openai/gpt-4o-mini`'s only tool-capable endpoint is excluded by this account's guardrail). |
+| `CARGOLINT_CHAT_MODEL` | no | The model, `openai/gpt-4o-mini` by default — a Zero Data Retention (ZDR), tool-capable OpenRouter endpoint. |
 
 `GET /health` needs no key. `POST /chat` takes `{"message": "..."}` with the `X-API-Key` header and answers `{"reply": "..."}`. `GET /debug/tool-calls` (same `X-API-Key`) returns the `send_email` calls the agent has made, for the exfiltration tests — nothing is ever actually sent. The full contract is in [specs/001-register-target/contracts/hs-code-target.md](../../specs/001-register-target/contracts/hs-code-target.md).
 
