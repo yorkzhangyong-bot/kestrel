@@ -529,3 +529,29 @@ same commit. Before opening any implementation PR, review this file and add anyt
   from the same classification call (null unless paused/resumable/stoppable), and `needs_attention` (bool, on
   `TargetSummary`/`TargetDetail`, `GET /api/targets` now `async def`) is the same classification over the target's
   one possible in_progress run, feeding the target selector's cue. Schema v12 (five new `runs` columns).
+- 2026-11-26 — **The approve node (014, part 2).** A dedicated `approve` node, wired `attacker → approve → send`
+  into `LIVE_GRAPH`'s one topology only (`_wire(graph, with_approve=True)`; `REPLAY_GRAPH` keeps the `attacker →
+  send` edge, so `CURRENT_GRAPH_VERSION` bumps to `2`). Its whole body is a no-op when `state.get(
+  "ask_before_each_turn", False)` is false or `turn == 1`, else `interrupt({"turn", "message":
+  state["pending_message"]})`; `"run_to_end"` is the only branch left in the node (it flips the state flag off,
+  so no later turn pauses again), and there is no `"stop"` branch — Stop never reaches the graph. The flag is
+  **seeded into the initial state exactly once, at claim**, in `run_adaptive` (`initial["ask_before_each_turn"] =
+  deps.ask_before_each_turn`), and never re-seeded by a resume/decision (which construct no initial state and
+  `ainvoke(None)`/`Command(resume=...)` from the checkpoint, whose own state already reflects any `"run_to_end"`
+  flip) — so a restart after Run to end never pauses again even though the `runs.ask_before_each_turn` column is
+  never rewritten. `_LiveDeps` also gains the field (defaulted, `kw_only`), read only to seed the initial state.
+  **Adding the node shifted every fault-injection `fail_at` put number by one** (the no-op approve node still
+  commits a checkpoint per turn): the `test_from_step_matches_the_compiled_graphs_own_next_node` table and ~10
+  integration tests' `_FailingPutSaver(store, N)` values each gained `+1` (N ≥ 3), and `_STATIC_NEXT_STEP` gained
+  `"approve": "send"` (a plain edge, so it has no routing write). `POST /api/runs/{run_id}/decision` (body
+  `{turn, decision ∈ approve|run_to_end|stop}`) validates the run's plain columns before opening **one**
+  `reopened_run_scope` for the whole decision (never a second, nested one for `"stop"`, which dispatches to
+  `stop_run(triggered_by="user")` in the same scope), classifies, refuses `409 not_paused` on a turn mismatch,
+  emits `run.decided` once past validation, then — only past preconditions — `mark_active` and
+  `ainvoke(Command(resume={interrupt_id: decision}))` (or `stop_run` for stop); the lease is one per decision, so
+  two concurrent correctly-addressed decisions resolve to exactly one success and one `409 run_executing`.
+  `execute_resume` and `execute_decision` share `_pinned_deps` (preconditions + pinned clients + rebuilt checker +
+  deps) and `_finish_resumed`; a resume/decision that pauses again returns the still-`in_progress` row, and the
+  shared finishing function gained an `if run.status != "finished": return run` guard so a pause never triggers
+  write-back or checkpoint deletion. The resume/decision responses must carry `classify_run(...)` (not the default
+  `run_state == "finished"`), or a re-paused run reports `paused: false` wrongly.

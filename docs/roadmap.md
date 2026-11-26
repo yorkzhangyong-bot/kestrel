@@ -4,7 +4,6 @@ Planned next, not yet specified.
 
 ## Next features
 
-- **LangGraph idioms** (from reviewer feedback) — typed State with reducers and a typed Outcome, module-level compiled graph with deps via runtime context, AsyncSqliteSaver checkpointer for resumability, optional interrupt-based approve node with an Approve/Stop control in the UI.
 - **Judge evaluation.** Score the judge's verdicts against runs confirmed by hard evidence — the deterministic items 013 part 1 records give a labelled set without hand grading — reusing the 007 experiment harness and the judge golden set (`tests/eval/judge_samples.json`), and report precision and misses (a hard-evidence success the judge called failed) per family and per judge prompt version.
 - **Streamlit UI polish for the capstone.** The run page (headline, evidence section, turn table, replay comparison) and the OWASP report page, so a reviewer can read a finding end to end without the API. Not the product front end — that stays under "Later".
 - **Deployment.** Host Kestrel and the HS-code target in hosted mode (`KESTREL_API_TOKEN`, the address guard on), with every secret set outside the repo (environment or a secret store, never a committed file), a release path from `master` (tag → build → deploy), and a short note on how failures are handled (what a failed deploy, a failed start-up self-check or a stuck run looks like, and the recovery step for each).
@@ -28,6 +27,7 @@ Planned next, not yet specified.
 
 ## Done
 
+- **LangGraph idioms** — typed State with reducers and a typed Outcome, module-level compiled graphs with per-run deps via runtime context, and the LangGraph checkpointer + approve node (feature 014, two pull requests). Part 1: a custom `KestrelCheckpointSaver` (no new dependency) persists each completed step of a live adaptive run with synchronous durability, so an interrupted run resumes from its next unfinished step instead of starting over; a per-app `LIVE_GRAPH.copy()` keeps the module-level graph (and the experiment harness's own bare call) untouched; an execution lease makes two requests driving one run structurally impossible; Stop ends any resumable run without ever resuming its graph; the start-up sweep classifies rather than unconditionally closes, and an idle run is auto-stopped after `KESTREL_RESUME_IDLE_HOURS`. Part 2: a dedicated `approve` node pauses before each attacker-written message (turn 2 onward) when "Ask before each turn" is ticked, with Approve / Run to end / Stop controls on the run page, and a paused run survives a restart exactly like a crashed one.
 - **006 (amendment) — Honest Spec-PR path for refactor and bug-fix PRs.** A PR that changes `src/` or `ui/` and
   implements no specification declares `Spec-PR: none` with exactly one reason line — `Spec-PR-reason: refactor`
   or `Spec-PR-reason: bugfix: #<issue>` — and the matching PR label (`refactor`/`bugfix`, not the other); a
