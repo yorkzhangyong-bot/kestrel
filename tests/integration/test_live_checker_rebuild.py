@@ -70,7 +70,7 @@ def test_a_non_override_family_resume_behaves_like_a_live_checker_with_no_plante
                                                       family="system_prompt_leak")
     assert checker.run_start_fields()["override_planted"] is False
 
-    saver = _FailingPutSaver(store, 3)   # merely resumable: send not yet run
+    saver = _FailingPutSaver(store, 4)   # merely resumable: send not yet run
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=_sender(), judge=StubJudge(verdict="failed"), attacker=StubAttacker(),
@@ -139,7 +139,7 @@ def test_cut_in_sends_own_commit_window_the_resumed_checker_already_has_the_in_f
     run_id, checker, seed, opening = _plant_and_claim(store, target_id, fixture_library(), family="direct_injection",
                                                       embed_token=True)
 
-    saver = _FailingPutSaver(store, 4)   # send done (its own write - and disarm - landed), evidence pending
+    saver = _FailingPutSaver(store, 5)   # send done (its own write - and disarm - landed), evidence pending
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=_sender(), judge=StubJudge(verdict="failed"), attacker=StubAttacker(),

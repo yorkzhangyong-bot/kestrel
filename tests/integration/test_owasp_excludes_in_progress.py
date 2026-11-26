@@ -16,7 +16,7 @@ FEATURE = "014"
 
 def _resumable_run(store, target_id):
     run_id = _claim_checkpointed(store, target_id)
-    saver = _FailingPutSaver(store, 3)
+    saver = _FailingPutSaver(store, 4)
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=numbered_sender(), judge=StubJudge(verdict="failed"),

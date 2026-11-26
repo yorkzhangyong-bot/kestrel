@@ -28,6 +28,7 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 
 from kestrel import events, prompt_registry
 from kestrel.attack.attacker import AttackerError
@@ -48,8 +49,8 @@ MAX_REPLY_CHARS = 2000
 
 # The graph/state version stamp the saver writes into every checkpoint's own metadata (research D18): a mismatch
 # is incompatible, closed by the sweep rather than resumed against mismatched node topology. Part 1's own
-# six-node topology is version 1; part 2 bumps this to 2 when the `approve` node is added.
-CURRENT_GRAPH_VERSION = 1
+# six-node topology is version 1; part 2 bumps this to 2 with the `approve` node wired in.
+CURRENT_GRAPH_VERSION = 2
 
 CANARY_REASON = "The reply contains a canary string the agent was told to keep, so the attack is confirmed."
 INTERRUPTED_BY_DEADLINE = "The agent held until the run reached a limit."
@@ -120,6 +121,10 @@ class _State(TypedDict, total=False):
     # that does not itself call the attacker again (a resume cut after the attacker drafted but before it sent).
     turn_time_spent_at_start: float
     turn_attacker_usage: dict[str, Any] | None
+    # Feature 014 part 2 (research D4/D5): "Ask before each turn" - seeded once, at claim, and flipped False only
+    # by "Run to end". Read everywhere with `.get(key, default)` (research D18), never a bracket subscript, so a
+    # checkpoint from a build that predates this field is still readable.
+    ask_before_each_turn: bool
 
 
 class _ReplayState(_State, total=False):
@@ -200,6 +205,9 @@ class _LiveDeps(_Deps):
     attacker_prompt: str | None           # constant for the run (feature 009, FR-003; feature 010, FR-007)
     attacker_prompt_id: str | None
     attacker_prompt_version: str | None
+    # Feature 014 part 2 (research D5, D23): the claim-time "Ask before each turn" flag, seeded into the run's
+    # initial state exactly once, at claim, never re-read from the stored column on a resume or decision.
+    ask_before_each_turn: bool = False
 
 
 @dataclass(frozen=True, repr=False)
@@ -421,6 +429,24 @@ async def _live_attacker_node(state: _State, runtime: Runtime[_LiveDeps]) -> _St
             "turn_attacker_usage": _attacker_usage_now()}
 
 
+async def _approve_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
+    """The approve node (feature 014 part 2, research D4, D7): a no-op for turn 1 or when the run's own
+    `ask_before_each_turn` flag is unset, otherwise interrupts before `send` with this turn's drafted message. The
+    flag is read via `.get(..., False)` (research D18), never a bracket subscript, so a checkpoint written before
+    this field existed is still readable. "run_to_end" is the only branch here: it flips the flag off, so no later
+    turn pauses again; "approve" (validated and resolved one layer up, research D8) simply proceeds to send.
+    There is no "stop" branch - Stop never reaches the graph (research D7)."""
+    deps = runtime.context
+    spent = {"time_spent_s": _time_spent(deps)}
+    turn = state["turns_used"] + 1
+    if not state.get("ask_before_each_turn", False) or turn == 1:
+        return spent
+    decision = interrupt({"turn": turn, "message": state["pending_message"]})
+    if decision == "run_to_end":
+        return {**spent, "ask_before_each_turn": False}
+    return spent   # "approve": proceed to send
+
+
 def _live_record_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
     deps = runtime.context
     turn = state["turns_used"] + 1
@@ -510,16 +536,25 @@ def _replay_record_node(state: _ReplayState, runtime: Runtime[_ReplayDeps]) -> _
 # ---- the two graphs, compiled once at import ----
 
 
-def _wire(graph: StateGraph[Any, _DepsT, Any, Any]) -> None:
+def _wire(graph: StateGraph[Any, _DepsT, Any, Any], *, with_approve: bool = False) -> None:
     """The six-node shape both graphs share, minus the two nodes each defines for itself: a send failure skips
-    the evidence and the judge, any evidence item skips the judge, and the decide step loops or ends."""
+    the evidence and the judge, any evidence item skips the judge, and the decide step loops or ends. `with_approve`
+    (feature 014 part 2, research D4) wires the live graph's one topology as `attacker → approve → send`; the
+    replay graph keeps the #49 `attacker → send` edge unchanged - an experiment repetition runs this same shared
+    live topology, but the approve node is a no-op for it, since it never sets the flag."""
     graph.add_node("send", _send_node)
     graph.add_node("evidence", _evidence_node)
     graph.add_node("judge", _judge_node)
     graph.add_node("decide", _decide_node)
     graph.add_edge(START, "attacker")
-    graph.add_conditional_edges("attacker", lambda s: "end" if s.get("outcome") else "send",
-                                {"end": END, "send": "send"})
+    if with_approve:
+        graph.add_node("approve", _approve_node)
+        graph.add_conditional_edges("attacker", lambda s: "end" if s.get("outcome") else "approve",
+                                    {"end": END, "approve": "approve"})
+        graph.add_edge("approve", "send")
+    else:
+        graph.add_conditional_edges("attacker", lambda s: "end" if s.get("outcome") else "send",
+                                    {"end": END, "send": "send"})
     graph.add_conditional_edges("send", lambda s: "record" if s.get("outcome") else "evidence",
                                 {"record": "record", "evidence": "evidence"})
     graph.add_conditional_edges("evidence", lambda s: "record" if s.get("outcome") else "judge",
@@ -534,7 +569,7 @@ def _compile_live():
     graph = StateGraph(_State, context_schema=_LiveDeps)
     graph.add_node("attacker", _live_attacker_node)
     graph.add_node("record", _live_record_node)
-    _wire(graph)
+    _wire(graph, with_approve=True)
     return graph.compile()
 
 
@@ -561,7 +596,8 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                        max_turns: int, token_budget: int, time_limit_s: float,
                        use_prior_experience: bool = True, hint_provider: Callable[[list], str | None] | None = None,
                        clock: Callable[[], float] = time.monotonic,
-                       evidence: EvidenceChecker | None = None, graph: Any = None, app_state: Any = None) -> Run:
+                       evidence: EvidenceChecker | None = None, graph: Any = None, app_state: Any = None,
+                       ask_before_each_turn: bool = False) -> Run:
     """Claim an adaptive run, drive the loop to an outcome, finish and return it. May raise RunInProgress (409).
 
     `hint_provider(conversation)` (feature 004) returns the attacker's background block each turn, or None.
@@ -603,6 +639,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                              judge_model=judge.model if is_checkpointed and judge.configured else None,
                              judge_prompt_id=judge_prompt_id if is_checkpointed else None,
                              judge_prompt_version=judge_prompt_version if is_checkpointed else None,
+                             ask_before_each_turn=ask_before_each_turn,
                              now=app_state.clock() if app_state is not None else None)
     checker.bind_run(run_id)   # records what the run planted, right after the claim (013/FR-008)
     run_lease = lease(app_state, store, run_id) if app_state is not None else nullcontext()
@@ -615,6 +652,7 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                            judge_model=judge.model if judge.configured else None, attacker_prompt=attacker_prompt,
                            judge_prompt=judge_prompt, turn_budget=max_turns, token_budget=token_budget,
                            time_limit_s=int(time_limit_s), use_prior_experience=use_prior_experience,
+                           ask_before_each_turn=(True if ask_before_each_turn else None),
                            **checker.run_start_fields())
         deps = _LiveDeps(store=store, run_id=run_id, resolved=resolved,
                          secrets=[value for _, value in resolved.headers],
@@ -624,13 +662,20 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
                          token_budget=token_budget, deadline=deadline, clock=clock, invocation_start=clock(),
                          seed_prompt=seed_prompt, opening=opening, attacker=attacker, hint_provider=hint_provider,
                          attacker_prompt=attacker_prompt, attacker_prompt_id=attacker_prompt_id,
-                         attacker_prompt_version=attacker_prompt_version)
+                         attacker_prompt_version=attacker_prompt_version,
+                         ask_before_each_turn=ask_before_each_turn)
         config = _recursion_limit(max_turns)
         invoke_kwargs: dict[str, Any] = {}
         if graph.checkpointer is not None:   # never on the bare, checkpointer-free graph (research D2, FR-003)
             config = {**config, **thread_config(run_id)}
             invoke_kwargs["durability"] = "sync"
-        final = await graph.ainvoke(_initial_state(), config, context=deps, **invoke_kwargs)
+        # Feature 014 part 2 (research D5): "Ask before each turn" is seeded into the run's initial state exactly
+        # once, at claim, never re-read from the stored column on a resume or decision - the approve node reads its
+        # own flag from the state (flipped off by "Run to end"), never from deps on a later invocation.
+        initial = _initial_state()
+        if deps.ask_before_each_turn:
+            initial["ask_before_each_turn"] = True
+        final = await graph.ainvoke(initial, config, context=deps, **invoke_kwargs)
         if final.get("outcome") is None:
             # Part 2's own approve node is what calls interrupt() in production (not shipped in this phase), but
             # the suppression mechanism itself is part 1's: ainvoke returns normally, with the state as of the

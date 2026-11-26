@@ -21,7 +21,7 @@ def _cut_resumable_run(api, name="A"):
     store = api.app.state.store
     target_id = _target(store, name)
     run_id = _claim_checkpointed(store, target_id)
-    saver = _FailingPutSaver(store, 3)
+    saver = _FailingPutSaver(store, 4)
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     config = {"configurable": {"thread_id": str(run_id)}}
     from kestrel.attack.graph import _initial_state

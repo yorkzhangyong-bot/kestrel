@@ -439,14 +439,15 @@ def finish_api_run(store: TargetStore, run: Run, *, experience: Any, dedupe_thre
 async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,
                                attacker, judge, max_turns, token_budget, time_limit_s, sender=run_test,
                                transport=None, resolver=default_resolver, use_prior_experience=True,
-                               hint_provider=None, evidence=None, graph=None, app_state=None):
+                               hint_provider=None, evidence=None, graph=None, app_state=None,
+                               ask_before_each_turn=False):
     """Run an adaptive (multi-turn) attack via the LangGraph loop (feature 003). Single-turn keeps execute_run.
 
     `hint_provider` (feature 004) supplies the attacker's background each turn; `evidence` (feature 013) is the
     run's deterministic checker, None for the canary-only default. `graph`/`app_state` (feature 014) pass through
     to `run_adaptive` unchanged: the experiment harness leaves both None (the bare, checkpointer-free LIVE_GRAPH,
-    no execution lease), exactly as before this feature. Imported lazily so runs.py and attack.graph have no
-    import cycle."""
+    no execution lease), exactly as before this feature. `ask_before_each_turn` (feature 014 part 2, FR-018) is the
+    checkbox, only ever true on the live API path. Imported lazily so runs.py and attack.graph have no import cycle."""
     from kestrel.attack.graph import run_adaptive
 
     return await run_adaptive(store, target_id=target_id, seed_prompt=seed_prompt, attacker_source=attacker_source,
@@ -454,4 +455,5 @@ async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source
                               mode=mode, transport=transport, resolver=resolver, max_turns=max_turns,
                               token_budget=token_budget, time_limit_s=time_limit_s,
                               use_prior_experience=use_prior_experience, hint_provider=hint_provider,
-                              evidence=evidence, graph=graph, app_state=app_state)
+                              evidence=evidence, graph=graph, app_state=app_state,
+                              ask_before_each_turn=ask_before_each_turn)

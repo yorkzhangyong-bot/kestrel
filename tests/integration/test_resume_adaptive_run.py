@@ -121,7 +121,7 @@ def test_the_record_commit_window_cut_point_is_also_in_process_resumable_and_res
     api = _client(settings, make_client, model_transport)
     store = api.app.state.store
     target_a = _target(store, "A")
-    saver = _FailingPutSaver(store, 7)   # judge=failed (default verdict): record's own write lands, decide pending
+    saver = _FailingPutSaver(store, 8)   # judge=failed (default verdict): record's own write lands, decide pending
     api.app.state.live_graph = LIVE_GRAPH.copy(update={"checkpointer": saver})
 
     _start(api, target_a)

@@ -82,7 +82,7 @@ def test_stop_on_a_merely_resumable_run_finishes_without_running_the_graph_again
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
     store.add_turn(run_id, position=1, attacker_message="<m1>", reply_text="<r1>", judge_verdict="failed")
-    asyncio.run(_cut_at(store, run_id, 3, judge=StubJudge(verdict="failed")))   # send done, evidence pending
+    asyncio.run(_cut_at(store, run_id, 4, judge=StubJudge(verdict="failed")))   # send done, evidence pending
 
     before = api.get(f"/api/runs/{run_id}").json()
     assert before["run_state"] == "resumable" and before["resumable"] is True
@@ -131,13 +131,13 @@ def test_stop_reconciles_a_reached_its_own_end_run_never_stopped_by_user(setting
 
 
 def test_stop_reconciles_a_commit_window_outcome_and_records_the_pending_turn(settings, make_client):
-    # 014/FR-051: the judge half of the commit window - judge already succeeded (fail_at=6, from_step=="record")
+    # 014/FR-051: the judge half of the commit window - judge already succeeded (fail_at=7, from_step=="record")
     # but record had not yet durably written it (confirmed empirically: 0 run_turns rows before this call).
     api = make_client(settings, library=fixture_library(), judge=StubJudge(), attacker=StubAttacker())
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    asyncio.run(_cut_at(store, run_id, 6, judge=StubJudge(verdict="succeeded")))
+    asyncio.run(_cut_at(store, run_id, 7, judge=StubJudge(verdict="succeeded")))
     assert store.list_turns(run_id) == []
 
     before = api.get(f"/api/runs/{run_id}").json()
@@ -158,7 +158,7 @@ def test_stop_does_not_write_a_phantom_duplicate_turn(settings, make_client):  #
     # The evidence half of the commit window (record not yet run): recorded exactly once, never zero, never two.
     target_a = _target(store, "A")
     run_a = _claim_checkpointed(store, target_a)
-    asyncio.run(_cut_at(store, run_a, 5, judge=StubJudge(verdict="failed"), sender=_canary_sender(), canary=True))
+    asyncio.run(_cut_at(store, run_a, 6, judge=StubJudge(verdict="failed"), sender=_canary_sender(), canary=True))
     assert store.list_turns(run_a) == []
     response_a = api.post(f"/api/runs/{run_a}/stop")
     assert response_a.status_code == 200
@@ -169,7 +169,7 @@ def test_stop_does_not_write_a_phantom_duplicate_turn(settings, make_client):  #
     # the one record itself already, durably wrote.
     target_b = _target(store, "B")
     run_b = _claim_checkpointed(store, target_b)
-    asyncio.run(_cut_at(store, run_b, 7, judge=StubJudge(verdict="failed")))
+    asyncio.run(_cut_at(store, run_b, 8, judge=StubJudge(verdict="failed")))
     assert len(store.list_turns(run_b)) == 1
     response_b = api.post(f"/api/runs/{run_b}/stop")
     assert response_b.status_code == 200
@@ -179,7 +179,7 @@ def test_stop_does_not_write_a_phantom_duplicate_turn(settings, make_client):  #
     # turns_used + 1 off fields decide's own pass-through state left uncleared.
     target_c = _target(store, "C")
     run_c = _claim_checkpointed(store, target_c)
-    asyncio.run(_cut_at(store, run_c, 8, judge=StubJudge(verdict="failed")))
+    asyncio.run(_cut_at(store, run_c, 9, judge=StubJudge(verdict="failed")))
     assert len(store.list_turns(run_c)) == 1
     response_c = api.post(f"/api/runs/{run_c}/stop")
     assert response_c.status_code == 200

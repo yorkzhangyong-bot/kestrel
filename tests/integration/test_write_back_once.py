@@ -23,7 +23,7 @@ def test_a_run_resumed_to_a_normal_finish_writes_back_exactly_once(settings, mak
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    asyncio.run(_cut_at(store, run_id, 3, judge=StubJudge(verdict="failed")))   # merely resumable
+    asyncio.run(_cut_at(store, run_id, 4, judge=StubJudge(verdict="failed")))   # merely resumable
 
     response = api.post(f"/api/runs/{run_id}/resume")
     assert response.status_code == 200 and response.json()["status"] == "finished"
@@ -37,7 +37,7 @@ def test_a_run_stopped_the_ordinary_case_writes_back_exactly_once(settings, make
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    asyncio.run(_cut_at(store, run_id, 3, judge=StubJudge(verdict="failed")))
+    asyncio.run(_cut_at(store, run_id, 4, judge=StubJudge(verdict="failed")))
 
     response = api.post(f"/api/runs/{run_id}/stop")
     assert response.status_code == 200
@@ -51,7 +51,7 @@ def test_a_run_stop_reconciles_from_its_own_already_decided_outcome_writes_back_
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    asyncio.run(_cut_at(store, run_id, 6, judge=StubJudge(verdict="succeeded")))   # the commit-window reconciliation
+    asyncio.run(_cut_at(store, run_id, 7, judge=StubJudge(verdict="succeeded")))   # the commit-window reconciliation
 
     response = api.post(f"/api/runs/{run_id}/stop")
     assert response.status_code == 200
@@ -65,7 +65,7 @@ def test_a_run_cut_off_mid_step_and_left_resumable_writes_back_zero_times(settin
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    asyncio.run(_cut_at(store, run_id, 3, judge=StubJudge(verdict="failed")))
+    asyncio.run(_cut_at(store, run_id, 4, judge=StubJudge(verdict="failed")))
 
     assert experience.memory_writes == []
     before = api.get(f"/api/runs/{run_id}").json()
@@ -93,21 +93,21 @@ def test_finish_run_is_called_exactly_once_per_finished_run(settings, make_clien
     store = api.app.state.store
     target_id = _target(store)
     run_id = _claim_checkpointed(store, target_id)
-    asyncio.run(_cut_at(store, run_id, 3, judge=StubJudge(verdict="failed")))
+    asyncio.run(_cut_at(store, run_id, 4, judge=StubJudge(verdict="failed")))
 
     assert api.post(f"/api/runs/{run_id}/resume").status_code == 200
     assert len(calls) == 1
 
     target_id_2 = _target(store, "B")
     run_id_2 = _claim_checkpointed(store, target_id_2)
-    asyncio.run(_cut_at(store, run_id_2, 3, judge=StubJudge(verdict="failed")))
+    asyncio.run(_cut_at(store, run_id_2, 4, judge=StubJudge(verdict="failed")))
     calls.clear()
     assert api.post(f"/api/runs/{run_id_2}/stop").status_code == 200
     assert len(calls) == 1
 
     target_id_3 = _target(store, "C")
     run_id_3 = _claim_checkpointed(store, target_id_3)
-    asyncio.run(_cut_at(store, run_id_3, 6, judge=StubJudge(verdict="succeeded")))
+    asyncio.run(_cut_at(store, run_id_3, 7, judge=StubJudge(verdict="succeeded")))
     calls.clear()
     assert api.post(f"/api/runs/{run_id_3}/stop").status_code == 200
     assert len(calls) == 1

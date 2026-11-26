@@ -23,7 +23,7 @@ def _claim_and_cut(store, target_id, *, attacker_model, judge_model, attacker_pr
                              is_checkpointed=True, attacker_prompt_id="attacker:system_prompt_leak",
                              attacker_prompt_version=attacker_prompt_version, judge_model=judge_model,
                              judge_prompt_id="judge", judge_prompt_version=judge_prompt_version)
-    saver = _FailingPutSaver(store, 3)
+    saver = _FailingPutSaver(store, 4)
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=numbered_sender(), judge=StubJudge(verdict="failed"),
@@ -103,7 +103,7 @@ def test_resume_refuses_when_the_pinned_prompt_id_no_longer_exists_in_the_librar
                              turn_budget=2, token_budget=40000, time_limit_s=300, is_checkpointed=True,
                              attacker_prompt_id="attacker:system_prompt_leak", attacker_prompt_version="1",
                              judge_model="google/gemini-3.8-flash", judge_prompt_id="judge", judge_prompt_version="1")
-    saver = _FailingPutSaver(store, 3)
+    saver = _FailingPutSaver(store, 4)
     copied = LIVE_GRAPH.copy(update={"checkpointer": saver})
     deps = dataclasses.replace(
         make_deps(store=store, sender=numbered_sender(), judge=StubJudge(verdict="failed"),

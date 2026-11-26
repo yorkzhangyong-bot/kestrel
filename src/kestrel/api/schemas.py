@@ -195,6 +195,17 @@ class RunRequest(BaseModel):
     prompt_id: str | None = None  # None lets Kestrel pick one from the family (FR-007)
     mode: Literal["single_turn", "adaptive"] = "single_turn"  # adaptive = the multi-turn loop (feature 003)
     use_prior_experience: bool = True  # feature 004: warm (default) retrieves patterns/memory; cold is feature 003
+    # Feature 014 part 2 (FR-018): "Ask before each turn", adaptive only - a `true` alongside a non-adaptive mode
+    # is a 422 form error (the store itself also refuses the claim, so this is not left to the API layer alone).
+    ask_before_each_turn: bool = False
+
+
+class DecisionRequest(BaseModel):
+    """One decision on a paused run's pending turn (feature 014 part 2, FR-020, FR-039): the exact turn it answers,
+    and one of Approve / Run to end / Stop. `turn` is required - a request with no `turn` is a 422, never defaulted
+    to "whichever is pending"."""
+    turn: int
+    decision: Literal["approve", "run_to_end", "stop"]
 
 
 class TurnOut(BaseModel):

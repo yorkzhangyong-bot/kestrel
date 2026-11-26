@@ -397,6 +397,9 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         if body.mode == "adaptive" and not request.app.state.attacker.configured:
             return api_error(409, "attacker_unavailable",
                              "No attacker model is configured, so an adaptive attack can't run.")
+        if body.ask_before_each_turn and body.mode != "adaptive":
+            return form_errors([{"field": "ask_before_each_turn",
+                                 "message": "Ask before each turn is only available for an adaptive attack."}])
         canaries = store.list_canaries(target.id)
         # The run's deterministic checker (feature 013): the one shared builder the experiment engine uses too.
         checker = build_checker(store=store, family=prompt.family, canaries=canaries, mode=settings.mode,
@@ -428,7 +431,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                         time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                         resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
                         hint_provider=hint_provider, evidence=checker, graph=request.app.state.live_graph,
-                        app_state=request.app.state)
+                        app_state=request.app.state, ask_before_each_turn=body.ask_before_each_turn)
                 else:
                     run = await execute_run(store, target_id=target.id, prompt=prompt,
                                             attacker_source=library.attacker_source,
