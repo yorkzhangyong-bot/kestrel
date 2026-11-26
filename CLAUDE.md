@@ -499,6 +499,33 @@ same commit. Before opening any implementation PR, review this file and add anyt
   node shared by both graphs must be generic over the context (`Runtime[_DepsT]`, `_DepsT` bound to the common
   `_Deps` base) or mypy rejects `add_node` for the second schema. The old hand-copied
   `conversation.append(("agent", state["pending_reply"]))` was itself one of the baseline mypy errors (22 → 21
-  on `src`). `tests/unit/test_adaptive_graph_state.py` drives `LIVE_GRAPH` directly with a `_LiveDeps` of stubs
+  on `src`).   `tests/unit/test_adaptive_graph_state.py` drives `LIVE_GRAPH` directly with a `_LiveDeps` of stubs
   (no `run_scope` needed: outside one the events helpers emit unkept lines and return). A test module that
   imports `TestOutcome` under its own name gets a pytest collection warning — alias it, as the other tests do.
+- 2026-11-26 — **LangGraph checkpointer, resume/Stop, and idle auto-stop (014, part 1).** The live graph runs on a
+  **per-app copy** (`LIVE_GRAPH.copy(update={"checkpointer": KestrelCheckpointSaver(store)})`, built in
+  `create_app`'s lifespan, never shared) over a `KestrelCheckpointSaver(BaseCheckpointSaver)` writing to SQLite
+  (`checkpoints`/`checkpoint_writes`), with a version guard (`check_supported_versions`) and synchronous durability
+  (`durability="sync"`). An **execution lease** (`checkpointing.lease`, a plain `set` on `app.state`, never a bare
+  module object or `asyncio.Lock`) is taken by the original run-start path *too* — not only resume/decision/Stop —
+  and its own release touches the idle clock only when `mark_active` was called inside the block (an accepted exit),
+  never for a refused request or an automatic stop. **Stop never resumes the graph** (`runs.stop_run`): it classifies
+  and ends the row directly, reconciling a reached-its-own-end row with its already-decided outcome; `stop_run`
+  itself takes **neither a lease nor a scope** — each of its three callers (the `/stop` handler, the decision
+  handler, the idle check) owns both — and it **must call `events.run_finished(run)`** after finishing or `run.end`
+  is never emitted for a Stop. Classification (`checkpointing.classify`, read-only, never `ainvoke`) yields six
+  shapes — Running/NoCheckpoint/Unreadable/Incompatible/ReachedEnd/Resumable/Paused — and `run_state` (resumable/
+  paused/stoppable/running/finished) is computed live, never stored; the record step is atomic
+  (`add_turn_with_evidence`), claim-time `is_checkpointed` decides whether a row is in this feature's reach at all,
+  and resume/decision pin the run's claim-time caps/model/prompt references in provenance columns. The start-up
+  sweep (lifespan) closes non-checkpointed interrupted rows, reconciles reached-its-own-end rows, and leaves a
+  genuinely resumable/paused row untouched for a later resume. **Idle auto-stop** (owner-added):
+  `KESTREL_RESUME_IDLE_HOURS` (default 24, cap 87,600, reported as `resume.idle_hours` on `GET /api/config`) stops a
+  paused/resumable/stoppable run nobody acts on, on a **wall-clock idle clock** (`runs.last_activity_at`, advanced
+  only by an accepted lease release, never by the automatic check itself); a restart grace period
+  `min(1 hour, window)` since `app_state.started_at` makes the first tick a no-op; a failed automatic stop is
+  retried next tick with no backoff and writes nothing kept to the run's log; a not-yet-due row is never leased.
+  `idle_stop_at = max(last_activity_at + window, started_at + min(1h, window))` is computed alongside `run_state`
+  from the same classification call (null unless paused/resumable/stoppable), and `needs_attention` (bool, on
+  `TargetSummary`/`TargetDetail`, `GET /api/targets` now `async def`) is the same classification over the target's
+  one possible in_progress run, feeding the target selector's cue. Schema v12 (five new `runs` columns).
