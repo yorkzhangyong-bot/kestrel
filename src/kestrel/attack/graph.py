@@ -56,14 +56,18 @@ INTERRUPTED_BY_DEADLINE = "The agent held until the run reached a limit."
 
 
 class _Attacker(Protocol):
-    configured: bool
-    model: str
+    @property
+    def configured(self) -> bool: ...
+    @property
+    def model(self) -> str: ...
     async def next_message(self, *, conversation, family, progress=None, timeout=None): ...
 
 
 class _Judge(Protocol):
-    configured: bool
-    model: str
+    @property
+    def configured(self) -> bool: ...
+    @property
+    def model(self) -> str: ...
     async def judge(self, *, attack, reply, conversation=None, timeout=None): ...
 
 

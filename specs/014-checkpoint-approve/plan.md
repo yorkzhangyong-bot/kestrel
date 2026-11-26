@@ -135,10 +135,15 @@ giving every new field a default, research D23, so no *other* pre-existing test 
 | `tests/unit/test_store_migration_v9.py` | same - found during implementation (not in the original plan): this file already pinned the literal from feature 013's own bump (`"11"`, with a stale comment trailing two bumps behind), so 014's own bump breaks it exactly the same mechanical way it breaks v10/v11's |
 | `tests/unit/test_store_migration_v10.py` | same |
 | `tests/unit/test_store_migration_v11.py` | same, plus one assertion on the ALTER'd `runs` table's own trailing column text (`"side_channel_status TEXT"` -> `"last_activity_at TEXT"`, the new last column v12's own ALTER loop appends) - the identical class of edit, not a new one: the literal it pins is "the last column the current schema version's own ALTER chain adds," which shifts for the same reason the version number itself does |
+| `tests/unit/test_store_migration_v5.py` | same literal pin (found during implementation, the same class as v9/v10/v11) |
+| `tests/unit/test_store_migration_v6.py` | same |
+| `tests/unit/test_store_migration_v8.py` | same |
+| `tests/integration/test_startup_events.py` | the "closed interrupted run(s)" count moved into `lifespan` (research D14), so the app must actually be entered (the test client's own context) for the sweep to run at all - a bare `create_app(...)` never swept anything |
+| `tests/unit/test_optional_extra.py` | the fixed stack gains `langgraph-checkpoint`, which was already installed transitively and is now named explicitly to pin the range (FR-037) - never a new dependency (Principle X) |
 | `tests/unit/test_adaptive_graph_state.py` | its `StubStore` implements only the two store calls a live-graph `record` node made before this feature (`add_turn`, `add_evidence`); the lifted `record` step's new `has_turn`/`add_turn_with_evidence` calls need both added to it, or its own `store.turns == [1, 2, 3]`-style assertions break — a stub gaining the store methods its own code under test now calls, never a behaviour change to what the test itself asserts |
 
 The User Story 4 / FR-032 regression gate is: the full offline suite's pass/fail set is identical before and after
-this feature, **except** for exactly these five, each edited only for its own stated, mechanical reason (SC-003).
+this feature, **except** for exactly these ten, each edited only for its own stated, mechanical reason (SC-003).
 There is no production-code fallback for a store that lacks `has_turn`/`add_turn_with_evidence` — every real store
 gains both in the same schema bump (T006), so the `record` step is written against them unconditionally.
 

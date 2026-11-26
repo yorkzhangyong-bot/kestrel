@@ -902,7 +902,8 @@ class TargetStore:
         run-start path passes `now=app_state.clock()` explicitly, so `last_activity_at` agrees with whatever
         clock a test has substituted for it."""
         if side_channel_status not in SIDE_CHANNEL_STATUSES:
-            raise ValueError(f"side_channel_status must be one of {SIDE_CHANNEL_STATUSES}, not {side_channel_status!r}.")
+            raise ValueError(f"side_channel_status must be one of {SIDE_CHANNEL_STATUSES}, "
+                             f"not {side_channel_status!r}.")
         if ask_before_each_turn and mode != "adaptive":
             raise ValueError("ask_before_each_turn=True is only valid for mode='adaptive'.")
         last_activity_at = _iso(now) if now is not None else utc_now()
@@ -916,7 +917,8 @@ class TargetStore:
                     " time_limit_s, use_prior_experience, source_run_id, correlation_id, side_channel_status,"
                     " ask_before_each_turn, is_checkpointed, attacker_prompt_id, attacker_prompt_version,"
                     " judge_model, judge_prompt_id, judge_prompt_version, last_activity_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                    " ?)",
                     (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category, attacker_source,
                      utc_now(), mode, attacker_model, turn_budget, token_budget, time_limit_s,
                      int(use_prior_experience), source_run_id, correlation_id, side_channel_status,

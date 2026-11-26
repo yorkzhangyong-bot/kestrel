@@ -280,7 +280,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         return out
 
     @app.post("/api/targets", status_code=201, response_model=TargetDetail)
-    def save_target(body: SaveTargetRequest, request: Request) -> Any:
+    async def save_target(body: SaveTargetRequest, request: Request) -> Any:
         errors = (validate_settings(body.settings, has_target=False) + validate_save(body, terms.version)
                   + validate_canaries(body.canaries))
         if errors:
@@ -298,7 +298,12 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                 store.set_canaries(target.id, body.canaries)
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
-        return detail(store.get_target(target.id), store.list_canaries(target.id))
+        target = store.get_target(target.id)
+        attention = await needs_attention(store, target, graph=request.app.state.live_graph,
+                                          leases=request.app.state.leases,
+                                          started_at=request.app.state.started_at,
+                                          resume_idle_hours=settings.resume_idle_hours)
+        return detail(target, store.list_canaries(target.id), needs_attention=attention)
 
     @app.get("/api/targets/{target_id}", response_model=TargetDetail)
     async def get_target(target_id: int, request: Request) -> Any:

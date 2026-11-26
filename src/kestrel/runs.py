@@ -14,7 +14,7 @@ import time
 from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence
 
 from kestrel import checkpointing, events, prompt_registry
-from kestrel.attack.attacker import AttackerClient
+from kestrel.attack.attacker import AttackerClient, Pinned
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
@@ -309,7 +309,7 @@ async def stop_run(store: TargetStore, graph: Any, settings: Any, run_id: int, *
 
 
 def _pinned_attacker(run: Run, *, settings: Any, transport: Any) -> AttackerClient:
-    overrides = None
+    overrides: dict[str, Pinned] | None = None
     if run.attacker_prompt_id and run.attacker_prompt_version:
         text = prompt_registry.text_for(run.attacker_prompt_id, run.attacker_prompt_version)   # may raise
         family = run.attacker_prompt_id.removeprefix(prompt_registry.ATTACKER_PREFIX)
@@ -344,6 +344,8 @@ async def execute_resume(store: TargetStore, graph: Any, app_state: Any, setting
         raise NotResumable(run_id, "not_resumable", "This run cannot be resumed.")
     if isinstance(status, checkpointing.Paused):
         raise NotResumable(run_id, "paused", "This run is paused awaiting a decision; decide it instead.")
+    # `leased=False` above means Running is unreachable; the remaining shape is the resumable one.
+    assert isinstance(status, checkpointing.Resumable)
     run = store.get_run(run_id)
     target = store.get_target(run.target_id)
     if not target.permission_confirmed_at:
