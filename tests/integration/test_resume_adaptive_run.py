@@ -1,11 +1,11 @@
 """The core correctness proof for a resumed adaptive run: at each of four cut points, the in-process exception
 itself leaves the row resumable with no restart needed (FR-042), and resuming never repeats an already-durable
 attacker/judge call, never duplicates a turn or its evidence, and reaches the same outcome an uninterrupted run
-would (FR-008 to FR-012, FR-036, SC-001). Every cut is a monkeypatched exception from the real callable the
-relevant node reaches through `deps` (never the compiled node function itself, which a graph bakes in at build
-time and a later monkeypatch of the module attribute would never reach) - the one exception is the record-commit-
-window shape, which has no such callable to patch and needs the saver fault-injection technique T017 established
-instead (research D6, D13)."""
+would (FR-005, FR-008, FR-009, FR-010, FR-011, FR-012, FR-036, SC-001). Every cut is a monkeypatched exception
+from the real callable the relevant node reaches through `deps` (never the compiled node function itself, which a
+graph bakes in at build time and a later monkeypatch of the module attribute would never reach) - the one exception
+is the record-commit-window shape, which has no such callable to patch and needs the saver fault-injection
+technique T017 established instead (research D6, D13)."""
 import asyncio
 import dataclasses
 
@@ -59,7 +59,8 @@ def test_each_cut_point_is_in_process_resumable_and_resumes_to_the_same_outcome(
         # real send attempt, after the attacker's own draft already committed.
         import httpx
         crashing_transport = httpx.MockTransport(
-            lambda request: (_ for _ in ()).throw(RuntimeError("simulated crash: attacker drafted, send never completes")))
+            lambda request: (_ for _ in ()).throw(
+                RuntimeError("simulated crash: attacker drafted, send never completes")))
         monkeypatch.setattr(api.app.state, "transport", crashing_transport)
     elif cut == "send_sent_not_checked":
         async def boom_check(self, turn, reply, remaining):
@@ -141,7 +142,7 @@ def test_the_record_commit_window_cut_point_is_also_in_process_resumable_and_res
 
 
 def test_secret_scrub_on_the_raw_checkpoint_bytes(settings, make_client, model_transport, tmp_path):
-    # SC-007: a real auth-header secret value and a distinctive URL/display name never appear in the raw
+    # FR-033, SC-007: a real auth-header secret value and a distinctive URL/display name never appear in the raw
     # checkpoints/checkpoint_writes bytes, read directly from the database file, cut and resumed.
     api = _client(settings, make_client, model_transport)
     store = api.app.state.store

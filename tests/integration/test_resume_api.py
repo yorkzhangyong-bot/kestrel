@@ -1,5 +1,6 @@
 """`GET /api/runs/{id}`'s own `resumable`/`paused`/`run_state` fields and `POST /api/runs/{id}/resume`'s
-documented preconditions and outcomes (014/FR-041, FR-054, contracts/api.md)."""
+documented preconditions and outcomes, and the target lock a resumable run holds against a new run or a replay
+(014/FR-041, FR-054, FR-015, SC-008, contracts/api.md)."""
 import asyncio
 import dataclasses
 

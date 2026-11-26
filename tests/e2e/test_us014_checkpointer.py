@@ -1,4 +1,5 @@
-"""Spec acceptance (014/SC-010, part 1): a checkpointed adaptive run survives a real process restart. Two separate
+"""Spec acceptance (014/FR-030, 014/SC-010, part 1): a checkpointed adaptive run survives a real process
+restart. Two separate
 `create_app` instances share one temporary database (never a browser test, which cannot restart Kestrel): instance A
 starts an adaptive run and crashes mid-send, leaving the row in_progress and resumable; instance B — a fresh app over
 the same database, whose own start-up sweep must classify rather than close that row — resumes it over the real API
