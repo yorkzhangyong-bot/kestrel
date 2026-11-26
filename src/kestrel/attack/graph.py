@@ -429,7 +429,7 @@ async def _live_attacker_node(state: _State, runtime: Runtime[_LiveDeps]) -> _St
             "turn_attacker_usage": _attacker_usage_now()}
 
 
-async def _approve_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
+async def _approve_node(state: _State, runtime: Runtime[_DepsT]) -> _State:
     """The approve node (feature 014 part 2, research D4, D7): a no-op for turn 1 or when the run's own
     `ask_before_each_turn` flag is unset, otherwise interrupts before `send` with this turn's drafted message. The
     flag is read via `.get(..., False)` (research D18), never a bracket subscript, so a checkpoint written before
@@ -437,7 +437,7 @@ async def _approve_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
     turn pauses again; "approve" (validated and resolved one layer up, research D8) simply proceeds to send.
     There is no "stop" branch - Stop never reaches the graph (research D7)."""
     deps = runtime.context
-    spent = {"time_spent_s": _time_spent(deps)}
+    spent: _State = {"time_spent_s": _time_spent(deps)}
     turn = state["turns_used"] + 1
     if not state.get("ask_before_each_turn", False) or turn == 1:
         return spent
