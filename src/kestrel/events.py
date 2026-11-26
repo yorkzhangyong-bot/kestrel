@@ -486,6 +486,45 @@ def run_finished(run: Any) -> None:
         _backstop("run.end", error)
 
 
+def run_resumed(*, from_turn: int, from_step: str, was_paused: bool) -> None:
+    """A resumable or paused run's resume/decision actually proceeds (feature 014, FR-017): emitted once, inside a
+    freshly opened scope for that run, before the graph is invoked again."""
+    emit("run.resumed", from_turn=from_turn, from_step=from_step, was_paused=was_paused)
+
+
+def run_paused(*, turn: int) -> None:
+    """A node (part 2's own approve node in production; a monkeypatched one, independently, in part 1's own test
+    of the suppression mechanism itself - FR-053) called `interrupt()`: the scope's own clean exit, with no
+    exception and the row still unfinished, already withholds both `run.end` and `run.interrupted` for this case
+    (events.py's own `_scope_exit`) - this line is the only one telling that story."""
+    emit("run.paused", turn=turn)
+
+
+def reopen_turn(*, turn: int, elapsed_s: float, attacker_usage: Mapping[str, Any] | None = None) -> None:
+    """A resume or decision that continues an already-started turn re-opens that turn's own context explicitly
+    (feature 014, research D21): its number, and a start time that discounts the interruption or pause gap, read
+    against `_State.turn_time_spent_at_start` - rather than relying on `turn_started`, which does not fire again
+    for a turn that does not re-enter the attacker step. `attacker_usage` (`_State.turn_attacker_usage`) carries
+    over the attacker call's own tokens/cost for this turn when it is not re-executed, never reported as missing."""
+    ctx = _live()
+    if ctx is None:
+        return
+    ctx.turn, ctx.turn_started_at = turn, time.monotonic() - max(0.0, elapsed_s)
+    ctx.turn_tokens, ctx.turn_cost, ctx.turn_judge_prompt = Tokens(), Cost(), None
+    if attacker_usage is not None:
+        ctx.turn_tokens.add(None, None, attacker_usage.get("tokens"))
+        ctx.turn_cost.add(attacker_usage.get("cost"), None)
+
+
+def run_stopped(*, was_paused: bool, reconciled: bool, trigger: str, idle_hours: float | None = None) -> None:
+    """Stop ends a run without touching the graph (feature 014, FR-040, FR-058): emitted once, inside whichever
+    scope its caller already has open - the `/stop` endpoint handler and the automatic idle check each open one
+    immediately around their own call; the decision handler's own `"stop"` branch reuses the single scope it
+    already opened for the whole decision, never a second, nested one."""
+    emit("run.stopped", was_paused=was_paused, reconciled=reconciled, trigger=trigger,
+         **_present({"idle_hours": idle_hours}))
+
+
 def run_interrupted(*, resumable: bool, error: str | None = None) -> None:
     """The start-up sweep's own classification of a checkpointed row left `in_progress` by a previous process
     (feature 014, research D20): kept into that run's own log, not only the stream. `error` is never set from

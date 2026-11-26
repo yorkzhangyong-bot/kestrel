@@ -70,11 +70,15 @@ def numbered_sender(*, fail_at: int | None = None):
 
 
 def make_deps(*, store, sender, judge, attacker, max_turns=3):
+    # invocation_start=1000.0 matches clock's own constant (feature 014): _Deps's own default,
+    # field(default_factory=time.monotonic), would otherwise pair a real wall-clock anchor with a clock stuck at
+    # 1000.0, making _time_spent(deps) a huge, meaningless negative number the moment anything reads it.
     return _LiveDeps(store=store, run_id=1, resolved=RESOLVED, secrets=[SECRET], mode="local",
                      sender=sender, transport=None, resolver=None, judge=judge, judge_prompt="judge@1",
                      judge_prompt_id="judge", judge_prompt_version="1",
                      checker=EvidenceChecker.canary_only([], family=SEED.family),
                      max_turns=max_turns, token_budget=40000, deadline=1300.0, clock=lambda: 1000.0,
+                     invocation_start=1000.0,
                      seed_prompt=SEED, opening=SEED.text, attacker=attacker, hint_provider=None,
                      attacker_prompt="attacker:system_prompt_leak@1", attacker_prompt_id="attacker:system_prompt_leak",
                      attacker_prompt_version="1")

@@ -386,14 +386,16 @@ async def _live_attacker_node(state: _State, runtime: Runtime[_LiveDeps]) -> _St
     deps = runtime.context
     turn = state["turns_used"] + 1
     events.turn_started(turn)   # every line of this turn carries its number, through all the nodes
-    # Feature 014 (research D24): set on every path out of this node, including the two early returns below - a
-    # crash strictly after this node but before send/evidence/judge/record run again must not lose the time
-    # already spent drafting this turn's own message.
+    # Feature 014 (research D24): set fresh on every path out of this node, including the two early returns below
+    # - computed *after* whatever work that path itself did (the drafting call included), never before it, or a
+    # crash/pause strictly after this node but before send runs again would lose the time the drafting call
+    # itself took (confirmed empirically: a FakeClock that advances only inside the attacker double's own call
+    # catches a too-early computation immediately - test_the_attacker_nodes_own_delta_persists_drafting_time_
+    # before_send_ever_runs).
     baseline = state["time_spent_s"]
-    spent = _time_spent(deps)
     if turn == 1:
         return {"pending_message": mask_values(deps.opening, deps.secrets), "pending_canary": False,
-                "pending_evidence": None, "time_spent_s": spent, "turn_time_spent_at_start": baseline,
+                "pending_evidence": None, "time_spent_s": _time_spent(deps), "turn_time_spent_at_start": baseline,
                 "turn_attacker_usage": None}   # turn 1 is the library seed: no attacker-model call at all
     hints = None
     if deps.hint_provider is not None:
@@ -408,10 +410,11 @@ async def _live_attacker_node(state: _State, runtime: Runtime[_LiveDeps]) -> _St
     except AttackerError as error:
         return {"outcome": Outcome(verdict="unclear", hard_evidence=False, reason=str(error),
                                    judge_used=state["judge_used"], stopping_condition="attacker_failed",
-                                   succeeded_turn=None), "time_spent_s": spent}
+                                   succeeded_turn=None), "time_spent_s": _time_spent(deps)}
     return {"pending_message": mask_values(reply.message, deps.secrets), "pending_canary": False,
-            "pending_evidence": None, "tokens_used": state["tokens_used"] + reply.tokens, "time_spent_s": spent,
-            "turn_time_spent_at_start": baseline, "turn_attacker_usage": _attacker_usage_now()}
+            "pending_evidence": None, "tokens_used": state["tokens_used"] + reply.tokens,
+            "time_spent_s": _time_spent(deps), "turn_time_spent_at_start": baseline,
+            "turn_attacker_usage": _attacker_usage_now()}
 
 
 def _live_record_node(state: _State, runtime: Runtime[_LiveDeps]) -> _State:
@@ -624,6 +627,14 @@ async def run_adaptive(store: TargetStore, *, target_id: int, seed_prompt: Attac
             config = {**config, **thread_config(run_id)}
             invoke_kwargs["durability"] = "sync"
         final = await graph.ainvoke(_initial_state(), config, context=deps, **invoke_kwargs)
+        if final.get("outcome") is None:
+            # Part 2's own approve node is what calls interrupt() in production (not shipped in this phase), but
+            # the suppression mechanism itself is part 1's: ainvoke returns normally, with the state as of the
+            # last fully committed checkpoint before the interrupting node, never raising - never finish this
+            # row (research D21); the scope's own exit emits nothing for a clean, checkpointed, still-in_progress
+            # pause (FR-053).
+            events.run_paused(turn=final["turns_used"] + 1)
+            return store.get_run(run_id)
         outcome: Outcome = final["outcome"]
         requested = final["judge_requests"]
         run = store.finish_run(run_id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence,

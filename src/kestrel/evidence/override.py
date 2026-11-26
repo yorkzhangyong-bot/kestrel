@@ -125,6 +125,15 @@ def override_task_paragraph(token: OverrideToken) -> tuple[str, str]:
     return paragraph, ref
 
 
+def override_task_paragraph_for_version(prompt_version: str, token: OverrideToken) -> str:
+    """The exact paragraph the stored token's own recorded prompt version would have produced (feature 014,
+    research D17): used to rebuild a resumed live run's checker, never whatever version is currently active.
+    Raises `prompt_registry.PromptNotRegistered` when that version's own file no longer exists (FR-041, FR-047 -
+    the resume/decision precondition this feeds)."""
+    text = prompt_registry.text_for(PROMPT_ID, prompt_version)
+    return text.replace("{first_part}", token.first).replace("{second_part}", token.second)
+
+
 def place_task(seed_text: str, insertion: InsertionPoint | None, paragraph: str) -> str:
     """Put `paragraph` at the seed's insertion point (FR-064). At the end of the text — a direct-injection seed's
     attacker-voice position — it follows the seed as its own paragraph; at an interior point — inside an

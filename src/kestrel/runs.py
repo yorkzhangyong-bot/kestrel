@@ -11,16 +11,18 @@ lengths and categories only.
 from __future__ import annotations
 
 import time
-from typing import Awaitable, Callable, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence
 
-from kestrel import events, prompt_registry
+from kestrel import checkpointing, events, prompt_registry
+from kestrel.attack.attacker import AttackerClient
 from kestrel.attacks.library import AttackPrompt
 from kestrel.connection.address_guard import default_resolver
 from kestrel.connection.tester import ResolvedSettings, TestOutcome, run_test
-from kestrel.evidence.checker import EvidenceChecker
-from kestrel.judge.client import JudgeError
+from kestrel.evidence.checker import EvidenceChecker, rebuild_live_checker
+from kestrel.experience.writeback import write_back
+from kestrel.judge.client import JudgeClient, JudgeError
 from kestrel.judge.verdict import ParsedVerdict
-from kestrel.store import Run, TargetStore
+from kestrel.store import Run, TargetStore, Turn
 
 TOTAL_DEADLINE_S = 90.0   # FR-013: the whole run, start to verdict
 SEND_LIMIT_S = 60.0       # feature 001's send limit, inside the deadline
@@ -187,6 +189,249 @@ def finish_with_outcome(store: TargetStore, run: Run, outcome, *, turns_used: in
         succeeded_turn=outcome.succeeded_turn, turns_used=turns_used, tokens_used=tokens_used,
         judge_prompt_id=run.judge_prompt_id if outcome.judge_used else None,
         judge_prompt_version=run.judge_prompt_version if outcome.judge_used else None)
+
+
+INTERRUPTED_REASON = "Kestrel stopped while this run was in progress, so it was interrupted."
+
+
+class NotStoppable(Exception):
+    """`run_id`'s checkpoint is incompatible with the running build (FR-048): unreachable without a restart in
+    between, since the start-up sweep always resolves this before any request could reach Stop for it."""
+
+    def __init__(self, run_id: int) -> None:
+        super().__init__(run_id)
+        self.run_id = run_id
+
+
+class NotResumable(Exception):
+    """`run_id` cannot be resumed or decided right now; `.code`/`.message` are the documented 409 (contracts/api.md,
+    FR-041, FR-054)."""
+
+    def __init__(self, run_id: int, code: str, message: str) -> None:
+        super().__init__(run_id, code, message)
+        self.run_id = run_id
+        self.code = code
+        self.message = message
+
+
+class PinnedModelUnavailable(Exception):
+    """A resumed or decided run's own pinned attacker/judge model, prompt version, or library seed can no longer
+    be constructed (FR-041, FR-047); `.message` names the problem."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _last_durably_judged_turn(turns: Sequence[Turn]) -> Turn | None:
+    """The last `run_turns` row this run's own judge actually reached a verdict on (FR-040) - never a nonexistent
+    `Run.last_judged_verdict` attribute."""
+    for turn in reversed(turns):
+        if turn.judge_verdict is not None:
+            return turn
+    return None
+
+
+def _pending_turn_fields(run: Run, state: dict) -> dict:
+    """Exactly the fields `record` itself would read to write this pending turn (research D7): Stop constructs no
+    call `record` would not already make for the identical turn, reading the run's own pinned provenance rather
+    than whatever is currently configured (FR-047)."""
+    turn = state["turns_used"] + 1
+    judged = state.get("last_judged_turn") == turn
+    found = state.get("pending_evidence")
+    items = found.items if found is not None else []
+    return {"attacker_message": state["pending_message"], "reply_text": state.get("pending_reply"),
+           "reply_truncated": state.get("pending_truncated", False), "judge_verdict": state.get("last_verdict"),
+           "judge_reason": state.get("last_reason"), "judge_progress": state.get("last_progress"),
+           "attacker_prompt_id": run.attacker_prompt_id if turn >= 2 else None,
+           "attacker_prompt_version": run.attacker_prompt_version if turn >= 2 else None,
+           "judge_prompt_id": run.judge_prompt_id if judged else None,
+           "judge_prompt_version": run.judge_prompt_version if judged else None, "evidence_items": items}
+
+
+async def stop_run(store: TargetStore, graph: Any, settings: Any, run_id: int, *,
+                   triggered_by: Literal["user", "idle_timeout"] = "user") -> Run:
+    """End any resumable run - paused or not - without ever resuming its graph (FR-040, research D7). The caller
+    already holds `run_id`'s execution lease and already has its own logging scope open before calling in
+    (research D29): this function neither acquires nor releases the lease, neither opens nor closes a scope, and
+    performs no precondition validation of its own - all three are the caller's own job, already done."""
+    status = await checkpointing.classify(graph, run_id, leased=False)
+    idle_hours = settings.resume_idle_hours if triggered_by == "idle_timeout" else None
+    if isinstance(status, (checkpointing.NoCheckpoint, checkpointing.Unreadable)):
+        # FR-056: the exact close the sweep itself performs for this shape, same reason text, no write-back -
+        # never a 409 that would otherwise trap the target until a restart; triggered_by changes nothing here.
+        run = store.finish_run(run_id, verdict="unclear", judge_used=False, stopping_condition="interrupted",
+                               reason=INTERRUPTED_REASON)
+        store.set_memory_written(run_id, False)   # never attempted (nothing of this run's progress survived)
+        run = store.get_run(run_id)
+        events.run_stopped(was_paused=False, reconciled=False, trigger=triggered_by, idle_hours=idle_hours)
+        events.run_finished(run)
+        return run
+    if isinstance(status, checkpointing.Incompatible):
+        raise NotStoppable(run_id)
+    run = store.get_run(run_id)
+    if isinstance(status, checkpointing.ReachedEnd):
+        state: dict | None = status.values
+    elif isinstance(status, checkpointing.Resumable):
+        state = status.snapshot.values
+    else:   # Paused
+        snap = await graph.aget_state(checkpointing.thread_config(run_id))
+        state = snap.values
+    decided = status.outcome if isinstance(status, checkpointing.ReachedEnd) else (state or {}).get("outcome")
+    if decided is not None:
+        # FR-051: write the pending turn only when `record` itself has not yet run for it - status.from_step ==
+        # "record" is the shared signal both the evidence and judge commit windows share (record is their own
+        # next step); record's own commit window (from_step == "decide") and everything later already has it.
+        if state is not None and getattr(status, "from_step", None) == "record":
+            turn = state["turns_used"] + 1
+            store.add_turn_with_evidence(run_id, position=turn, **_pending_turn_fields(run, state))
+        run = finish_with_outcome(store, run, decided, turns_used=(state or {}).get("turns_used"),
+                                  tokens_used=(state or {}).get("tokens_used"))
+        events.run_stopped(was_paused=isinstance(status, checkpointing.Paused), reconciled=True,
+                           trigger=triggered_by, idle_hours=idle_hours)
+    else:
+        last_judged = _last_durably_judged_turn(store.list_turns(run_id))
+        reason = ("stopped_by_user" if triggered_by == "user" else
+                 f"Kestrel stopped this run automatically after {settings.resume_idle_hours:g} hours with "
+                 f"nobody acting on it.")
+        run = store.finish_run(
+            run_id, verdict=(last_judged.judge_verdict if last_judged else "unclear"),
+            judge_used=last_judged is not None,
+            judge_model=(run.judge_model if last_judged else None),
+            judge_prompt_id=(run.judge_prompt_id if last_judged else None),
+            judge_prompt_version=(run.judge_prompt_version if last_judged else None),
+            turns_used=(state or {}).get("turns_used"), tokens_used=(state or {}).get("tokens_used"),
+            stopping_condition="stopped_by_user", reason=reason)
+        events.run_stopped(was_paused=isinstance(status, checkpointing.Paused), reconciled=False,
+                           trigger=triggered_by, idle_hours=idle_hours)
+    events.run_finished(run)
+    return run
+
+
+def _pinned_attacker(run: Run, *, settings: Any, transport: Any) -> AttackerClient:
+    overrides = None
+    if run.attacker_prompt_id and run.attacker_prompt_version:
+        text = prompt_registry.text_for(run.attacker_prompt_id, run.attacker_prompt_version)   # may raise
+        family = run.attacker_prompt_id.removeprefix(prompt_registry.ATTACKER_PREFIX)
+        overrides = {family: (text, f"{run.attacker_prompt_id}@{run.attacker_prompt_version}")}
+    return AttackerClient(model=run.attacker_model or "", api_key=settings.attacker_api_key,
+                         base_url=settings.attacker_base_url, transport=transport, system_overrides=overrides)
+
+
+def _pinned_judge(run: Run, *, settings: Any, transport: Any) -> JudgeClient:
+    pinned = None
+    if run.judge_prompt_id and run.judge_prompt_version:
+        text = prompt_registry.text_for(run.judge_prompt_id, run.judge_prompt_version)   # may raise
+        pinned = (text, f"{run.judge_prompt_id}@{run.judge_prompt_version}")
+    api_key = settings.judge_api_key if run.judge_model else None
+    return JudgeClient(model=run.judge_model or "", api_key=api_key, base_url=settings.judge_base_url,
+                      transport=transport, system_prompt=pinned)
+
+
+async def execute_resume(store: TargetStore, graph: Any, app_state: Any, settings: Any, library: Any,
+                         terms_version: str, run_id: int) -> Run:
+    """Continue a resumable (not paused) run (014/FR-014, FR-041, FR-047, contracts/api.md). The caller already
+    holds `run_id`'s own execution lease and has already validated its plain columns before opening any scope
+    (research D29); this builds a fresh `_LiveDeps`, pinned to the run's own claim-time caps/model/prompt
+    references, and resumes the real compiled graph from its last durably committed step. Raises `NotResumable`
+    (the documented 409s) or `PinnedModelUnavailable`."""
+    from kestrel.attack.graph import LIVE_GRAPH, Outcome, _LiveDeps   # lazy: avoids a module-level import cycle
+
+    status = await checkpointing.classify(graph, run_id, leased=False)
+    if isinstance(status, checkpointing.ReachedEnd):
+        return await stop_run(store, graph, settings, run_id, triggered_by="user")
+    if isinstance(status, (checkpointing.NoCheckpoint, checkpointing.Unreadable, checkpointing.Incompatible)):
+        raise NotResumable(run_id, "not_resumable", "This run cannot be resumed.")
+    if isinstance(status, checkpointing.Paused):
+        raise NotResumable(run_id, "paused", "This run is paused awaiting a decision; decide it instead.")
+    run = store.get_run(run_id)
+    target = store.get_target(run.target_id)
+    if not target.permission_confirmed_at:
+        raise NotResumable(run_id, "permission_missing",
+                           "Tick the permission box and save the target before attacking it.")
+    if target.terms_version != terms_version:
+        raise NotResumable(run_id, "terms_outdated",
+                           "The terms of service have changed; read them and tick the box again.")
+    if not settings.attacker_api_key:
+        raise NotResumable(run_id, "attacker_unavailable",
+                           "No attacker model is configured, so an adaptive attack can't run.")
+    if library is None:
+        raise NotResumable(run_id, "library_unavailable", "The attack library is not available.")
+    try:
+        seed = library.pick(run.family, run.prompt_id)
+        attacker = _pinned_attacker(run, settings=settings, transport=app_state.transport)
+        judge = _pinned_judge(run, settings=settings, transport=app_state.transport)
+        if run.judge_model and not settings.judge_api_key:
+            raise PinnedModelUnavailable(
+                "This run's own attacker or judge model (or its prompt version, or its own library seed) is no "
+                "longer available; stop it instead.")
+    except LookupError as error:
+        raise PinnedModelUnavailable(
+            "This run's own attacker or judge model (or its prompt version, or its own library seed) is no "
+            "longer available; stop it instead.") from error
+
+    state = status.snapshot.values
+    stored_turns = store.list_turns(run_id)
+    # The target's *current* connection settings and secrets (feature 012's own "current, not as it was" meaning,
+    # FR-047's Assumptions) - never api/main.py's own stored_values helper, to avoid a module-level import cycle.
+    stored = {h.name.lower(): h.value for h in store.resolve_headers(target.id)}
+    resolved_headers = tuple((h.name, stored.get(h.name.lower()) or "") for h in target.headers)
+    resolved = ResolvedSettings(url=target.url, method=target.method, headers=resolved_headers,
+                                body_template=target.body_template, response_path=target.response_path)
+    checker = rebuild_live_checker(store, library, run, stored_turns,
+                                   mask=[value for _, value in resolved_headers] + [resolved.url])
+    if status.completed and status.from_step in ("evidence", "judge", "decide", "record"):
+        checker.note_sent(state["pending_message"], state["turns_used"] + 1, emit_disarm_event=True)
+
+    clock = time.monotonic
+    deadline = clock() + max(0.0, (run.time_limit_s or 0) - state.get("time_spent_s", 0.0))
+    deps = _LiveDeps(store=store, run_id=run_id, resolved=resolved,
+                     secrets=[value for _, value in resolved_headers], mode=app_state.settings.mode,
+                     sender=run_test, transport=app_state.transport, resolver=app_state.resolver, judge=judge,
+                     judge_prompt=(f"{run.judge_prompt_id}@{run.judge_prompt_version}"
+                                  if run.judge_prompt_id else None),
+                     judge_prompt_id=run.judge_prompt_id, judge_prompt_version=run.judge_prompt_version,
+                     checker=checker, max_turns=run.turn_budget or 0, token_budget=run.token_budget or 0,
+                     deadline=deadline, clock=clock, time_spent_at_invocation_start=state.get("time_spent_s", 0.0),
+                     invocation_start=clock(), seed_prompt=seed, opening=run.prompt_text, attacker=attacker,
+                     hint_provider=None,
+                     attacker_prompt=(f"{run.attacker_prompt_id}@{run.attacker_prompt_version}"
+                                     if run.attacker_prompt_id else None),
+                     attacker_prompt_id=run.attacker_prompt_id, attacker_prompt_version=run.attacker_prompt_version)
+    events.run_resumed(from_turn=state["turns_used"] + 1, from_step=status.from_step, was_paused=False)
+    events.reopen_turn(turn=state["turns_used"] + 1,
+                       elapsed_s=state.get("time_spent_s", 0.0) - state.get("turn_time_spent_at_start", 0.0),
+                       attacker_usage=state.get("turn_attacker_usage"))
+    final = await graph.ainvoke(None, checkpointing.thread_config(run_id), context=deps, durability="sync")
+    outcome: Outcome = final["outcome"]
+    requested = final["judge_requests"]
+    run = store.finish_run(run_id, verdict=outcome.verdict, hard_evidence=outcome.hard_evidence,
+                           reason=outcome.reason, judge_used=outcome.judge_used,
+                           judge_model=run.judge_model if outcome.judge_used else None,
+                           failure_step=outcome.failure_step, stopping_condition=outcome.stopping_condition,
+                           succeeded_turn=outcome.succeeded_turn, turns_used=final["turns_used"],
+                           tokens_used=final["tokens_used"],
+                           judge_prompt_id=run.judge_prompt_id if requested else None,
+                           judge_prompt_version=run.judge_prompt_version if requested else None)
+    events.run_finished(run)
+    return run
+
+
+def finish_api_run(store: TargetStore, run: Run, *, experience: Any, dedupe_threshold: float | None,
+                   planted_values: Sequence[str] = (), task_texts: Sequence[str] = ()) -> Run:
+    """The one shared step every API-driven finishing path (other than the original start, whose own equivalent
+    is `api/main.py::start_run` itself) funnels an already-finished run through (feature 014, research D19):
+    write-back, skipped if already attempted (`run.memory_written is not None` - Stop's own no-checkpoint branch
+    pre-sets it False, FR-056), then checkpoint deletion. Lease release is never a step here - it is the caller's
+    own `with checkpointing.lease(...):` block exiting, exactly like `run_adaptive`'s own self-contained use of
+    it (FR-055)."""
+    if run.memory_written is None:
+        turns = store.list_turns(run.id) if run.mode == "adaptive" else []
+        write_back(experience, store, run, turns, dedupe_threshold=dedupe_threshold,
+                  planted_values=list(planted_values), task_texts=list(task_texts))
+        run = store.get_run(run.id)
+    store.delete_checkpoint(run.id)
+    return run
 
 
 async def execute_adaptive_run(store, *, target_id, seed_prompt, attacker_source, canaries, resolved, mode,

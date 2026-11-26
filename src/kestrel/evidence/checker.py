@@ -84,6 +84,7 @@ class _Planted:
     #                                   message; None until then, when the bare paragraph stands in (FR-063)
     disarmed_turn: int | None = None
     recorded: bool = True             # False for a replay's copy, whose row is already on its own run
+    disarmed_already_logged: bool = False   # feature 014, research D17: see note_sent
 
     @property
     def armed(self) -> bool:
@@ -192,21 +193,34 @@ class EvidenceChecker:
             return []
         return [self._override.task_text or self._override.paragraph]
 
-    def note_sent(self, text: str, turn: int) -> bool:
+    def note_sent(self, text: str, turn: int, *, emit_disarm_event: bool = True) -> bool:
         """Called with EVERY message a path sends (the opening message, an attacker-generated one, a replay's
-        re-sends). Remembers it for the unsafe-output echo rule (FR-065); returns True when it disarmed the
-        override token (FR-012) — judged on the normalised text, so a normalising target gains nothing."""
+        re-sends, a resumed live run's own already-recorded turns). Remembers it for the unsafe-output echo rule
+        (FR-065); returns True when it disarmed the override token (FR-012) — judged on the normalised text, so a
+        normalising target gains nothing. `emit_disarm_event` (feature 014, research D17) is False when replaying
+        an already-recorded turn at resume time (that disarm already happened once, before the interruption) -
+        the resumed checker rebuild is the one caller that passes False for every already-recorded turn and True
+        for at most the checkpoint's own in-flight message. A *live* resume's own `send` can still run this call a
+        second time for that exact same in-flight turn with `emit_disarm_event=True` (the node re-executing after
+        a crash, never a reason to suppress by itself) - `disarmed_already_logged` (set only by
+        `rebuild_live_checker`, when the store already showed a disarm at rebuild time) is what tells *this*
+        specific case apart from a replay's own first, genuinely new confirmation of the same turn number, which
+        must still log (research D17)."""
         self._sent.texts.append(text)
         if self._override is None or self._override.disarmed_turn is not None and turn > self._override.disarmed_turn:
             return False   # nothing planted, or already disarmed on an earlier turn
         if not override_module.text_contains_joined(text, self._override.token.joined):
             return False
         # Disarmed from this turn on: an earlier turn than a recorded disarm moves it earlier, the same turn (a
-        # replay re-sending the very message that disarmed its source) confirms it and is logged all the same.
+        # replay re-sending the very message that disarmed its source) confirms it and is logged all the same -
+        # unless this run's own rebuild already found that exact disarm pre-logged (research D17).
+        already_logged = self._override.disarmed_already_logged and self._override.disarmed_turn == turn
         self._override.disarmed_turn = turn
+        self._override.disarmed_already_logged = True
         if self._store is not None and self._run_id is not None:
             self._store.disarm_planted_token(self._run_id, "override", turn)
-        events.emit("evidence.override_disarmed", logging.WARNING, turn=turn)
+        if emit_disarm_event and not already_logged:
+            events.emit("evidence.override_disarmed", logging.WARNING, turn=turn)
         return True
 
     def override_disarmed_turn(self) -> int | None:
@@ -319,6 +333,37 @@ def _copied_override(planted: Sequence[PlantedToken]) -> _Planted | None:
                             prompt_ref=token.prompt_ref, paragraph=None, disarmed_turn=token.disarmed_turn,
                             recorded=False)
     return None
+
+
+def rebuild_live_checker(store: Any, library: Any, run: Any, stored_turns: Sequence[Any], *,
+                         mask: Sequence[str] = ()) -> "EvidenceChecker":
+    """A resumed live run's checker, rebuilt distinctly from both a fresh claim (which would mint a new token) and
+    a replay (which never regenerates text at all) - feature 014, research D17: the existing token, a freshly
+    regenerated paragraph (from its own recorded prompt version, never the currently active one), bound without a
+    duplicate planted-token insert. Replays "this message was sent" over every already-recorded turn without
+    disarming again, then (if the resume point is past the point a message was already sent) notes the
+    checkpoint's own in-flight message too - the one call allowed to actually disarm it. Raises `LookupError` when
+    the run's own recorded seed no longer exists in the current library, and
+    `kestrel.prompt_registry.PromptNotRegistered` when its pinned override-template version no longer exists
+    (FR-041, FR-047 - both resume/decision preconditions)."""
+    planted_rows = [token for token in store.list_planted_tokens(run.id) if token.kind == "override"]
+    override = None
+    if planted_rows:
+        stored = planted_rows[0]
+        seed = library.pick(run.family, run.prompt_id)
+        token = override_module.OverrideToken.from_joined(stored.token)
+        paragraph = override_module.override_task_paragraph_for_version(stored.prompt_version, token)
+        insertion = override_module.insertion_point(seed.family, seed.id, seed.text)
+        task_text = insertion.frame(paragraph) if insertion is not None else paragraph
+        override = _Planted(token=token, prompt_ref=stored.prompt_ref, paragraph=paragraph, task_text=task_text,
+                            disarmed_turn=stored.disarmed_turn, recorded=False,
+                            disarmed_already_logged=stored.disarmed_turn is not None)
+    checker = EvidenceChecker(canaries=store.list_canaries(run.target_id), family=run.family, store=store,
+                              unsafe_output=True, override_planted=override, mask=mask)
+    checker.bind_run(run.id)   # recorded=False skips the insert; the run id is still set (future disarms persist)
+    for turn in stored_turns:
+        checker.note_sent(turn.attacker_message, turn.position, emit_disarm_event=False)
+    return checker
 
 
 def build_checker(*, store: Any, family: str, canaries: Sequence[str], mode: str = "local", target: Any = None,

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, AsyncIterator, Iterator
 
 from langchain_core.runnables import RunnableConfig
@@ -322,6 +323,13 @@ async def classify(graph: Any, run_id: int, *, leased: bool) -> ClassificationRe
     else:
         routed = next((channel.removeprefix("branch:to:") for task_id, channel, _ in (tup.pending_writes or ())
                        if task_id == task.id and channel.startswith("branch:to:")), None)
+        if routed is None and task.name not in _STATIC_NEXT_STEP:
+            # FR-052: this task's own conditional edge routed to the graph's end - a route to END carries no
+            # `branch:to:` write at all (there is no further channel to name), so the checkpoint confirming "zero
+            # tasks remain" is exactly what never committed. The state this task already produced (channel
+            # values, never a task-level write) shows the run is functionally over regardless; a naturally
+            # completed thread would classify as ReachedEnd the same way once its own final checkpoint lands.
+            return ReachedEnd(outcome=snap.values.get("outcome"), values=snap.values)
         from_step = routed or _STATIC_NEXT_STEP[task.name]
     return Resumable(from_step=from_step, completed=completed, snapshot=snap)
 
@@ -333,9 +341,9 @@ def run_state_for(status: ClassificationResult) -> str:
         return "running"
     if isinstance(status, Paused):
         return "paused"
-    if isinstance(status, (ReachedEnd, NoCheckpoint, Unreadable)):
-        return "stoppable"
-    return "resumable"   # Resumable, or Incompatible read by a caller that reaches this far (unreachable in part 1)
+    if isinstance(status, Resumable):
+        return "resumable"
+    return "stoppable"   # ReachedEnd, NoCheckpoint, Unreadable, or Incompatible (unreachable without a restart)
 
 
 # ---- the execution lease (research D12) ----
@@ -373,3 +381,13 @@ def mark_active(app_state: Any, run_id: int) -> None:
     before, and never by the automatic idle check (research D26, D27), for which an automatic stop (successful or
     not) is never one of the accepted-exit kinds."""
     app_state.accepted_exits.add(run_id)
+
+
+def idle_hours(run: Any, app_state: Any) -> float:
+    """How long `run`'s own idle clock has been running (research D27): `last_activity_at` (stored `TEXT`) parsed
+    into a `datetime` before subtracting - never a `str` from a `datetime` - against `app_state.clock()`'s own
+    current reading. Plain wall-clock, no `max()` with anything; a run with no `last_activity_at` at all (should
+    not happen for a checkpointed row, which always gets one at claim time) is never this function's problem to
+    paper over."""
+    parsed = datetime.fromisoformat(run.last_activity_at)
+    return (app_state.clock() - parsed).total_seconds() / 3600.0
