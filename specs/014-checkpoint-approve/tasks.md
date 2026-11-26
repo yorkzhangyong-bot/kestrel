@@ -560,7 +560,7 @@ pull request despite sitting later in this file.
 
 ## Phase 7: Foundational (Part 2, blocking User Story 2 and User Story 3)
 
-- [ ] T043 [P] Unit test `tests/unit/test_approve_node_probe.py` (`FEATURE = "014"`): compiled against the **real
+- [X] T043 [P] Unit test `tests/unit/test_approve_node_probe.py` (`FEATURE = "014"`): compiled against the **real
       production live-graph copy** (T010), with the **real** `KestrelCheckpointSaver` over a `tmp_path` store —
       turn 1 never pauses; the first pause returns a result carrying the exact drafted message; re-invoking with
       nothing to resume reproduces the identical pause with no side effect and no new attacker call; a validated,
@@ -575,14 +575,14 @@ pull request despite sitting later in this file.
       classification's `from_step` still equals the real compiled graph's own next node — proving the routing-write
       mechanism needs no table update at all when the topology gains a node, unlike a hand-written one would
       (research D5, D18, FR-052).
-- [ ] T044 Implement `_State.ask_before_each_turn`/`_LiveDeps.ask_before_each_turn` (defaulted, research D23) and
+- [X] T044 Implement `_State.ask_before_each_turn`/`_LiveDeps.ask_before_each_turn` (defaulted, research D23) and
       the new `_approve_node` in `src/kestrel/attack/graph.py` per `data-model.md`: bumps `CURRENT_GRAPH_VERSION`
       to `2`; wires `attacker → approve → send` into `LIVE_GRAPH`'s one topology (which, before this task, has no
       such node at all); reads its own flag via `.get("ask_before_each_turn", False)`, never a bracket subscript;
       seeded into the run's initial state **only at a fresh claim**, never re-seeded by a resume/decision's own
       deps construction; a no-op when the flag is false or `turn == 1`; otherwise `interrupt(...)`, with
       `"run_to_end"` the only branch left in the node itself (`"stop"` never reaches it — research D7).
-- [ ] T045 [P] Implement `RunRequest.ask_before_each_turn` (adaptive only, `422` otherwise per `contracts/api.md`
+- [X] T045 [P] Implement `RunRequest.ask_before_each_turn` (adaptive only, `422` otherwise per `contracts/api.md`
       and T003's store-level rejection); `start_run` passes it to `claim_run` (with `is_checkpointed=True`, already
       wired in T008) and `_LiveDeps`.
 
@@ -594,7 +594,7 @@ on the run page.
 
 ### Tests for User Story 2
 
-- [ ] T046 [P] [US2] Integration test `tests/integration/test_approve_node_live.py` (`FEATURE = "014"`): start an
+- [X] T046 [P] [US2] Integration test `tests/integration/test_approve_node_live.py` (`FEATURE = "014"`): start an
       adaptive run with the checkbox ticked; assert turn 1 is sent without pausing and the run's own `POST
       /api/runs` response comes back `paused: true, pending_turn: {"turn": 2, "interrupt_id": "...", "message":
       "..."}`; `POST .../decision {"turn": 2, "decision": "approve"}` sends turn 2, scores it, and (if the run
@@ -610,7 +610,7 @@ on the run page.
       exactly once; a Stop reached via a decision writes back exactly once too, through the same path T022/T024
       already prove, never a second time (014/FR-015, FR-019, FR-020, FR-021, FR-022, FR-023, FR-024, FR-025,
       SC-004, SC-008).
-- [ ] T047 [P] [US2] Integration test `tests/integration/test_decision_api.py`: `POST /api/runs/{id}/decision` with
+- [X] T047 [P] [US2] Integration test `tests/integration/test_decision_api.py`: `POST /api/runs/{id}/decision` with
       a `turn` that does not match the run's actual pending turn → `409 not_paused`, nothing sent (reproducing the
       exact failure shape a bare, un-validated resume value would otherwise silently resolve against the wrong
       turn); a run with no pending decision at all → `409 not_paused`; an invalid `decision` value, or a missing
@@ -621,14 +621,14 @@ on the run page.
       single-turn run's own id (never checkpointed) gets its documented `409`, and `GET /api/runs/{id}/log` for it
       shows no new line at all — never a stray `run.end` from a scope opened and then closed around a refusal that
       never needed one (014/FR-038, FR-039, contracts/api.md).
-- [ ] T048 [P] [US2] `tests/unit/test_events_approve.py`: `run.paused` names the turn, emitted exactly once per
+- [X] T048 [P] [US2] `tests/unit/test_events_approve.py`: `run.paused` names the turn, emitted exactly once per
       actual pause (a bare status re-check of the same pause does not re-emit it — research D21); `run.decided`
       names the turn and the decision; `run.stopped` names whether the run was paused or merely resumable when
       stopped, and whether it was the reconciled case; none carries the pending message's text.
       **`test_a_stop_decision_opens_exactly_one_scope` (FR-046)**: decide `"stop"` on a paused run and, reading
       `GET /api/runs/{id}/log`, assert exactly one `run.decided` and exactly one `run.end` — never a nested second
       scope from `stop_run` emitting its own, independent pair for the same request (014/FR-026, FR-033).
-- [ ] T049 [US2] `tests/unit/test_ui_approve_node.py` (`streamlit.testing.v1.AppTest`): the checkbox on the
+- [X] T049 [US2] `tests/unit/test_ui_approve_node.py` (`streamlit.testing.v1.AppTest`): the checkbox on the
       start-run form, off by default; a paused run's page shows the pending message verbatim and exactly
       **Approve**/**Run to end**/**Stop**, with its own `idle_stop_at` shown alongside them (FR-061, part 2's own
       reinforcement that this field is not forgotten once a run can actually reach `"paused"`); clicking each
@@ -636,7 +636,7 @@ on the run page.
 
 ### Implementation for User Story 2
 
-- [ ] T050 [US2] Implement `POST /api/runs/{run_id}/decision` in `api/main.py`/`runs.py::execute_decision(...)` per
+- [X] T050 [US2] Implement `POST /api/runs/{run_id}/decision` in `api/main.py`/`runs.py::execute_decision(...)` per
       `contracts/api.md`: acquires the lease; **before opening any scope**, validates the run's own plain columns
       (`mode == "adaptive"`, `is_checkpointed`, `status == "in_progress"`) and refuses `409 not_paused` at once,
       with no scope ever bound, if any fails; only past that does it open **one** `events.reopened_run_scope` for
@@ -650,7 +650,7 @@ on the run page.
       opening a second one, which would let an exception afterward emit a second `run.interrupted`/`run.end` pair
       for a row already finished (FR-046); emits `run.paused` per `contracts/log-records-delta.md`; calls the
       shared finishing function (T024) on any stopping point.
-- [ ] T051 [P] [US2] Implement the UI: `ui/api_client.py::decide_run(run_id, turn, decision)` using `run_attack`'s
+- [X] T051 [P] [US2] Implement the UI: `ui/api_client.py::decide_run(run_id, turn, decision)` using `run_attack`'s
       own 360s timeout (a decision can itself drive a run all the way to completion, e.g. Run to end); the
       start-run form's **"Ask before each turn"** checkbox (off by default, adaptive mode only); the run page's
       pending-turn display and its three buttons, rendered ahead of `_render_finding`'s own early-return branches,
@@ -661,7 +661,7 @@ on the run page.
 
 ## Phase 9: User Story 3 — A paused run survives a restart exactly like a crashed one (P2)
 
-- [ ] T052 [US3] Integration test `tests/integration/test_paused_run_survives_restart.py` (`FEATURE = "014"`):
+- [X] T052 [US3] Integration test `tests/integration/test_paused_run_survives_restart.py` (`FEATURE = "014"`):
       pause a run, discard the in-process state entirely (two separate `create_app` instances over the same
       store), confirm the second instance's `GET /api/runs/{id}` reports the identical `pending_turn`; decide it
       and confirm the outcome matches deciding it without the gap. **The decision-cut-off case**: pause a run,
@@ -675,7 +675,7 @@ story is a proof of composition, per `research.md` D1.
 
 ## Phase 10: User Story 4 (Part 2) — Nothing else changes, the approve-node half
 
-- [ ] T053 [P] [US4-part2] Integration test `tests/integration/test_other_run_kinds_unaffected_p2.py`
+- [X] T053 [P] [US4-part2] Integration test `tests/integration/test_other_run_kinds_unaffected_p2.py`
       (`FEATURE = "014"`): a single-turn run, a replay, and an experiment repetition never pause and never see the
       checkbox, regardless of any request field a hostile or malformed client might send — an experiment
       repetition's own call now runs the `approve` node as part of the shared topology, but always as a no-op,
@@ -690,15 +690,15 @@ steps pass by hand. Ready for the part-2 pull request.
 
 ## Part-2 Polish (Phase 11)
 
-- [ ] T054 Implement the automated SC-010 part-2 scenario, `tests/e2e/test_us014_approve_node.py` (offline or
+- [X] T054 Implement the automated SC-010 part-2 scenario, `tests/e2e/test_us014_approve_node.py` (offline or
       through the browser suite's generic stub target), covering the pending-message/three-button controls;
       attempt the live HS-code e2e too, expecting the same, already-confirmed guardrail failure (FR-030, the rest
       of SC-010).
-- [ ] T055 Move `docs/roadmap.md`'s **"LangGraph idioms"** entry to Done, describing what shipped across both
+- [X] T055 Move `docs/roadmap.md`'s **"LangGraph idioms"** entry to Done, describing what shipped across both
       pull requests (FR-029); add the CLAUDE.md "Learned notes" entry for the approve node (the dedicated-node
       interrupt pattern, the seed-once-never-reseed flag, turn-specific single-use decisions, the lease shared with
       part 1's Stop, the graph-version bump).
-- [ ] T056 Rewrite `traceability.md` for the whole feature (both parts covered by real tests now), one id per line
+- [X] T056 Rewrite `traceability.md` for the whole feature (both parts covered by real tests now), one id per line
       in the `"014/FR-0xx: <reason>"` form the gate actually parses.
 
 ---
@@ -901,7 +901,7 @@ the existing Part-1-complete one above).
 
 ## Phase 13: Automatic stop after idle time — reinforcement (Part 2)
 
-- [ ] T065 [P] [US4-part2] Integration test `tests/integration/test_idle_auto_stop_paused.py` (`FEATURE = "014"`):
+- [X] T065 [P] [US4-part2] Integration test `tests/integration/test_idle_auto_stop_paused.py` (`FEATURE = "014"`):
       with the approve node now shipped, pause a run through the **real** checkbox and a **real** `interrupt()` —
       never T061's own monkeypatched stand-in, which part 1 needs precisely because the real node does not exist
       yet — and advance the clock past the configured idle window; assert the identical mechanism T061 already
