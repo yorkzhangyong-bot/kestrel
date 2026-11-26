@@ -67,14 +67,21 @@ def test_a_seeding_failure_is_named_without_its_text(settings, json_log):  # FR-
 
 
 def test_start_up_counts_are_message_events_with_their_values_as_fields(settings, json_log):  # FR-006
+    # Feature 014: the "closed interrupted run(s)" count moved into `lifespan` (research D14), so this app must
+    # actually be entered (as the test client fixture already does for every other test) for the sweep to run at
+    # all - a bare create_app(...) with no lifespan entered no longer sweeps anything.
+    from fastapi.testclient import TestClient
+
     store = TargetStore(settings.db_path, Vault(Fernet.generate_key()))
     target = saved_target(store)
     store.claim_run(target.id, prompt_id="spl-001", prompt_title="t", prompt_text="<seed>",
                     family="system_prompt_leak", owasp_category="LLM07: System Prompt Leakage",
                     attacker_source="library:1.0.0")   # left in progress by a "previous process"
     library = fixture_library()
-    create_app(settings, library=library,
-               experience=ExperienceStore(settings.chroma_path, embedding_function=StubEmbeddingFunction()))
+    with TestClient(create_app(settings, library=library,
+                               experience=ExperienceStore(settings.chroma_path,
+                                                          embedding_function=StubEmbeddingFunction()))):
+        pass
     counts = {r["message"]: r["count"] for r in json_log.of("message") if "count" in r}
     assert 1 in counts.values() and len(library.prompts) in counts.values()
     assert all("%" not in message and not any(ch.isdigit() for ch in message) for message in counts)

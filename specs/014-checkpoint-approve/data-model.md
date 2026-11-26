@@ -186,9 +186,9 @@ A `BaseCheckpointSaver` subclass over `TargetStore`'s own connection, five async
 `contracts/`, and the test functions `tasks.md` names for them.*
 
 ```python
-# The one plain, statically single-target edge with no routing write of its own (FR-052) — every other edge is
+# The plain, statically single-target edges with no routing write of their own (FR-052) — every other edge is
 # read from the completed task's own stored routing write, never a hand-written table.
-_STATIC_NEXT_STEP = {"judge": "record"}
+_STATIC_NEXT_STEP = {"judge": "record", "record": "decide"}
 
 async def classify(graph, run_id: int, *, leased: bool):
     if leased:
@@ -236,8 +236,10 @@ continues from the step after it. **That next step is read from the completed ta
 `tup.pending_writes` carries a `branch:to:<node>` channel naming exactly which of that node's possibly several
 conditional destinations was actually taken this run — never a hand-written, topology-specific table, which
 cannot represent a single node routing to different destinations on different turns** (FR-052; Kestrel's own live
-graph has exactly one edge with no such write at all, `judge → record`, always the same single destination,
-covered by `_STATIC_NEXT_STEP`). `completed` is carried on `Resumable` so a caller that needs to know specifically
+graph has exactly two edges with no such write at all — `judge → record` and `record → decide`, each always the
+same single destination — both covered by `_STATIC_NEXT_STEP`; every other node's own outgoing edge is
+conditional and so always carries its own `branch:to:` write). `completed` is carried on `Resumable` so a caller
+that needs to know specifically
 whether *send* has already happened (FR-044's in-flight-message rule) can define it correctly: **"past send" means
 `from_step` is `"evidence"`, `"judge"`, `"decide"`, or `"record"`** — every one of those steps only ever becomes
 the resume point once send has already run for the pending turn, whether send itself just completed (its own
@@ -355,6 +357,21 @@ already moved on.") and send nothing. Past validation, emit `run.decided` once. 
 already-open scope**, never opening another — instead of any `Command` call. For `"approve"`/`"run_to_end"`, check
 preconditions (research D15/D16), call `mark_active`, then call `ainvoke(Command(resume={result.interrupt_id:
 request.decision}), thread_config(run_id), context=deps, durability="sync")`.
+
+**`/resume`'s own handler follows the identical shape, for the identical reason**: acquire the lease;
+**before opening any scope**, check the same plain columns (`mode == "adaptive"`, `is_checkpointed`,
+`status == "in_progress"`) and refuse `409 not_resumable` at once, nothing bound, if any fails — a request
+against a run never checkpointed, or already finished, must never bind a scope whose exit would then write a
+`run.end` or `run.interrupted` a refusal never earned, exactly as above. Only past this does it classify. A
+`ReachedEnd` result is **not** a 409 here (`contracts/api.md`): it is reconciled on the spot by calling the
+identical shared mechanism `/stop` itself calls — `stop_run(..., triggered_by="user")` — never a second,
+parallel reconciliation of its own; this is why classification's own doc (above) names only "Stop" as the reader
+of `Resumable.snapshot.values`/`ReachedEnd.outcome`, not a separate resume-side reader. `run.stopped` is what
+this emits in that case (`reconciled=True`, `trigger="user"`), the same as any other caller reaching this
+mechanism — never `run.resumed`, since nothing is, in fact, resumed. A `Resumable` or `Paused` result opens
+**one** `events.reopened_run_scope(run)` before calling `mark_active` and invoking the graph (`ainvoke(None,
+thread_config(run_id), context=deps, durability="sync")` for a plain resume; `Command(resume=...)` only when the
+loaded state itself already holds one, which `/resume` never constructs on its own — that is `/decision`'s job).
 
 ## Stop (research D7, D11, D29): no graph call, for any resumable run — and no lease or scope of its own
 

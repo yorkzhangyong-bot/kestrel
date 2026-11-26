@@ -6,8 +6,9 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from fastapi import Depends, FastAPI, Request, Response
@@ -18,16 +19,17 @@ from kestrel.api.schemas import (AttackFamilyOut, AttackPromptOut, AttackerOut, 
                                  BatchReplayResultOut, ConfigOut, ConnectionSettingsIn,
                                  ConnectionTestRequest, ConnectionTestResult, EvidenceConfigOut, EvidenceItemOut,
                                  ExperienceOut, FormDefaults, HeaderOut,
-                                 JudgeOut, PlantedTokenOut, ProfileOut, ReplayComparisonOut, RunDetail, RunRequest,
-                                 RunSummary,
+                                 JudgeOut, PendingTurnOut, PlantedTokenOut, ProfileOut, ReplayComparisonOut,
+                                 RunDetail, RunRequest, RunSummary,
                                  SaveTargetRequest, TargetDetail, TargetSummary, TermsOut, TurnComparisonOut, TurnOut,
                                  AdaptiveCapsOut, ArmProgressOut, ArmResultOut, CategoryCountOut, ComparisonOut,
                                  CreateExperimentRequest, ExperimentResultOut, ExperimentStatusOut,
-                                 ExperimentSummaryOut, PromptVersionOut, RateOut, ReplayOut, RunLogOut,
+                                 ExperimentSummaryOut, PromptVersionOut, RateOut, ReplayOut, ResumeOut, RunLogOut,
                                  experiment_diff, validate_canaries,
                                  validate_experiment, validate_save, validate_settings)
-from kestrel import events, prompt_registry, tracing
+from kestrel import checkpointing, events, prompt_registry, tracing
 from kestrel.attack.attacker import AttackerClient
+from kestrel.attack.graph import LIVE_GRAPH
 from kestrel.attacks.library import AttackLibrary, FAMILIES, LibraryError, load_library
 from kestrel.evidence import unsafe_output
 from kestrel.evidence.checker import build_checker
@@ -36,7 +38,6 @@ from kestrel.experience.retrieval import background_provider
 from kestrel.experience.store import (EMBEDDING_MODEL_MISMATCH_MESSAGE, SPACE_MISMATCH_MESSAGE,
                                       EmbeddingModelMismatch, ExperienceStore, ExperienceStoreError, SpaceMismatch,
                                       store_error_kind)
-from kestrel.experience.writeback import write_back
 from kestrel.experiments import pricing as exp_pricing
 from kestrel.experiments import results as exp_results
 from kestrel.experiments.engine import run_experiment
@@ -52,7 +53,9 @@ from kestrel.logging_setup import configure_logging
 from kestrel.replay import (REPLAY_BLOCKED_REASONS, BatchTooLarge, NotReplayable, ReplayOfReplay, build_comparison,
                            check_replayable, compute_replay_status, execute_batch_replay, execute_replay,
                            is_finding)
-from kestrel.runs import TOTAL_DEADLINE_S, execute_run, execute_adaptive_run
+from kestrel.evidence.checker import rebuild_live_checker
+from kestrel.runs import (NotResumable, NotStoppable, PinnedModelUnavailable, TOTAL_DEADLINE_S, execute_run,
+                          execute_adaptive_run, execute_resume, finish_api_run, finish_with_outcome, stop_run)
 from kestrel.store import Turn
 from kestrel.secrets import Vault, load_or_create_key
 from kestrel.settings import Settings, load_settings
@@ -92,9 +95,12 @@ def _unauthorized_handler(request: Request, exc: _Unauthorized) -> JSONResponse:
 
 def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
                resolver: Any = None, library: AttackLibrary | None = None, judge: Any = None,
-               attacker: Any = None, experience: Any = None, span_exporter: Any = None) -> FastAPI:
+               attacker: Any = None, experience: Any = None, span_exporter: Any = None,
+               clock: Callable[[], datetime] | None = None) -> FastAPI:
     """Build the app. Tests pass settings, a transport for targets, a fake resolver, a library, a judge, an attacker,
-    an experience store (a stub-backed one keeps tests offline) and a span exporter (an in-process collector)."""
+    an experience store (a stub-backed one keeps tests offline), a span exporter (an in-process collector), and
+    (feature 014) a wall clock - an injectable callable returning a timezone-aware `datetime`, defaulting to the
+    real one - so a test can drive the idle-stop mechanism's own notion of "now" directly."""
     settings = settings or load_settings()
     logger = configure_logging(settings)            # the JSON (or text) stream of the `kestrel` logger (feature 010)
     events.configure(prices=settings.model_prices)  # every model-request line is costed with the feature-007 prices
@@ -104,15 +110,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     vault = Vault(key)
     terms = load_terms()
     store = TargetStore(settings.db_path, vault)
+    clock = clock or (lambda: datetime.now(timezone.utc))
     # Start-up lines (feature 010): constant text, values as fields, a failure as its class and kind — never its
     # message, which may quote a path, a host or a provider error (FR-006, FR-009).
     if not store.key_matches():
         events.emit("key.mismatch", logging.ERROR,
                     message="The encryption key doesn't match the one used to save targets, so saved auth header "
                             "values can't be read. Restore the old key, or re-enter the values.")
-    closed = store.close_interrupted_runs()  # release any run the last process left in progress (FR-031)
-    if closed:
-        events.emit("message", message="Closed run(s) that were interrupted by a previous shutdown.", count=closed)
+    # Feature 014 (research D14): the start-up sweep moves into `lifespan` below - the saver's own methods are
+    # async-only, and `create_app`'s own synchronous body runs inside uvicorn's already-running event loop, where
+    # a nested asyncio.run would fail. Only the pre-existing, unconditional close of every non-checkpointed row
+    # stays a plain, synchronous call; it no longer runs here either, since every in_progress row (checkpointed or
+    # not) is now swept together, in one pass, once the app actually starts serving.
 
     if library is None:
         try:
@@ -151,8 +160,32 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             experience = None
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(app: FastAPI):
+        # Feature 014 (research D14): the version guard, the per-app checkpointed graph copy, and the classifying
+        # start-up sweep all need the saver's own async methods, so they run here - never in create_app's own
+        # synchronous body, which runs inside uvicorn's already-running event loop.
+        checkpointing.check_supported_versions()
+        saver = checkpointing.KestrelCheckpointSaver(store)
+        app.state.live_graph = LIVE_GRAPH.copy(update={"checkpointer": saver})
+        closed, classified = await _sweep_interrupted_runs(store, app.state.live_graph, library=library,
+                                                           experience=experience, settings=settings)
+        if closed:
+            events.emit("message", message="Closed run(s) that were interrupted by a previous shutdown.",
+                       count=closed)
+        if classified:
+            events.emit("message", message="Classified checkpointed run(s) left in progress by a previous "
+                                            "shutdown.", count=classified)
+        app.state.started_at = app.state.clock()
+        idle_task = asyncio.create_task(
+            idle_stop_loop(store, app.state.live_graph, settings, app.state, clock=app.state.clock))
         yield
+        idle_task.cancel()
+        try:
+            await idle_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:   # already logged by idle_stop_loop itself; teardown must not raise it a second time
+            pass
         await asyncio.to_thread(app_tracing.shutdown, 5.0)   # deliver what is queued, waiting at most 5 s (FR-015)
 
     # The framework's own OpenTelemetry stays off: no request span exists, so a run's trace is its own (FR-013).
@@ -171,6 +204,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     app.state.injected_judge = injected_judge        # feature 007: reused for every arm in tests
     app.state.injected_attacker = injected_attacker
     app.state.experiment_tasks = set()               # keep background experiment tasks referenced (no GC)
+    # Feature 014: the execution lease (research D12) and this run's idle clock (research D26) - a plain set per
+    # app, never a bare module-level object, so two unrelated apps never collide on the same run id.
+    app.state.leases = set()
+    app.state.accepted_exits = set()
+    app.state.clock = clock
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(_Unauthorized, _unauthorized_handler)
 
@@ -191,6 +229,7 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                          replay=ReplayOut(max_batch_runs=settings.replay_batch_max_runs,
                                          per_replay_time_limit_s=int(max(settings.adaptive_time_limit_s,
                                                                         TOTAL_DEADLINE_S))),
+                         resume=ResumeOut(idle_hours=settings.resume_idle_hours),
                          evidence=evidence_config(app, settings),
                          prompts=[PromptVersionOut(id=e.id, version=e.version)
                                   for e in prompt_registry.registry()])
@@ -230,11 +269,18 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         return result.as_dict()
 
     @app.get("/api/targets", response_model=list[TargetSummary])
-    def list_targets() -> list[TargetSummary]:
-        return [summary(target) for target in store.list_targets()]
+    async def list_targets(request: Request) -> list[TargetSummary]:
+        out = []
+        for target in store.list_targets():
+            attention = await needs_attention(store, target, graph=request.app.state.live_graph,
+                                              leases=request.app.state.leases,
+                                              started_at=request.app.state.started_at,
+                                              resume_idle_hours=settings.resume_idle_hours)
+            out.append(summary(target, needs_attention=attention))
+        return out
 
     @app.post("/api/targets", status_code=201, response_model=TargetDetail)
-    def save_target(body: SaveTargetRequest, request: Request) -> Any:
+    async def save_target(body: SaveTargetRequest, request: Request) -> Any:
         errors = (validate_settings(body.settings, has_target=False) + validate_save(body, terms.version)
                   + validate_canaries(body.canaries))
         if errors:
@@ -252,17 +298,27 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                 store.set_canaries(target.id, body.canaries)
         except NameTaken:
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
-        return detail(store.get_target(target.id), store.list_canaries(target.id))
+        target = store.get_target(target.id)
+        attention = await needs_attention(store, target, graph=request.app.state.live_graph,
+                                          leases=request.app.state.leases,
+                                          started_at=request.app.state.started_at,
+                                          resume_idle_hours=settings.resume_idle_hours)
+        return detail(target, store.list_canaries(target.id), needs_attention=attention)
 
     @app.get("/api/targets/{target_id}", response_model=TargetDetail)
-    def get_target(target_id: int) -> Any:
+    async def get_target(target_id: int, request: Request) -> Any:
         try:
-            return detail(store.get_target(target_id), store.list_canaries(target_id))
+            target = store.get_target(target_id)
         except TargetNotFound:
             return not_found(target_id)
+        attention = await needs_attention(store, target, graph=request.app.state.live_graph,
+                                          leases=request.app.state.leases,
+                                          started_at=request.app.state.started_at,
+                                          resume_idle_hours=settings.resume_idle_hours)
+        return detail(target, store.list_canaries(target_id), needs_attention=attention)
 
     @app.put("/api/targets/{target_id}", response_model=TargetDetail)
-    def update_target(target_id: int, body: SaveTargetRequest, request: Request) -> Any:
+    async def update_target(target_id: int, body: SaveTargetRequest, request: Request) -> Any:
         try:
             existing = store.get_target(target_id)
             stored = stored_values(store, target_id)
@@ -290,7 +346,12 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
             return api_error(409, "name_taken", NAME_TAKEN, field="name")
         if body.canaries is not None:  # None keeps the stored canaries; [] clears them (contracts/kestrel-api.md)
             store.set_canaries(target_id, body.canaries)
-        return detail(store.get_target(target_id), store.list_canaries(target_id))
+        target = store.get_target(target_id)
+        attention = await needs_attention(store, target, graph=request.app.state.live_graph,
+                                          leases=request.app.state.leases,
+                                          started_at=request.app.state.started_at,
+                                          resume_idle_hours=settings.resume_idle_hours)
+        return detail(target, store.list_canaries(target_id), needs_attention=attention)
 
     @app.delete("/api/targets/{target_id}", status_code=204)
     def delete_target(target_id: int) -> Response:
@@ -352,8 +413,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                             task_texts=checker.planted_task_texts())
 
         # The run's scope encloses the run and its write-back, so the write-back line is the run's and run.end is its
-        # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing.
-        with events.run_scope():
+        # last line (feature 010, FR-001/FR-005); a claim refused with 409 emits nothing. Feature 014 (FR-053): an
+        # adaptive run's scope is marked checkpointed from the moment it opens, before the first invocation - not
+        # only a later, reopened scope - so a pause or an unhandled error within this very first segment is
+        # governed by the same rules as any later one.
+        with events.run_scope(checkpointed=(body.mode == "adaptive")):
             try:
                 if body.mode == "adaptive":
                     run = await execute_adaptive_run(
@@ -363,7 +427,8 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                         max_turns=settings.adaptive_max_turns, token_budget=settings.adaptive_token_budget,
                         time_limit_s=settings.adaptive_time_limit_s, transport=request.app.state.transport,
                         resolver=request.app.state.resolver, use_prior_experience=body.use_prior_experience,
-                        hint_provider=hint_provider, evidence=checker)
+                        hint_provider=hint_provider, evidence=checker, graph=request.app.state.live_graph,
+                        app_state=request.app.state)
                 else:
                     run = await execute_run(store, target_id=target.id, prompt=prompt,
                                             attacker_source=library.attacker_source,
@@ -374,20 +439,88 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
                                             use_prior_experience=body.use_prior_experience, evidence=checker)
             except RunInProgress:
                 return api_error(409, "run_in_progress", "A run against this target is already in progress.")
-            # Write back to the experience store after every run; a failure is loud, never discards the run
-            # (FR-006/10).
-            turns = store.list_turns(run.id)
-            write_back(request.app.state.experience, store, run, turns,
-                       dedupe_threshold=settings.experience_dedupe_threshold,
-                       planted_values=checker.planted_values(), task_texts=checker.planted_task_texts())
+            # The one shared finishing step (feature 014, FR-043, FR-055, research D19): write-back (this run's
+            # row has never been finished before now, so `memory_written` is always still None here - the skip-
+            # if-already-attempted guard never actually fires on this path, it just costs nothing to share) and,
+            # for an adaptive+checkpointed run that completed within this very request without ever being
+            # interrupted, the checkpoint delete no other path would otherwise ever reach for it.
+            run = finish_api_run(store, run, experience=request.app.state.experience,
+                                 dedupe_threshold=settings.experience_dedupe_threshold,
+                                 planted_values=checker.planted_values(), task_texts=checker.planted_task_texts())
         finished = store.get_run(run.id)
+        turns = store.list_turns(finished.id)
+        in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
+        classification = await classify_run(finished, graph=request.app.state.live_graph,
+                                           leases=request.app.state.leases,
+                                           started_at=request.app.state.started_at,
+                                           resume_idle_hours=settings.resume_idle_hours)
+        return run_detail(store, finished, target=target, terms_version=terms.version,
+                          adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
+                          turns=turns, classification=classification)
+
+    @app.post("/api/runs/{run_id}/resume", response_model=RunDetail)
+    async def resume_run_endpoint(run_id: int, request: Request) -> Any:
+        """Continue a resumable (not paused) run (014/FR-014, contracts/api.md). The handler - never
+        execute_resume - acquires the lease and validates the run's own plain columns before opening any scope."""
+        try:
+            run = store.get_run(run_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+        if run_id in request.app.state.leases:
+            return api_error(409, "run_executing", "This run is currently executing.")
+        if run.status == "finished":
+            return api_error(409, "not_resumable", "This run has already finished.")
+        if run.mode != "adaptive" or not run.is_checkpointed:
+            return api_error(409, "not_resumable", "This run cannot be resumed.")
+        with checkpointing.lease(request.app.state, store, run_id):
+            with events.reopened_run_scope(store, run):
+                checkpointing.mark_active(request.app.state, run_id)
+                try:
+                    finished = await execute_resume(store, request.app.state.live_graph, request.app.state,
+                                                    settings, library, terms.version, run_id)
+                except NotResumable as error:
+                    return api_error(409, error.code, error.message)
+                except PinnedModelUnavailable as error:
+                    return api_error(409, "pinned_model_unavailable", error.message)
+                finished = _finish_api_run_with_scrub(store, finished, library=request.app.state.library,
+                                                      experience=request.app.state.experience, settings=settings)
+        target = store.get_target(finished.target_id)
         in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
         return run_detail(store, finished, target=target, terms_version=terms.version,
                           adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
-                          turns=turns)
+                          turns=store.list_turns(finished.id))
+
+    @app.post("/api/runs/{run_id}/stop", response_model=RunDetail)
+    async def stop_run_endpoint(run_id: int, request: Request) -> Any:
+        """End any resumable run - paused or not - without resuming its graph (014/FR-040, contracts/api.md). The
+        handler itself - never stop_run - acquires the lease and validates the run's own plain columns before
+        opening any scope, so a refused request never binds one (research D29)."""
+        try:
+            run = store.get_run(run_id)
+        except LookupError:
+            return api_error(404, "not_found", f"No run with id {run_id}.")
+        if run_id in request.app.state.leases:
+            return api_error(409, "run_executing", "This run is currently executing.")
+        if run.mode != "adaptive" or not run.is_checkpointed or run.status != "in_progress":
+            return api_error(409, "not_resumable", "This run cannot be stopped.")
+        with checkpointing.lease(request.app.state, store, run_id):
+            with events.reopened_run_scope(store, run):
+                checkpointing.mark_active(request.app.state, run_id)
+                try:
+                    finished = await stop_run(store, request.app.state.live_graph, settings, run_id,
+                                              triggered_by="user")
+                except NotStoppable:
+                    return api_error(409, "not_resumable", "This run cannot be stopped.")
+                finished = _finish_api_run_with_scrub(store, finished, library=request.app.state.library,
+                                                      experience=request.app.state.experience, settings=settings)
+        target = store.get_target(finished.target_id)
+        in_progress = store.other_run_in_progress(target.id, excluding_run_id=finished.id)
+        return run_detail(store, finished, target=target, terms_version=terms.version,
+                          adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
+                          turns=store.list_turns(finished.id))
 
     @app.get("/api/targets/{target_id}/runs", response_model=list[RunSummary])
-    def list_runs(target_id: int) -> Any:
+    async def list_runs(target_id: int, request: Request) -> Any:
         try:
             target = store.get_target(target_id)
             runs = store.list_runs(target_id)
@@ -400,13 +533,19 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         # Feature 013: one query each for the whole target, never a per-run read (the 012 pattern).
         kinds_by_run = store.evidence_kinds_by_run(target_id)
         counts_by_run = store.evidence_counts_by_run(target_id)
-        return [run_summary(run, target=target, terms_version=terms.version,
-                            adaptive_max_turns=settings.adaptive_max_turns,
-                            other_run_in_progress=in_progress_id is not None and in_progress_id != run.id,
-                            recorded_turns=1 if run.id in with_turns else 0,
-                            evidence_kinds=kinds_by_run.get(run.id),
-                            evidence_count=counts_by_run.get(run.id))
-                for run in runs]
+        graph, leases = request.app.state.live_graph, request.app.state.leases
+        out = []
+        for run in runs:
+            classification = await classify_run(run, graph=graph, leases=leases,
+                                                started_at=request.app.state.started_at,
+                                                resume_idle_hours=settings.resume_idle_hours)
+            out.append(run_summary(run, target=target, terms_version=terms.version,
+                                   adaptive_max_turns=settings.adaptive_max_turns,
+                                   other_run_in_progress=in_progress_id is not None and in_progress_id != run.id,
+                                   recorded_turns=1 if run.id in with_turns else 0,
+                                   evidence_kinds=kinds_by_run.get(run.id),
+                                   evidence_count=counts_by_run.get(run.id), classification=classification))
+        return out
 
     @app.get("/api/targets/{target_id}/profile", response_model=ProfileOut)
     def target_profile(target_id: int) -> Any:
@@ -429,8 +568,11 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         except TargetNotFound:
             return not_found(target_id)
         # A replay is a re-check, never a finding of its own (feature 012, FR-027): excluded here, before
-        # build_report/recommendations_for ever see it, so neither needs its own replay-awareness.
-        runs = [r for r in store.list_runs(target_id) if r.mode != "replay"]
+        # build_report/recommendations_for ever see it, so neither needs its own replay-awareness. Feature 014
+        # (FR-050, research D25): a paused, resumable, or currently-leased/executing adaptive run is not yet a
+        # finding either - its own outcome is not yet decided, so it is excluded the same way, by the one column
+        # every one of those three shapes still shares: status != "finished".
+        runs = [r for r in store.list_runs(target_id) if r.mode != "replay" and r.status == "finished"]
         turns_by_run = {run.id: store.list_turns(run.id) for run in runs if run.mode == "adaptive"}
         # One judge call per uncached success (FR-012); cached thereafter. No target send, no experience write.
         recommendations = await recommendations_for(store, app.state.judge, runs, turns_by_run)
@@ -447,16 +589,20 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
         return Response(content=markdown, media_type="text/markdown; charset=utf-8")
 
     @app.get("/api/runs/{run_id}", response_model=RunDetail)
-    def get_run(run_id: int) -> Any:
+    async def get_run(run_id: int, request: Request) -> Any:
         try:
             run = store.get_run(run_id)
         except LookupError:
             return api_error(404, "not_found", f"No run with id {run_id}.")
         target = store.get_target(run.target_id)
         in_progress = store.other_run_in_progress(target.id, excluding_run_id=run.id)
+        classification = await classify_run(run, graph=request.app.state.live_graph,
+                                           leases=request.app.state.leases,
+                                           started_at=request.app.state.started_at,
+                                           resume_idle_hours=settings.resume_idle_hours)
         return run_detail(store, run, target=target, terms_version=terms.version,
                           adaptive_max_turns=settings.adaptive_max_turns, other_run_in_progress=in_progress,
-                          turns=store.list_turns(run_id))
+                          turns=store.list_turns(run_id), classification=classification)
 
     @app.post("/api/runs/{run_id}/replay", status_code=201, response_model=RunDetail)
     async def replay_run(run_id: int, request: Request) -> Any:
@@ -677,6 +823,146 @@ def create_app(settings: Settings | None = None, *, transport: httpx.AsyncBaseTr
     return app
 
 
+INCOMPATIBLE_CHECKPOINT_REASON = ("This run's checkpoint was written by an incompatible build of Kestrel, so it "
+                                  "was closed rather than resumed.")
+INTERRUPTED_REASON = "Kestrel stopped while this run was in progress, so it was interrupted."
+
+
+async def _sweep_interrupted_runs(store: TargetStore, graph: Any, *, library: Any, experience: Any,
+                                  settings: Settings) -> tuple[int, int]:
+    """The start-up sweep (014/FR-013, FR-017, research D14): every in_progress row that is not a live,
+    checkpointed adaptive run is closed exactly as today (`store.close_non_checkpointed_interrupted_runs`, no new
+    kept log line for it); every `is_checkpointed`, `mode == 'adaptive'` row is classified - a loadable, mid-run
+    checkpoint is left open, visibly resumable; a thread whose graph reached its own end is reconciled; an
+    incompatible, unreadable, or missing checkpoint is closed with its own reason - with one `run.interrupted`
+    line kept into that row's own log either way. Also reconciles any checkpoint whose own thread does not belong
+    to a currently in_progress, checkpointed run at all (an orphan left by an incomplete delete). Returns
+    (closed, classified) for the existing start-up log lines."""
+    closed = store.close_non_checkpointed_interrupted_runs()
+    classified = 0
+    for run in store.list_in_progress_checkpointed_runs():
+        status = await checkpointing.classify(graph, run.id, leased=False)
+        classified += 1
+        with events.reopened_run_scope(store, run):
+            if isinstance(status, checkpointing.ReachedEnd) and status.outcome is not None:
+                finished = finish_with_outcome(store, run, status.outcome, turns_used=status.values.get("turns_used"),
+                                               tokens_used=status.values.get("tokens_used"))
+                events.run_interrupted(resumable=False)
+                _finish_api_run_with_scrub(store, finished, library=library, experience=experience,
+                                          settings=settings)
+            elif isinstance(status, checkpointing.Incompatible):
+                store.finish_run(run.id, verdict="unclear", stopping_condition="interrupted",
+                                 reason=INCOMPATIBLE_CHECKPOINT_REASON)
+                store.set_memory_written(run.id, False)
+                events.run_interrupted(resumable=False)
+                store.delete_checkpoint(run.id)
+            elif isinstance(status, (checkpointing.NoCheckpoint, checkpointing.Unreadable)):
+                store.finish_run(run.id, verdict="unclear", stopping_condition="interrupted",
+                                 reason=INTERRUPTED_REASON)
+                store.set_memory_written(run.id, False)
+                events.run_interrupted(resumable=False)
+                store.delete_checkpoint(run.id)
+            else:   # Resumable or Paused: left in_progress, visibly resumable - untouched
+                events.run_interrupted(resumable=True)
+    # An orphaned checkpoint: its own thread's runs row is not (any longer) in_progress+checkpointed+adaptive.
+    still_open = {str(run.id) for run in store.list_in_progress_checkpointed_runs()}
+    for thread_id in store.list_checkpoint_thread_ids():
+        if thread_id not in still_open:
+            try:
+                store.delete_checkpoint(int(thread_id))
+            except ValueError:
+                continue
+    return closed, classified
+
+
+async def check_idle_runs(store: TargetStore, graph: Any, settings: Settings, app_state: Any) -> None:
+    """One idle-stop tick (014/FR-057 to FR-060, research D26, D27, D29). A grace period right after start-up
+    (`min(1 hour, resume_idle_hours)` since `app_state.started_at`) makes this a complete no-op - no row even
+    read - so a restart never stops every row it just finished sweeping back open. Past the grace period: a
+    cheap, unlocked prefilter against the listing's own `last_activity_at` skips anything not yet due before ever
+    attempting its lease (a concurrent live request against a not-yet-due run must never see a refusal this check
+    caused); a row already leased is skipped outright (`RunLeased`, never blocking); past the lease, the row is
+    re-read, re-classified, and its idleness recomputed fresh under the lease - a concurrent accepted exit that
+    reset the clock, or changed the row's own shape, in the gap is respected, never raced. The actual stop runs
+    inside its own nested `try`, inside `events.reopened_run_scope` (this check has no request-scope of its own to
+    reuse): an exception there is caught, the scope is let to close cleanly first (so a mere failed stop attempt
+    never gets a kept `run.interrupted`/`run.end` of its own), and only then re-raised into this row's own outer
+    `try` - which logs it as `idle_stop.check_failed` and moves on to the next row, never ending this tick or the
+    loop. `mark_active` is never called here: an automatic stop, successful or not, is not an accepted exit."""
+    grace = timedelta(hours=min(1.0, settings.resume_idle_hours))
+    if app_state.clock() - app_state.started_at < grace:
+        return
+    try:
+        rows = store.list_in_progress_checkpointed_runs()
+    except Exception as error:
+        events.emit("idle_stop.check_failed", logging.ERROR, exc_type=type(error).__name__, scoped=False)
+        return
+    for row in rows:
+        if checkpointing.idle_hours(row, app_state) < settings.resume_idle_hours:
+            continue   # the cheap, unlocked prefilter: never even attempts the lease for a not-yet-due row
+        try:
+            with checkpointing.lease(app_state, store, row.id):
+                fresh = store.get_run(row.id)
+                if fresh.status != "in_progress":
+                    continue
+                status = await checkpointing.classify(graph, row.id, leased=False)
+                if checkpointing.run_state_for(status) not in ("paused", "resumable", "stoppable"):
+                    continue
+                if checkpointing.idle_hours(fresh, app_state) < settings.resume_idle_hours:
+                    continue
+                caught: Exception | None = None
+                with events.reopened_run_scope(store, fresh):
+                    try:
+                        await stop_run(store, graph, settings, row.id, triggered_by="idle_timeout")
+                    except Exception as error:
+                        caught = error
+                if caught is not None:
+                    raise caught
+        except checkpointing.RunLeased:
+            continue
+        except Exception as error:
+            events.emit("idle_stop.check_failed", logging.ERROR, run_id=row.id, exc_type=type(error).__name__,
+                       scoped=False)
+
+
+async def idle_stop_loop(store: TargetStore, graph: Any, settings: Settings, app_state: Any, *,
+                         interval_s: float = checkpointing.IDLE_CHECK_INTERVAL_S,
+                         clock: Callable[[], datetime] | None = None) -> None:
+    """The periodic task (014/FR-057 to FR-060): one `check_idle_runs` tick per `interval_s`, for the app's whole
+    lifetime. A tick's own failure (outside any single row's handling, e.g. the listing call itself) is logged and
+    the loop continues to the next interval - never ending early. `CancelledError` (teardown's own cancel) is left
+    to propagate untouched."""
+    clock = clock or app_state.clock
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await check_idle_runs(store, graph, settings, app_state)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            events.emit("idle_stop.check_failed", logging.ERROR, exc_type=type(error).__name__, scoped=False)
+
+
+def _finish_api_run_with_scrub(store: TargetStore, run: Run, *, library: Any, experience: Any,
+                               settings: Settings) -> Run:
+    """`finish_api_run`'s own write-back, scrubbed through a freshly rebuilt checker (014/FR-063, research D17) -
+    Stop never needs the checker for anything else, and must never be blocked by a missing seed or pinned prompt
+    version (Stop remains available regardless, spec.md Edge Cases): a rebuild failure here skips write-back
+    entirely (never attempted with no scrub at all) rather than refusing a stop that has already happened."""
+    planted_values: list[str] = []
+    task_texts: list[str] = []
+    if run.mode == "adaptive" and run.memory_written is None:
+        try:
+            turns = store.list_turns(run.id)
+            checker = rebuild_live_checker(store, library, run, turns, mask=[])
+            planted_values, task_texts = checker.planted_values(), checker.planted_task_texts()
+        except LookupError:
+            store.set_memory_written(run.id, False)
+            run = store.get_run(run.id)
+    return finish_api_run(store, run, experience=experience, dedupe_threshold=settings.experience_dedupe_threshold,
+                          planted_values=planted_values, task_texts=task_texts)
+
+
 def stored_values(store: TargetStore, target_id: int) -> dict[str, str | None]:
     """Stored header values by lower-cased name; None for a value the current key can't decrypt."""
     return {h.name.lower(): h.value for h in store.resolve_headers(target_id)}
@@ -715,17 +1001,31 @@ def resolve(settings: ConnectionSettingsIn, stored: dict[str, str | None] | None
                             body_template=settings.body_template, response_path=settings.response_path.strip())
 
 
-def summary(target: Target) -> TargetSummary:
+def summary(target: Target, *, needs_attention: bool = False) -> TargetSummary:
     return TargetSummary(id=target.id, name=target.name, url=target.url, method=target.method,
                          permission_confirmed_at=target.permission_confirmed_at, terms_version=target.terms_version,
-                         description=target.description)
+                         description=target.description, needs_attention=needs_attention)
 
 
-def detail(target: Target, canaries: list[str] | None = None) -> TargetDetail:
-    return TargetDetail(**summary(target).model_dump(), body_template=target.body_template,
+def detail(target: Target, canaries: list[str] | None = None, *, needs_attention: bool = False) -> TargetDetail:
+    return TargetDetail(**summary(target, needs_attention=needs_attention).model_dump(),
+                        body_template=target.body_template,
                         response_path=target.response_path,
                         headers=[HeaderOut(name=h.name, has_value=True, readable=h.readable) for h in target.headers],
                         canaries=canaries if canaries is not None else [])
+
+
+async def needs_attention(store: TargetStore, target: Target, *, graph: Any, leases: set[int],
+                          started_at: datetime, resume_idle_hours: float) -> bool:
+    """FR-062, research D31: whether `target`'s one possible `in_progress` run classifies as needing attention -
+    computed with the identical classification `run_state`/`idle_stop_at` already use, never a second, independent
+    check, so the three fields can never disagree about the same run."""
+    in_progress = next((run for run in store.list_runs(target.id) if run.status == "in_progress"), None)
+    if in_progress is None:
+        return False
+    classification = await classify_run(in_progress, graph=graph, leases=leases, started_at=started_at,
+                                        resume_idle_hours=resume_idle_hours)
+    return classification["run_state"] in ("paused", "resumable", "stoppable")
 
 
 def _clean_description(description: str | None) -> str | None:
@@ -802,9 +1102,51 @@ def side_channel_status_of(run: Run) -> str:
     return run.side_channel_status or "not_configured"
 
 
+async def classify_run(run: Run, *, graph: Any, leases: set[int], started_at: datetime,
+                       resume_idle_hours: float) -> dict[str, Any]:
+    """`resumable`/`paused`/`run_state`/`pending_turn`/`idle_stop_at` for any run of any mode (014/FR-031, FR-054,
+    FR-061, research D13, D30): computed live, never a stored flag. A finished row, or one this feature does not
+    checkpoint, is never passed to `checkpointing.classify` at all - `run_state` then reads the run's own `status`
+    column directly (whichever of "in_progress"/"finished" already describes it)."""
+    if run.status == "finished" or not run.is_checkpointed or run.mode != "adaptive":
+        return {"resumable": False, "paused": False, "run_state": run.status, "pending_turn": None,
+                "idle_stop_at": None}
+    status = await checkpointing.classify(graph, run.id, leased=run.id in leases)
+    pending_turn = None
+    if isinstance(status, checkpointing.Paused):
+        pending_turn = {"turn": status.turn, "interrupt_id": status.interrupt_id, "message": status.message}
+    # FR-054: a commit-window Resumable (evidence or judge already decided the outcome, only record's own
+    # checkpoint commit is what never landed) is never genuinely resumable - resuming it would just re-run
+    # record/decide to reach the identical, already-known outcome. It reports exactly like ReachedEnd: stoppable,
+    # never offered as Resume, even though `checkpointing.classify` itself still returns a plain `Resumable` (its
+    # own job is reading the compiled graph's own routing, research D13 - not deciding what a caller should offer).
+    decided = isinstance(status, checkpointing.Resumable) and status.snapshot.values.get("outcome") is not None
+    resumable = isinstance(status, checkpointing.Resumable) and not decided
+    run_state = "stoppable" if decided else checkpointing.run_state_for(status)
+    return {"resumable": resumable, "paused": isinstance(status, checkpointing.Paused),
+            "run_state": run_state, "pending_turn": pending_turn,
+            "idle_stop_at": idle_stop_at(run, run_state, started_at, resume_idle_hours)}
+
+
+def idle_stop_at(run: Run, run_state: str, started_at: datetime, resume_idle_hours: float) -> str | None:
+    """The earliest time an automatic idle stop may happen (014/FR-061, research D30):
+    `max(last_activity_at + resume_idle_hours, started_at + min(1 hour, resume_idle_hours))` whenever `run_state`
+    reads `"paused"`/`"resumable"`/`"stoppable"`, `None` otherwise. The second `max()` term keeps an already-overdue
+    run honest through the restart grace period instead of showing a deadline already in the past."""
+    if run_state not in ("paused", "resumable", "stoppable"):
+        return None
+    if run.last_activity_at is None:
+        return None
+    window = timedelta(hours=resume_idle_hours)
+    last = datetime.fromisoformat(run.last_activity_at)
+    earliest = max(last + window, started_at + min(timedelta(hours=1), window))
+    return earliest.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
                 other_run_in_progress: bool, recorded_turns: int | None = None,
-                evidence_kinds: list[str] | None = None, evidence_count: int | None = None) -> RunSummary:
+                evidence_kinds: list[str] | None = None, evidence_count: int | None = None,
+                classification: dict[str, Any] | None = None) -> RunSummary:
     """`target`/`terms_version`/`adaptive_max_turns`/`other_run_in_progress` feed `compute_replay_status`
     (feature 012, research D10): `replayable`/`replay_blocked_reason`/`replay_advisory` depend on the run's
     target, never the run's own fields alone. `recorded_turns`, when the caller already knows it (every
@@ -812,8 +1154,10 @@ def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_tu
     target - review round 2, R2), gives `compute_replay_status` the run's actual recorded-turn count instead of
     its `turns_used` counter (defensive, review round 1 item 3) - `None` falls back to the counter, for a caller
     that genuinely has not checked."""
-    status = compute_replay_status(run, target, terms_version, adaptive_max_turns, other_run_in_progress,
-                                   recorded_turns=recorded_turns)
+    replay_status = compute_replay_status(run, target, terms_version, adaptive_max_turns, other_run_in_progress,
+                                          recorded_turns=recorded_turns)
+    classification = classification or {"resumable": False, "paused": False, "run_state": run.status,
+                                        "pending_turn": None, "idle_stop_at": None}
     # A run with stored items reports them; one recorded before this feature, with hard evidence and none
     # stored, reports its single derived canary item on this surface too (013/FR-005, FR-040).
     if evidence_kinds:
@@ -829,10 +1173,15 @@ def run_summary(run: Run, *, target: Target, terms_version: str, adaptive_max_tu
                       judge_model=run.judge_model, failure_step=run.failure_step, started_at=run.started_at,
                       finished_at=run.finished_at, memory_written=run.memory_written,
                       use_prior_experience=run.use_prior_experience, source_run_id=run.source_run_id,
-                      replay_outcome=run.replay_outcome, finding=is_finding(run), replayable=status.replayable,
-                      replay_blocked_reason=status.blocked_reason, replay_advisory=status.advisory,
+                      replay_outcome=run.replay_outcome, finding=is_finding(run), replayable=replay_status.replayable,
+                      replay_blocked_reason=replay_status.blocked_reason, replay_advisory=replay_status.advisory,
                       evidence_kinds=kinds, evidence_labels=[kind_label(kind) for kind in kinds],
-                      evidence_count=count, side_channel_status=side_channel_status_of(run))
+                      evidence_count=count, side_channel_status=side_channel_status_of(run),
+                      resumable=classification["resumable"], paused=classification["paused"],
+                      run_state=classification["run_state"],
+                      pending_turn=(PendingTurnOut(**classification["pending_turn"])
+                                   if classification["pending_turn"] else None),
+                      idle_stop_at=classification["idle_stop_at"])
 
 
 def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> ReplayComparisonOut | None:
@@ -861,7 +1210,8 @@ def _comparison_out(store: TargetStore, run: Run, turns: list[Turn] | None) -> R
 
 
 def run_detail(store: TargetStore, run: Run, *, target: Target, terms_version: str, adaptive_max_turns: int,
-               other_run_in_progress: bool, turns: list[Turn] | None = None) -> RunDetail:
+               other_run_in_progress: bool, turns: list[Turn] | None = None,
+               classification: dict[str, Any] | None = None) -> RunDetail:
     recorded_turns = len(turns) if turns is not None else None
     # Feature 013: the run's own items - its stored ones, or the one derived canary item of a pre-013 run - and
     # what it planted; every notice is computed here so the screen only displays it (FR-038, FR-039, FR-043).
@@ -874,7 +1224,7 @@ def run_detail(store: TargetStore, run: Run, *, target: Target, terms_version: s
                                    other_run_in_progress=other_run_in_progress,
                                    recorded_turns=recorded_turns,
                                    evidence_kinds=kinds or None,
-                                   evidence_count=len(items)).model_dump(),
+                                   evidence_count=len(items), classification=classification).model_dump(),
                      evidence=evidence_items_out(items),
                      planted_tokens=[PlantedTokenOut(kind=token.kind, armed=token.armed,
                                                      disarmed_turn=token.disarmed_turn, prompt=token.prompt_ref)

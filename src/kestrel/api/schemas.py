@@ -128,6 +128,11 @@ class ReplayOut(BaseModel):
     per_replay_time_limit_s: int
 
 
+class ResumeOut(BaseModel):
+    """The idle auto-stop window for a paused/resumable/stoppable checkpointed run (feature 014, FR-057)."""
+    idle_hours: float
+
+
 class ConfigOut(BaseModel):
     mode: Literal["local", "hosted"]
     defaults: FormDefaults
@@ -137,6 +142,7 @@ class ConfigOut(BaseModel):
     adaptive: AdaptiveCapsOut
     experience: ExperienceOut
     replay: ReplayOut
+    resume: ResumeOut
     evidence: EvidenceConfigOut | None = None   # feature 013 (FR-042)
     prompts: list[PromptVersionOut] = []   # active prompt versions, id + version only (feature 009, FR-007)
 
@@ -202,6 +208,13 @@ class TurnOut(BaseModel):
     judge_progress: str | None
 
 
+class PendingTurnOut(BaseModel):
+    """The attacker-drafted turn a paused run is awaiting a decision on (feature 014, part 2; FR-020, FR-039)."""
+    turn: int
+    interrupt_id: str
+    message: str
+
+
 class RunSummary(BaseModel):
     id: int
     target_id: int
@@ -237,6 +250,16 @@ class RunSummary(BaseModel):
     evidence_labels: list[str] = Field(default_factory=list)
     evidence_count: int = 0
     side_channel_status: str = "not_configured"
+    # Feature 014: always present, for every run of every mode (FR-031, FR-054) - computed live by classification,
+    # never a stored flag. resumable/paused alone cannot tell a leased run apart from a reached-its-own-end,
+    # no-checkpoint, or unreadable one; run_state is the one field the UI MUST derive its controls from.
+    resumable: bool = False
+    paused: bool = False
+    run_state: str = "finished"
+    pending_turn: PendingTurnOut | None = None
+    # Feature 014 (FR-061, research D30): the earliest time an automatic idle stop may happen, computed alongside
+    # run_state from the same classification call; null for a running or finished run (never a stored flag).
+    idle_stop_at: str | None = None
 
 
 class TurnComparisonOut(BaseModel):
@@ -337,6 +360,9 @@ class TargetSummary(BaseModel):
     permission_confirmed_at: str
     terms_version: str
     description: str | None = None  # feature 004 (FR-020)
+    # Feature 014 (FR-062, research D31): whether this target's one possible in_progress run classifies as needing
+    # attention - computed live, never stored - so the target selector can cue a stuck run without opening it.
+    needs_attention: bool = False
 
 
 class TargetDetail(TargetSummary):

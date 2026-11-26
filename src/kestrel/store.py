@@ -14,7 +14,7 @@ from typing import Iterator
 
 from kestrel.secrets import Vault
 
-SCHEMA_VERSION = "11"
+SCHEMA_VERSION = "12"
 FAMILIES = ("direct_injection", "system_prompt_leak", "tool_exfiltration", "indirect_injection")
 VERDICTS = ("succeeded", "failed", "unclear")
 MIN_CANARY_LENGTH = 8
@@ -77,7 +77,20 @@ RUNS_COLUMNS_SQL = """
     -- Added in schema version 11 (feature 013): the side channel's per-run correlation id and how it fared.
     correlation_id TEXT,                                          -- null unless the target had a side channel
     side_channel_status TEXT CHECK (side_channel_status IS NULL OR
-        side_channel_status IN ('not_configured', 'checked', 'unavailable'))  -- null (pre-013) reads as not_configured
+        side_channel_status IN ('not_configured', 'checked', 'unavailable')),  -- null (pre-013) reads as not_configured
+    -- Added in schema version 12 (feature 014, checkpointer and approve node). Whether this run was started with
+    -- "Ask before each turn" ticked, captured once at claim time, never rewritten (research D5) — the checkpoint's
+    -- own state is the only live answer to "is it still asking".
+    ask_before_each_turn INTEGER NOT NULL DEFAULT 0,
+    -- Whether this run was claimed through the live, checkpointed run-start path (research D22) — never set by a
+    -- single-turn claim, a replay claim, an experiment repetition's claim, a resume or a decision.
+    is_checkpointed INTEGER NOT NULL DEFAULT 0,
+    -- The attacker prompt reference this run is pinned to, recorded at claim time (research D16); a resumed or
+    -- decided run's attacker client is rebuilt against exactly this reference, never whatever is currently active.
+    attacker_prompt_id TEXT, attacker_prompt_version TEXT,
+    -- This run's idle clock (research D26): set at claim, updated only on an accepted lease release. Nullable only
+    -- because a pre-migration row never had one; every row this feature itself claims always sets it.
+    last_activity_at TEXT
 """
 # The indexes on `runs`: also shared, textually, with `_rebuild_runs_with_autoincrement` (which must issue these
 # as separate `execute()` calls rather than this joined form - see that method's docstring).
@@ -258,6 +271,37 @@ CREATE TABLE IF NOT EXISTS target_side_channels (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Added in schema version 12 (feature 014): the custom checkpoint saver's own two tables, covering LangGraph's
+-- full checkpoint-tuple shape (config, checkpoint, metadata, parent_config, pending_writes). No foreign key to
+-- runs: thread_id is a plain text column (str(run_id)); reconciliation and deletion are Kestrel's own
+-- responsibility (research D11), not ON DELETE CASCADE's.
+CREATE TABLE IF NOT EXISTS checkpoints (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    parent_checkpoint_id TEXT,
+    type TEXT NOT NULL,                      -- self.serde.dumps_typed(checkpoint)'s own type tag
+    checkpoint BLOB NOT NULL,
+    metadata BLOB NOT NULL,                  -- includes kestrel_graph_version (research D18)
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_thread ON checkpoints (thread_id, checkpoint_ns, checkpoint_id DESC);
+
+CREATE TABLE IF NOT EXISTS checkpoint_writes (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,                    -- negative for a control write (upserted); >= 0 for a regular write
+                                              --   (inserted only if absent, research D10)
+    channel TEXT NOT NULL,
+    type TEXT,
+    value BLOB,
+    task_path TEXT NOT NULL DEFAULT '',      -- ordering only (research D10); not part of the primary key
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+);
 """
 
 # Columns added to `runs` in version 3; ALTER-added for a version-2 database (fresh ones get them from SCHEMA).
@@ -286,6 +330,17 @@ PROMPT_ARM_COLUMNS = (("prompt_arm_target", "TEXT"), ("prompt_arm_version", "TEX
 # Columns added to `runs` in version 11 (feature 013); ALTER-added for an older database, the v3/v4/v7 way (the
 # ALTER form omits the CHECK on `side_channel_status`; the base schema carries it, and code only writes valid values).
 EVIDENCE_RUN_COLUMNS = (("correlation_id", "TEXT"), ("side_channel_status", "TEXT"))
+
+# Columns added to `runs` in version 12 (feature 014); ALTER-added for an older database, the same way.
+CHECKPOINT_RUN_COLUMNS = (
+    ("ask_before_each_turn", "INTEGER NOT NULL DEFAULT 0"), ("is_checkpointed", "INTEGER NOT NULL DEFAULT 0"),
+    ("attacker_prompt_id", "TEXT"), ("attacker_prompt_version", "TEXT"), ("last_activity_at", "TEXT"),
+)
+
+
+class DuplicateTurnPositions(Exception):
+    """Schema 12 migration found a duplicate (run_id, position) pair in run_turns before it could create
+    uq_run_turns_position (research D6); this database needs manual inspection before it can be opened."""
 
 
 class NameTaken(Exception):
@@ -371,6 +426,12 @@ class Run:
     # reads as "not_configured" (FR-034).
     correlation_id: str | None = None
     side_channel_status: str | None = None
+    # Version 12 (feature 014): the checkpointer and the approve node.
+    ask_before_each_turn: bool = False
+    is_checkpointed: bool = False
+    attacker_prompt_id: str | None = None
+    attacker_prompt_version: str | None = None
+    last_activity_at: str | None = None   # research D26 - this run's own idle clock
 
 
 @dataclass(frozen=True)
@@ -500,8 +561,12 @@ class Target:
     headers: tuple[StoredHeader, ...] = ()
 
 
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return _iso(datetime.now(timezone.utc))
 
 
 class TargetStore:
@@ -524,18 +589,24 @@ class TargetStore:
         additive either: SQLite cannot ALTER a CHECK constraint, so `_rebuild_runs_for_replay` rebuilds `runs` a
         second time to widen the `mode` CHECK and add `source_run_id`/`replay_outcome`. Version 11 (feature 013)
         is additive again: four new tables from the schema script and two nullable `runs` columns ALTER-added
-        below (FR-057) — no rebuild, so the v9/v10 helpers stay the no-ops they already are for a v10 database."""
+        below (FR-057) - no rebuild, so the v9/v10 helpers stay the no-ops they already are for a v10 database.
+        Version 12 (feature 014) is additive too: the checkpoint saver's own two tables come from the schema
+        script (idempotent CREATE TABLE IF NOT EXISTS); five more `runs` columns are ALTER-added below the same
+        way; and uq_run_turns_position is created here, after a check that refuses to start loudly if an existing
+        database already holds a duplicate (run_id, position) pair in run_turns - never in the schema script,
+        which runs unconditionally above before this check could ever see one."""
         row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         current = None if row is None else row["value"]
         if current == SCHEMA_VERSION:
             return
-        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"):
+        if current is not None and current not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"):
             raise UnknownSchemaVersion(
                 f"This database is at schema version {current}, but this Kestrel understands {SCHEMA_VERSION}.")
-        # An older database may lack the adaptive (v3), experience (v4), prompt-version (v7) and evidence (v11)
-        # columns on `runs`.
+        # An older database may lack the adaptive (v3), experience (v4), prompt-version (v7), evidence (v11) and
+        # checkpointer (v12) columns on `runs`.
         run_columns = {r["name"] for r in db.execute("PRAGMA table_info(runs)")}
-        for column, ddl in ADAPTIVE_RUN_COLUMNS + EXPERIENCE_RUN_COLUMNS + PROMPT_RUNS_COLUMNS + EVIDENCE_RUN_COLUMNS:
+        for column, ddl in (ADAPTIVE_RUN_COLUMNS + EXPERIENCE_RUN_COLUMNS + PROMPT_RUNS_COLUMNS
+                            + EVIDENCE_RUN_COLUMNS + CHECKPOINT_RUN_COLUMNS):
             if column not in run_columns:
                 db.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl}")
         # The v7 prompt-version provenance on `run_turns` and the v7 prompt-arm columns on `experiment_arms`.
@@ -559,6 +630,8 @@ class TargetStore:
         # RUNS_COLUMNS_SQL already gave `runs` these columns, since both rebuilds and the fresh CREATE TABLE share
         # one definition).
         TargetStore._rebuild_runs_for_replay(db)
+        TargetStore._check_no_duplicate_turn_positions(db)
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_run_turns_position ON run_turns (run_id, position)")
         if current is None:
             db.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
         else:
@@ -650,6 +723,22 @@ class TargetStore:
         db.commit()
         db.execute("PRAGMA foreign_keys = ON")
 
+    @staticmethod
+    def _check_no_duplicate_turn_positions(db: sqlite3.Connection) -> None:
+        """Schema 12 (research D6): refuse loudly, before uq_run_turns_position is ever created, if an existing
+        database already holds a duplicate (run_id, position) pair in run_turns (not reachable through any code
+        path this project has ever shipped, but not provably impossible either) - never a bare
+        sqlite3.IntegrityError from the index statement itself, and never a silent guess at which duplicate row
+        to keep."""
+        duplicate = db.execute(
+            "SELECT run_id, position FROM run_turns GROUP BY run_id, position HAVING COUNT(*) > 1 LIMIT 1"
+        ).fetchone()
+        if duplicate is not None:
+            raise DuplicateTurnPositions(
+                f"schema 12 migration found duplicate (run_id, position) rows in run_turns "
+                f"(run_id={duplicate['run_id']}, position={duplicate['position']}) and refuses to start - this "
+                f"database needs manual inspection before it can be opened.")
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         """One connection per call; commits on success and rolls back on any error."""
@@ -721,7 +810,10 @@ class TargetStore:
         return self.get_target(target_id)
 
     def delete_target(self, target_id: int) -> None:
-        """Remove the target; its header rows go with it (ON DELETE CASCADE, overwritten by secure_delete)."""
+        """Remove the target; its header rows go with it (ON DELETE CASCADE, overwritten by secure_delete). Its
+        runs' own checkpoint threads are deleted first (feature 014, research D11): the checkpoint tables carry
+        no foreign key of their own, so cascading the target's runs away would otherwise leave them orphaned."""
+        self.delete_checkpoints_for_target(target_id)
         with self.connect() as db:
             if db.execute("DELETE FROM targets WHERE id = ?", (target_id,)).rowcount == 0:
                 raise TargetNotFound(target_id)
@@ -791,15 +883,30 @@ class TargetStore:
                   attacker_model: str | None = None, turn_budget: int | None = None,
                   token_budget: int | None = None, time_limit_s: int | None = None,
                   use_prior_experience: bool = True, source_run_id: int | None = None,
-                  correlation_id: str | None = None, side_channel_status: str = "not_configured") -> int:
+                  correlation_id: str | None = None, side_channel_status: str = "not_configured",
+                  ask_before_each_turn: bool = False, is_checkpointed: bool = False,
+                  attacker_prompt_id: str | None = None, attacker_prompt_version: str | None = None,
+                  judge_model: str | None = None, judge_prompt_id: str | None = None,
+                  judge_prompt_version: str | None = None, now: datetime | None = None) -> int:
         """Write the row before anything is sent, so a crash still leaves evidence an attack went out (R10).
 
         Adaptive runs pass mode='adaptive' with the attacker model and the budgets they were allowed (FR-015). A
         replay (feature 012) passes mode='replay' and source_run_id naming the run it re-tests. A run on a target
         with a side channel (feature 013) passes its correlation id and `side_channel_status='checked'`; the
-        status is written here, at claim time, so a crashed or interrupted run never leaves it null (013/FR-034)."""
+        status is written here, at claim time, so a crashed or interrupted run never leaves it null (013/FR-034).
+
+        Feature 014: only the live, checkpointed run-start path ever passes `is_checkpointed=True` or the
+        provenance-pin keywords (research D16, D22); every other caller leaves them at their defaults.
+        `ask_before_each_turn=True` is rejected outright for any mode other than 'adaptive' (research D5) - the
+        API layer turns this into its own 422. `now` (research D26) defaults to the real wall clock; the live
+        run-start path passes `now=app_state.clock()` explicitly, so `last_activity_at` agrees with whatever
+        clock a test has substituted for it."""
         if side_channel_status not in SIDE_CHANNEL_STATUSES:
-            raise ValueError(f"side_channel_status must be one of {SIDE_CHANNEL_STATUSES}, not {side_channel_status!r}.")
+            raise ValueError(f"side_channel_status must be one of {SIDE_CHANNEL_STATUSES}, "
+                             f"not {side_channel_status!r}.")
+        if ask_before_each_turn and mode != "adaptive":
+            raise ValueError("ask_before_each_turn=True is only valid for mode='adaptive'.")
+        last_activity_at = _iso(now) if now is not None else utc_now()
         with self.connect() as db:
             if db.execute("SELECT 1 FROM targets WHERE id = ?", (target_id,)).fetchone() is None:
                 raise TargetNotFound(target_id)
@@ -807,11 +914,16 @@ class TargetStore:
                 cursor = db.execute(
                     "INSERT INTO runs (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category,"
                     " attacker_source, status, started_at, mode, attacker_model, turn_budget, token_budget,"
-                    " time_limit_s, use_prior_experience, source_run_id, correlation_id, side_channel_status)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " time_limit_s, use_prior_experience, source_run_id, correlation_id, side_channel_status,"
+                    " ask_before_each_turn, is_checkpointed, attacker_prompt_id, attacker_prompt_version,"
+                    " judge_model, judge_prompt_id, judge_prompt_version, last_activity_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                    " ?)",
                     (target_id, prompt_id, prompt_title, prompt_text, family, owasp_category, attacker_source,
                      utc_now(), mode, attacker_model, turn_budget, token_budget, time_limit_s,
-                     int(use_prior_experience), source_run_id, correlation_id, side_channel_status))
+                     int(use_prior_experience), source_run_id, correlation_id, side_channel_status,
+                     int(ask_before_each_turn), int(is_checkpointed), attacker_prompt_id, attacker_prompt_version,
+                     judge_model, judge_prompt_id, judge_prompt_version, last_activity_at))
             except sqlite3.IntegrityError:
                 # SQLite names the column, not the index, so ask the data rather than parse the message.
                 open_run = db.execute("SELECT id FROM runs WHERE target_id = ? AND status = 'in_progress'",
@@ -962,6 +1074,43 @@ class TargetStore:
                  judge_reason, judge_progress, attacker_prompt_id, attacker_prompt_version, judge_prompt_id,
                  judge_prompt_version, utc_now()))
 
+    def has_turn(self, run_id: int, position: int) -> bool:
+        """A point lookup against uq_run_turns_position (feature 014, research D6): whether this turn's row
+        already exists, so the lifted record step can skip an already-recorded write without re-reading it."""
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM run_turns WHERE run_id = ? AND position = ?",
+                              (run_id, position)).fetchone() is not None
+
+    def add_turn_with_evidence(self, run_id: int, *, position: int, attacker_message: str,
+                               reply_text: str | None = None, reply_truncated: bool = False,
+                               judge_verdict: str | None = None, judge_reason: str | None = None,
+                               judge_progress: str | None = None, attacker_prompt_id: str | None = None,
+                               attacker_prompt_version: str | None = None, judge_prompt_id: str | None = None,
+                               judge_prompt_version: str | None = None, evidence_items=()) -> None:
+        """The turn row and its evidence items (if any), in one atomic transaction (feature 014, research D6):
+        either both exist or neither does, even under an interruption immediately after. Idempotent: a second call
+        for the same (run_id, position) is a no-op (uq_run_turns_position's own point lookup, inside the same
+        transaction, so a retried caller can never duplicate either)."""
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM run_turns WHERE run_id = ? AND position = ?",
+                          (run_id, position)).fetchone() is not None:
+                return
+            db.execute(
+                "INSERT INTO run_turns (run_id, position, attacker_message, reply_text, reply_truncated,"
+                " judge_verdict, judge_reason, judge_progress, attacker_prompt_id, attacker_prompt_version,"
+                " judge_prompt_id, judge_prompt_version, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (run_id, position, attacker_message, reply_text, int(reply_truncated), judge_verdict,
+                 judge_reason, judge_progress, attacker_prompt_id, attacker_prompt_version, judge_prompt_id,
+                 judge_prompt_version, utc_now()))
+            if evidence_items:
+                now = utc_now()
+                db.executemany(
+                    "INSERT INTO run_evidence (run_id, turn, kind, location, owasp_category, detail, pattern_name,"
+                    " pattern_set_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(run_id, item.turn, item.kind, item.location, item.owasp_category, item.detail,
+                      item.pattern_name, item.pattern_set_version, now) for item in evidence_items])
+
     def list_turns(self, run_id: int) -> list[Turn]:
         with self.connect() as db:
             rows = db.execute("SELECT * FROM run_turns WHERE run_id = ? ORDER BY position", (run_id,)).fetchall()
@@ -995,6 +1144,13 @@ class TargetStore:
         with self.connect() as db:
             db.execute("INSERT INTO run_log (run_id, seq, ts, event, record) VALUES (?, ?, ?, ?, ?)",
                        (run_id, seq, ts, event, record))
+
+    def highest_log_seq(self, run_id: int) -> int:
+        """The highest kept-line seq already stored for this run, or 0 (feature 014, research D20): a resumed or
+        decided segment's own kept-line counter starts from here, never restarting the run's own sequence."""
+        with self.connect() as db:
+            row = db.execute("SELECT MAX(seq) AS m FROM run_log WHERE run_id = ?", (run_id,)).fetchone()
+        return int(row["m"]) if row is not None and row["m"] is not None else 0
 
     def list_log_lines(self, run_id: int) -> list[LogLine]:
         """A run's kept log lines in emission order; empty for a run that kept none (or predates schema 8)."""
@@ -1152,6 +1308,63 @@ class TargetStore:
                           status=row["status"], stopped_reason=row["stopped_reason"], created_at=row["created_at"],
                           started_at=row["started_at"], finished_at=row["finished_at"], arms=tuple(arms))
 
+    # ---- the checkpointer and the idle clock (feature 014) ----
+
+    def touch_last_activity(self, run_id: int, *, now: datetime | None = None) -> None:
+        """This run's idle clock (research D26), updated only by an accepted execution-lease release."""
+        with self.connect() as db:
+            db.execute("UPDATE runs SET last_activity_at = ? WHERE id = ?",
+                      (_iso(now) if now is not None else utc_now(), run_id))
+
+    def delete_checkpoint(self, run_id: int) -> None:
+        """Delete this run's checkpoint rows from both tables (research D11); a no-op if none exist."""
+        thread_id = str(run_id)
+        with self.connect() as db:
+            db.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (thread_id,))
+            db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+
+    def delete_checkpoints_for_target(self, target_id: int) -> None:
+        """Delete every checkpoint thread belonging to this target's own run ids (research D11) - called before
+        deleting the target itself, since the checkpoint tables carry no foreign key of their own."""
+        with self.connect() as db:
+            run_ids = [str(row["id"]) for row in db.execute("SELECT id FROM runs WHERE target_id = ?", (target_id,))]
+        if not run_ids:
+            return
+        placeholders = ",".join("?" * len(run_ids))
+        with self.connect() as db:
+            db.execute(f"DELETE FROM checkpoint_writes WHERE thread_id IN ({placeholders})", run_ids)
+            db.execute(f"DELETE FROM checkpoints WHERE thread_id IN ({placeholders})", run_ids)
+
+    def list_in_progress_checkpointed_runs(self) -> list[Run]:
+        """Every row the start-up sweep's own classification (and the periodic idle-stop check) must inspect
+        (feature 014): in_progress, is_checkpointed, mode == 'adaptive' - the one and only classification input
+        (research D22)."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM runs WHERE status = 'in_progress' AND is_checkpointed = 1"
+                " AND mode = 'adaptive'").fetchall()
+        return [self._run(row) for row in rows]
+
+    def list_checkpoint_thread_ids(self) -> set[str]:
+        """Every thread_id with at least one row in `checkpoints` (feature 014): the start-up sweep's own input
+        for finding an orphaned checkpoint whose `runs` row is not currently in_progress at all."""
+        with self.connect() as db:
+            return {row["thread_id"] for row in db.execute("SELECT DISTINCT thread_id FROM checkpoints")}
+
+    def close_non_checkpointed_interrupted_runs(self) -> int:
+        """The start-up sweep's own pre-existing, unconditional close (feature 014, FR-013): every in_progress row
+        that is not a live, checkpointed adaptive run - every non-adaptive mode, every row not claimed through the
+        live run-start path - closed exactly as `close_interrupted_runs` already closes every row. A checkpointed
+        adaptive row is left untouched here; the async, classifying sweep (api/main.py's lifespan) decides its
+        fate instead."""
+        with self.connect() as db:
+            return db.execute(
+                "UPDATE runs SET status = 'finished', verdict = 'unclear', stopping_condition = 'interrupted',"
+                " reason = 'Kestrel stopped while this run was in progress, so it was interrupted.',"
+                " replay_outcome = CASE WHEN mode = 'replay' THEN 'inconclusive' ELSE replay_outcome END,"
+                " finished_at = ? WHERE status = 'in_progress' AND NOT (is_checkpointed = 1 AND mode = 'adaptive')",
+                (utc_now(),)).rowcount
+
     def close_interrupted_runs(self) -> int:
         """Close anything a stopped process left open, so the target isn't locked by FR-010 forever (FR-031). An
         interrupted replay (feature 012) is closed inconclusive, never left with a null outcome (012/FR-012,
@@ -1221,7 +1434,10 @@ class TargetStore:
                    memory_written=None if row["memory_written"] is None else bool(row["memory_written"]),
                    judge_prompt_id=row["judge_prompt_id"], judge_prompt_version=row["judge_prompt_version"],
                    source_run_id=row["source_run_id"], replay_outcome=row["replay_outcome"],
-                   correlation_id=row["correlation_id"], side_channel_status=row["side_channel_status"])
+                   correlation_id=row["correlation_id"], side_channel_status=row["side_channel_status"],
+                   ask_before_each_turn=bool(row["ask_before_each_turn"]), is_checkpointed=bool(row["is_checkpointed"]),
+                   attacker_prompt_id=row["attacker_prompt_id"], attacker_prompt_version=row["attacker_prompt_version"],
+                   last_activity_at=row["last_activity_at"])
 
     @staticmethod
     def _header_rows(db: sqlite3.Connection, target_id: int) -> list[sqlite3.Row]:

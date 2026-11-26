@@ -48,6 +48,10 @@ DEFAULT_REPLAY_BATCH_MAX_RUNS = 20
 DEFAULT_CALLBACK_WAIT_S = 2.0
 DEFAULT_SIDE_CHANNEL_TIMEOUT_S = 10
 CALLBACK_PATH_SUFFIX = "/callback"
+# LangGraph checkpointer and idle auto-stop (feature 014, research D28): a paused/resumable/stoppable row with
+# nobody acting on it this long is stopped automatically. Ten years is a sentinel upper bound, not a real wait.
+DEFAULT_RESUME_IDLE_HOURS = 24.0
+MAX_RESUME_IDLE_HOURS = 87_600.0
 
 Mode = Literal["local", "hosted"]
 LogFormat = Literal["json", "text"]
@@ -103,6 +107,8 @@ class Settings:
     # Feature 010: the stream's format (JSON Lines by default) and the optional OpenTelemetry tracing flag.
     log_format: LogFormat = "json"
     tracing: bool = False
+    # Feature 014: the idle auto-stop window for a paused/resumable/stoppable checkpointed run (research D28).
+    resume_idle_hours: float = DEFAULT_RESUME_IDLE_HOURS
 
     @property
     def judge_configured(self) -> bool:
@@ -260,6 +266,23 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             raise SettingsError(f"{name} must be a non-negative number, not {raw!r}.")
         return value
 
+    def positive_hours_bounded(name: str, default: float, maximum: float) -> float:
+        """Feature 014 (research D28): unset -> the default; else a strictly positive, finite number at most
+        `maximum` - distinct from `non_negative_float_or_off`, which allows 0 and an `off` sentinel neither of
+        which apply here (every checkpointed row is auto-stopped eventually, never left idle forever by a
+        setting, and a wait of exactly 0 would stop a run the instant it paused)."""
+        raw = setting(name)
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            raise SettingsError(f"{name} must be a positive number of hours, not {raw!r}.") from None
+        if not (math.isfinite(value) and 0 < value <= maximum):
+            raise SettingsError(
+                f"{name} must be a positive number of hours, at most {maximum:g}, not {raw!r}.")
+        return value
+
     raw_callback_base = setting("KESTREL_CALLBACK_BASE_URL")
     callback_base_url = validate_callback_base(raw_callback_base) if raw_callback_base else None
 
@@ -302,4 +325,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                     callback_base_url=callback_base_url,
                     callback_wait_s=non_negative_float("KESTREL_CALLBACK_WAIT_S", DEFAULT_CALLBACK_WAIT_S),
                     side_channel_timeout_s=positive_int("KESTREL_SIDE_CHANNEL_TIMEOUT_S",
-                                                        DEFAULT_SIDE_CHANNEL_TIMEOUT_S))
+                                                        DEFAULT_SIDE_CHANNEL_TIMEOUT_S),
+                    resume_idle_hours=positive_hours_bounded("KESTREL_RESUME_IDLE_HOURS", DEFAULT_RESUME_IDLE_HOURS,
+                                                            MAX_RESUME_IDLE_HOURS))

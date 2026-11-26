@@ -38,11 +38,9 @@ MAX_TOOL_CALLS = 8
 PER_LINE_TIMEOUT_S = 60
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # The shared default chat model (app.py and this module both read it, so they can never drift): a ZDR
-# (Zero Data Retention), tool-capable endpoint. openai/gpt-4o-mini's only tool-capable endpoint is excluded by
-# this account's OpenRouter guardrail (a 404 "ZDR violation"); openai/gpt-oss-120b passed a tool call, a tool
-# round trip and the json_schema structured output 4/4 times against real ZDR providers (Crusoe, AkashML,
-# Google, BaseTen). An explicit CARGOLINT_CHAT_MODEL still overrides this.
-DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b"
+# (Zero Data Retention), tool-capable OpenRouter endpoint. An explicit CARGOLINT_CHAT_MODEL still overrides
+# this.
+DEFAULT_CHAT_MODEL = "openai/gpt-4o-mini"
 
 # Retrieval
 RETRIEVAL_K = 6

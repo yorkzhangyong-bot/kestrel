@@ -1,7 +1,9 @@
 """Tracing is an optional extra, never a required dependency (Principle X): the OpenTelemetry SDK and the OTLP/HTTP
 exporter are named only by the `otel` extra and the `dev` group (010/FR-014, 010/SC-007). Feature 011 adds no
 dependency at all: the required list is exactly the fixed stack and the `otel` extra is unchanged (011/FR-016,
-011/SC-008)."""
+011/SC-008). Feature 014's own checkpoint saver adds no *new* dependency either (Principle X, satisfied rather
+than invoked): `langgraph-checkpoint` was already installed as a transitive dependency of `langgraph` itself,
+named explicitly only to pin the narrow version range the saver is tested against (014/FR-037)."""
 import tomllib
 from pathlib import Path
 
@@ -9,9 +11,10 @@ FEATURE = "010"
 
 PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 OTEL_PACKAGES = {"opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-http"}
-# The fixed MVP stack (Principle X): the eight required packages, none other (feature 011, FR-016).
-FIXED_STACK = {"chromadb", "cryptography", "fastapi", "httpx", "langgraph", "markdown-it-py", "streamlit",
-               "uvicorn"}
+# The fixed MVP stack (Principle X): the required packages, none other (feature 011, FR-016; feature 014,
+# FR-037 - langgraph-checkpoint was already present transitively, named explicitly, not newly added).
+FIXED_STACK = {"chromadb", "cryptography", "fastapi", "httpx", "langgraph", "langgraph-checkpoint",
+               "markdown-it-py", "streamlit", "uvicorn"}
 
 
 def _names(requirements: list[str]) -> set[str]:

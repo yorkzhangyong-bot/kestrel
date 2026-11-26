@@ -303,6 +303,7 @@ def run_pending_run() -> None:
         with st.spinner("Running the attack… (an adaptive attack can take a few minutes)"):
             st.session_state["run_result"] = api_client.run_attack(payload)
         st.session_state["runs"] = None  # reload the runs list for this target
+        st.session_state["targets"] = None  # reload the selector's needs_attention cue too (014/FR-062)
     except api_client.ApiError as error:
         st.session_state["run_result"] = None
         st.session_state["run_notice"] = api_message(error)
@@ -314,6 +315,46 @@ def start_replay(run_id: int) -> None:
     mirroring start_run."""
     st.session_state["pending_replay"] = run_id
     st.session_state["replay_notice"] = None
+
+
+def start_resume(run_id: int) -> None:
+    """Resume-button callback (014/FR-014): capture now; it runs on the next pass with the button disabled,
+    mirroring start_replay - a resume can itself drive a run all the way to completion."""
+    st.session_state["pending_resume"] = run_id
+
+
+def start_stop(run_id: int) -> None:
+    """Stop-button callback (014/FR-040): same deferred shape as start_resume, so the button shows disabled while
+    the request is in flight."""
+    st.session_state["pending_stop"] = run_id
+
+
+def run_pending_resume() -> None:
+    run_id = st.session_state.get("pending_resume")
+    if run_id is None:
+        return
+    st.session_state["pending_resume"] = None
+    try:
+        with st.spinner("Resuming…"):
+            api_client.resume_run(run_id)
+        st.session_state["runs"] = None   # reload the runs list for this target
+        st.session_state["targets"] = None
+    except api_client.ApiError as error:
+        st.session_state["resume_stop_notice"] = api_message(error)
+
+
+def run_pending_stop() -> None:
+    run_id = st.session_state.get("pending_stop")
+    if run_id is None:
+        return
+    st.session_state["pending_stop"] = None
+    try:
+        with st.spinner("Stopping…"):
+            api_client.stop_run(run_id)
+        st.session_state["runs"] = None
+        st.session_state["targets"] = None
+    except api_client.ApiError as error:
+        st.session_state["resume_stop_notice"] = api_message(error)
 
 
 def open_source_run(run_id: int) -> None:
@@ -400,7 +441,8 @@ def show_error(field: str) -> None:
 
 
 def render_picker(targets: list[dict]) -> None:
-    labels = {t["id"]: f"{t['name']} · {t['url']}" for t in targets}
+    labels = {t["id"]: f"{t['name']} · {t['url']}" + (" · needs attention" if t.get("needs_attention") else "")
+              for t in targets}
     if st.session_state.get("target_select") not in labels:
         st.session_state["target_select"] = NEW_TARGET
     st.selectbox("Target", [NEW_TARGET, *labels], key="target_select", on_change=select_target,
@@ -535,7 +577,7 @@ def _render_attack_form(config: dict, families: list[dict]) -> None:
 
 
 STOPPED = {"turn_cap": "stopped at the turn limit", "token_budget": "stopped at the token budget",
-           "time_limit": "stopped at the time limit"}
+           "time_limit": "stopped at the time limit", "stopped_by_user": "stopped by the user"}
 
 
 def render_run_result(run: dict | None, judge: dict, key_prefix: str = "result") -> None:
@@ -613,8 +655,36 @@ def _render_replay_action(run: dict, key_prefix: str) -> None:
         _render_replay_comparison(shown, key_prefix)
 
 
+def _render_resume_stop_controls(run: dict, key_prefix: str) -> None:
+    """Resume/Stop, rendered from `run_state` alone, never reconstructed from `resumable`/`paused` (014/FR-054):
+    "resumable" offers both; "stoppable" (a reached-its-own-end, no-checkpoint, or unreadable row) offers Stop
+    alone; "running" (leased) offers neither. Ahead of `_render_finding`'s own failure-step early return, since a
+    checkpointed, in-progress run can need these controls even when it never reached a reply at all."""
+    state = run.get("run_state")
+    if state not in ("resumable", "stoppable"):
+        return
+    if run.get("idle_stop_at"):
+        st.caption(f"Auto-stops if left idle: {run['idle_stop_at'][:16].replace('T', ' ')}")
+    pending = st.session_state.get("pending_resume") is not None or st.session_state.get("pending_stop") is not None
+    if st.session_state.get("resume_stop_notice"):
+        st.error(st.session_state["resume_stop_notice"])
+        st.session_state["resume_stop_notice"] = None
+    if state == "resumable":
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button("Resume", key=f"resume_button_{key_prefix}_{run['id']}", on_click=start_resume,
+                     args=(run["id"],), disabled=pending)
+        with col2:
+            st.button("Stop", key=f"stop_button_{key_prefix}_{run['id']}", on_click=start_stop,
+                     args=(run["id"],), disabled=pending)
+    else:
+        st.button("Stop", key=f"stop_button_{key_prefix}_{run['id']}", on_click=start_stop, args=(run["id"],),
+                 disabled=pending)
+
+
 def _render_finding(run: dict, judge: dict, key_prefix: str = "result") -> None:
     _render_replay_action(run, key_prefix)
+    _render_resume_stop_controls(run, key_prefix)
     if run.get("failure_step"):
         # Prefer Kestrel's own wording for the step (feature 001); fall back for any unmapped step.
         fallback = f"The attack could not be sent: {run.get('reason') or run['failure_step']}."
@@ -778,17 +848,31 @@ def render_runs(config: dict) -> None:
     if not runs:
         st.caption("No runs yet for this target.")
         return
+    # A resumable or paused run is shown distinctly from an ordinary in-progress or finished one (014/FR-054):
+    # neither has a verdict or a failure_step yet, so today's "—" would read identically to a plain in-progress
+    # run otherwise.
+    run_state_labels = {"resumable": "resumable", "paused": "paused awaiting a decision"}
+
+    def _state_label(r: dict) -> str:
+        label = (r["verdict"] or r["failure_step"] or run_state_labels.get(r.get("run_state"), "—"))
+        if r.get("idle_stop_at"):
+            label += f" · auto-stops {r['idle_stop_at'][:16].replace('T', ' ')}"
+        return label
+
+    # The one run that needs attention (its own idle_stop_at is set) surfaces ahead of the rest (014/FR-061).
+    ordered = sorted(runs, key=lambda r: 0 if r.get("idle_stop_at") else 1)
     frame = pd.DataFrame([{"When": pd.to_datetime(r["started_at"]), "Mode": _mode_label(r),
                            "Source": str(r["source_run_id"]) if r.get("source_run_id") else "",
                            "Family": r["family"], "Prompt": r["prompt_title"],
-                           "Verdict": r["verdict"] or r["failure_step"] or "—", "Evidence": _evidence(r)}
-                          for r in runs])
+                           "Verdict": _state_label(r),
+                           "Evidence": _evidence(r)}
+                          for r in ordered])
     # column_config formats the timestamps; a Styler colours the verdict (item 4; the data-display.md pattern).
-    styled = frame.style.apply(lambda _col: [_verdict_css(r) for r in runs], subset=["Verdict"])
+    styled = frame.style.apply(lambda _col: [_verdict_css(r) for r in ordered], subset=["Verdict"])
     st.dataframe(styled, hide_index=True, alt="This target's attack runs, newest first",
                  column_config={"When": st.column_config.DatetimeColumn("When", format="MMM DD, HH:mm")})
 
-    labels = {r["id"]: f"{r['started_at'][:19].replace('T', ' ')} · {r['prompt_title']}" for r in runs}
+    labels = {r["id"]: f"{r['started_at'][:19].replace('T', ' ')} · {r['prompt_title']}" for r in ordered}
     chosen = st.selectbox("Open a run", [None, *labels], key="open_run",
                           format_func=lambda rid: "Choose a run to see its prompt and reply" if rid is None
                           else labels[rid])
@@ -1086,6 +1170,8 @@ def main() -> None:
     render_attack(config, families)
     run_pending_run()
     run_pending_replay()
+    run_pending_resume()
+    run_pending_stop()
     render_metrics(loaded_id())
     tab_runs, tab_profile, tab_report, tab_experiments = st.tabs(["Runs", "Profile", "Report", "Experiments"])
     with tab_runs:
