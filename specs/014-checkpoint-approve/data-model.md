@@ -822,4 +822,9 @@ Computed by calling the identical classification function (research D13) already
 disagree about the same run. `GET /api/targets` becomes `async def` for this, the same change research D14 already
 made to the run-detail and run-list endpoints for the identical reason. The UI reads this field alone for its cue
 — never a per-target `GET /api/targets/{id}/runs` call on every rerun, and never a guess from a field
-`TargetSummary` already carried, since the UI holds no logic of its own (CLAUDE.md).
+`TargetSummary` already carried, since the UI holds no logic of its own (CLAUDE.md). The cue is a caption rendered
+directly beneath the selector, **never part of an option label**: Streamlit's selectbox round-trips the *formatted*
+option string, so a label that changed between passes — the cue flipping when the run finishes — deserializes into
+a stale string and silently resets the picker to "New target", blanking the form; the option labels stay exactly
+`name · url` for this reason (found live: approving the final turn blanked the form, disabled "Run attack", and
+made the next connection test 422).

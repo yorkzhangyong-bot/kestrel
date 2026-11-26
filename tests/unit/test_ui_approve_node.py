@@ -44,13 +44,13 @@ def run(**over):
 
 @pytest.fixture
 def api(monkeypatch):
-    stub = SimpleNamespace(runs=[], decisions=[], decide_error=None)
+    stub = SimpleNamespace(runs=[], decisions=[], decide_error=None, decide_result={})
 
     def decide_run(run_id, turn, decision):
         if stub.decide_error is not None:
             raise stub.decide_error
         stub.decisions.append((run_id, turn, decision))
-        return {}
+        return stub.decide_result
 
     monkeypatch.setattr(api_client, "get_config", lambda: CONFIG)
     monkeypatch.setattr(api_client, "list_targets", lambda: [SUMMARY])
@@ -123,3 +123,21 @@ def test_a_decision_error_is_shown_on_the_run_page(api):
     approve = next(b for b in at.button if b.key and b.key.startswith("approve_button_opened_7"))
     at = at.button(key=approve.key).click().run()
     assert any("pending turn has already moved on" in e.value for e in at.error)
+
+
+def test_a_decision_refreshes_the_result_card_to_the_runs_new_state(api):
+    # The just-ran card (key_prefix "result") shows the pause; after Approve, the decision's own response replaces
+    # it - a finished run's card must never keep asking for a decision on its stale pause.
+    at = loaded()
+    at.session_state["run_result"] = run()
+    at = at.run()
+    assert any(b.key and b.key.startswith("approve_button_result_7") for b in at.button)
+
+    api.decide_result = {**run(), "status": "finished", "run_state": "finished", "paused": False, "resumable": False,
+                         "pending_turn": None, "idle_stop_at": None, "verdict": "failed",
+                         "finished_at": "2026-10-23T14:00:09Z"}
+    approve = next(b for b in at.button if b.key and b.key.startswith("approve_button_result_7"))
+    at = at.button(key=approve.key).click().run()
+
+    assert api.decisions == [(7, 2, "approve")]
+    assert not any(b.key and b.key.startswith("approve_button_result_7") for b in at.button)

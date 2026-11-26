@@ -337,11 +337,13 @@ def run_pending_resume() -> None:
     st.session_state["pending_resume"] = None
     try:
         with st.spinner("Resuming…"):
-            api_client.resume_run(run_id)
+            resumed = api_client.resume_run(run_id)
+        st.session_state["run_result"] = resumed   # the card refreshes, never the stale pre-resume state
         st.session_state["runs"] = None   # reload the runs list for this target
         st.session_state["targets"] = None
     except api_client.ApiError as error:
         st.session_state["resume_stop_notice"] = api_message(error)
+    st.rerun()
 
 
 def run_pending_stop() -> None:
@@ -351,11 +353,13 @@ def run_pending_stop() -> None:
     st.session_state["pending_stop"] = None
     try:
         with st.spinner("Stopping…"):
-            api_client.stop_run(run_id)
+            stopped = api_client.stop_run(run_id)
+        st.session_state["run_result"] = stopped   # the card refreshes, never the stale pre-stop state
         st.session_state["runs"] = None
         st.session_state["targets"] = None
     except api_client.ApiError as error:
         st.session_state["resume_stop_notice"] = api_message(error)
+    st.rerun()
 
 
 def start_decision(run_id: int, turn: int, decision: str) -> None:
@@ -371,11 +375,13 @@ def run_pending_decision() -> None:
     st.session_state["pending_decision"] = None
     try:
         with st.spinner("Deciding…"):
-            api_client.decide_run(pending["run_id"], pending["turn"], pending["decision"])
+            decided = api_client.decide_run(pending["run_id"], pending["turn"], pending["decision"])
+        st.session_state["run_result"] = decided   # the card refreshes to the run's new state, never the stale pause
         st.session_state["runs"] = None   # reload the runs list for this target
         st.session_state["targets"] = None
     except api_client.ApiError as error:
         st.session_state["resume_stop_notice"] = api_message(error)
+    st.rerun()
 
 
 def open_source_run(run_id: int) -> None:
@@ -462,12 +468,19 @@ def show_error(field: str) -> None:
 
 
 def render_picker(targets: list[dict]) -> None:
-    labels = {t["id"]: f"{t['name']} · {t['url']}" + (" · needs attention" if t.get("needs_attention") else "")
-              for t in targets}
+    # The option labels are stable (`name · url`, nothing else): Streamlit's selectbox round-trips the *formatted*
+    # option string, so a label that changes between passes (a cue that flips when a run finishes) deserializes
+    # into a stale string and silently resets the picker to "New target", blanking the form (014/FR-062).
+    labels = {t["id"]: f"{t['name']} · {t['url']}" for t in targets}
     if st.session_state.get("target_select") not in labels:
         st.session_state["target_select"] = NEW_TARGET
     st.selectbox("Target", [NEW_TARGET, *labels], key="target_select", on_change=select_target,
                  format_func=lambda target_id: "New target" if target_id == NEW_TARGET else labels[target_id])
+    # The cue rides a caption directly beneath the selector, read from the API's own needs_attention field alone -
+    # visible without opening the target, never part of an option label (014/FR-062, research D31).
+    for target in targets:
+        if target.get("needs_attention"):
+            st.caption(f"{target['name']} · needs attention")
 
 
 def render_form(config: dict, targets: list[dict]) -> None:

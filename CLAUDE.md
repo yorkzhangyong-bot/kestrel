@@ -556,3 +556,16 @@ same commit. Before opening any implementation PR, review this file and add anyt
   shared finishing function gained an `if run.status != "finished": return run` guard so a pause never triggers
   write-back or checkpoint deletion. The resume/decision responses must carry `classify_run(...)` (not the default
   `run_state == "finished"`), or a re-paused run reports `paused: false` wrongly.
+- 2026-11-26 — **Streamlit's selectbox round-trips the formatted label (found live against PR #57).**
+  `st.selectbox` serializes the selection through `format_func`, and the frontend holds that *formatted string*;
+  `SelectboxSerde.deserialize` maps it back through the current options' index and, when it is not found, returns
+  the stale string itself as the widget value. A label that changes between passes therefore poisons the picker's
+  value, and the app's own "value not in labels → New target" guard resets it — the part-1 `needs_attention` cue
+  was appended to the target picker's label, so it flipped on every run finish: approving the final turn blanked
+  the form (`select_target(NEW_TARGET)` → `fill_form(None)`), disabled "Run attack" (`loaded_target` gone) and made
+  the next connection test 422 with "Enter the endpoint URL." (mechanism proven by driving `SelectboxSerde`
+  serialize/deserialize across two label sets; AppTest cannot reproduce it because it replays raw values, never
+  formatted strings). Fix: **the cue is a caption directly beneath the selector and option labels stay exactly
+  `name · url`** — never mutate a selectbox label between passes. The decision/resume/stop handlers now store the
+  API response in `run_result`, so the result card refreshes to the run's real state instead of showing the stale
+  pause with live-looking buttons.

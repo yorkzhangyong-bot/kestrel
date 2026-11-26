@@ -64,14 +64,18 @@ def loaded() -> AppTest:
 
 def test_the_target_selector_cues_only_the_needs_attention_target(api):
     at = AppTest.from_file(APP, default_timeout=10).run()
-    options = at.selectbox(key="target_select").options
 
-    # The attention target's label carries a cue (its label is longer than its plain "name · url"); the quiet
-    # target's is exactly its plain label, never a hard-coded cue string.
-    attention_plain = f"{ATTENTION['name']} · {ATTENTION['url']}"
-    quiet_plain = f"{QUIET['name']} · {QUIET['url']}"
-    assert any(opt != attention_plain and opt.startswith(attention_plain) for opt in options)
-    assert quiet_plain in options
+    # The option labels are exactly "name · url" - the cue must never ride the label, whose formatted string
+    # Streamlit round-trips: a label that changed between passes would deserialize into a stale string and reset
+    # the picker to "New target", blanking the form.
+    options = at.selectbox(key="target_select").options
+    assert f"{ATTENTION['name']} · {ATTENTION['url']}" in options
+    assert all("needs attention" not in opt for opt in options)
+
+    # The cue is a caption beneath the selector: it names the attention target, never the quiet one.
+    captions = [c.value for c in at.caption]
+    assert any(ATTENTION["name"] in c for c in captions)
+    assert not any(QUIET["name"] in c for c in captions)
 
 
 def test_the_run_that_needs_attention_surfaces_first_with_its_idle_stop_at(api):
