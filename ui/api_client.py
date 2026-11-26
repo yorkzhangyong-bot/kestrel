@@ -91,6 +91,11 @@ def resume_run(run_id: int) -> dict[str, Any]:
     return _request("POST", f"/api/runs/{run_id}/resume", timeout=360.0)
 
 
+def decide_run(run_id: int, turn: int, decision: str) -> dict[str, Any]:
+    # Like a resume, a decision (Approve or Run to end) can itself drive a run all the way to completion (014/FR-025).
+    return _request("POST", f"/api/runs/{run_id}/decision", json={"turn": turn, "decision": decision}, timeout=360.0)
+
+
 def stop_run(run_id: int) -> dict[str, Any]:
     # Stop never resumes the graph - it only ends the run, so it needs no long timeout (014/FR-040).
     return _request("POST", f"/api/runs/{run_id}/stop", timeout=10.0)
