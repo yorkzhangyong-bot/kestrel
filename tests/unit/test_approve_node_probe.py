@@ -25,7 +25,7 @@ from kestrel.checkpointing import KestrelCheckpointSaver, classify, thread_confi
 from kestrel.secrets import Vault
 from kestrel.store import TargetStore
 from tests.support import StubAttacker, StubJudge
-from tests.unit.test_adaptive_graph_state import SEED, StubStore, make_deps, numbered_sender
+from tests.unit.test_adaptive_graph_state import StubStore, make_deps, numbered_sender
 from tests.unit.test_start_up_sweep_classification import _FailingPutSaver
 
 FEATURE = "014"

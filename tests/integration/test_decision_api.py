@@ -13,7 +13,6 @@ import kestrel.api.main as main
 from tests.integration.test_approve_node_live import _api, _start_paused
 from tests.integration.test_stop_endpoint import _claim_checkpointed, _target
 from tests.support import StubAttacker, StubJudge, fixture_library, model_settings, real_attacker, real_judge
-from tests.unit.test_start_up_sweep_classification import _FailingPutSaver
 
 FEATURE = "014"
 
