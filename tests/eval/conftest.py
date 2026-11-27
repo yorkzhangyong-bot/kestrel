@@ -1,12 +1,12 @@
-"""Harness for the judge-accuracy evaluation (tests/eval).
+"""Harness for the evaluation tool (tests/eval): the judge-accuracy evaluation and the retrieval (RAG) evaluation.
 
-Like the e2e suite, every test here makes a real judge call, so it needs OPENROUTER_API_KEY and is marked
-``judge_eval`` — the offline suite (``-m 'not e2e and not judge_eval'``) skips it. Run it with
-``uv run pytest -m judge_eval``.
+Every test here is marked ``judge_eval`` - the offline suite (``-m 'not e2e and not judge_eval'``) skips the whole
+directory. Run the full evaluation with ``uv run pytest -m judge_eval``. The judge test makes real judge calls and
+skips itself when no judge is configured; the retrieval evaluation uses only the local embedding model and runs
+without a key. ``--judge-version N`` pins the judge prompt version the accuracy test scores.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,13 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.judge_eval)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _needs_openrouter_key():
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        pytest.skip("OPENROUTER_API_KEY is not set; the judge-accuracy eval makes real judge calls.")
+def pytest_addoption(parser):
+    parser.addoption("--judge-version", action="store", default=None,
+                    help="judge prompt version the accuracy evaluation scores (default: the active one)")
+
+
+@pytest.fixture
+def judge_version(request):
+    import os
+
+    return request.config.getoption("--judge-version") or os.environ.get("KESTREL_JUDGE_VERSION") or None
